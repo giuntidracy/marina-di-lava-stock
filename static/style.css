@@ -215,9 +215,13 @@ header {
 }
 
 #main-nav {
-  display: flex; flex-wrap: wrap; gap: 2px; padding: 8px 0; flex: 1;
+  display: flex; flex-wrap: nowrap; gap: 2px; padding: 8px 0; flex: 1;
   align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+#main-nav::-webkit-scrollbar { display: none; }
 
 .nav-btn {
   background: transparent; color: rgba(255,255,255,.55);

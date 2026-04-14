@@ -826,12 +826,15 @@ function renderDelivery(el) {
       </div>
       <div class="upload-zone" id="delivery-zone" onclick="document.getElementById('delivery-file').click()">
         <div class="upload-icon">📷</div>
-        <div>Photo ou PDF du bon de livraison</div>
+        <div style="font-size:15px;font-weight:700;color:var(--text-secondary);margin-bottom:6px">Glissez ou cliquez pour choisir</div>
+        <small>JPG, PNG, PDF — max 10 Mo</small>
         <input type="file" id="delivery-file" accept="image/*,.pdf" onchange="setDeliveryFile(this)"/>
       </div>
       <div id="delivery-filename" style="font-size:12px;color:var(--text-muted);margin-top:6px"></div>
-      <div style="margin-top:14px">
-        <button class="btn btn-primary" onclick="analyzeDelivery()">🔍 Analyser avec Claude AI</button>
+      <div style="margin-top:16px">
+        <button class="btn btn-gold btn-lg" onclick="analyzeDelivery()" style="width:100%;justify-content:center">
+          ✦ Analyser avec Claude AI
+        </button>
       </div>
       <div id="delivery-result" style="margin-top:16px"></div>
     </div>
@@ -1230,9 +1233,9 @@ async function renderStats(el) {
       <span style="font-weight:600;font-size:14px">Vue :</span>
       <button class="btn btn-primary stats-view-btn" data-view="live" onclick="switchStatsView('live')">Temps réel</button>
       <button class="btn btn-outline stats-view-btn" data-view="historique" onclick="switchStatsView('historique')">📅 Saison 2025</button>
-      <label class="btn btn-outline" style="cursor:pointer;position:relative">
+      <label class="btn btn-outline" style="cursor:pointer;position:relative;overflow:hidden">
         ⬆ Importer saison
-        <input type="file" accept=".xlsx" style="position:absolute;opacity:0;width:100%;height:100%;top:0;left:0;cursor:pointer"
+        <input type="file" accept=".xlsx" style="position:absolute;opacity:0;width:100%;height:100%;top:0;left:0;cursor:pointer;font-size:0"
           onchange="importHistorique(this)"/>
       </label>
     </div>
