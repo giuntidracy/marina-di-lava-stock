@@ -14,7 +14,7 @@ let inactivityTimer = null;
 
 // Onglets accessibles par rôle
 const SERVICE_VIEWS = ["inventory"];
-const MANAGER_VIEWS = ["stock","cocktails","alerts","cashpad","delivery","inventory","history","suppliers","mapping"];
+const MANAGER_VIEWS = ["stock","cocktails","alerts","cashpad","delivery","inventory","stats","history","suppliers","mapping"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
@@ -144,6 +144,7 @@ function renderView(view) {
     case "cashpad":   renderCashpad(app); break;
     case "delivery":  renderDelivery(app); break;
     case "inventory": renderInventory(app); break;
+    case "stats":     renderStats(app); break;
     case "history":   renderHistory(app); break;
     case "suppliers": renderSuppliers(app); break;
     case "mapping":   renderMapping(app); break;
@@ -1215,6 +1216,150 @@ async function loadSortiesToday() {
 }
 
 // ══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════
+// VIEW: STATISTIQUES
+// ══════════════════════════════════════════════════════════
+let _statsCharts = [];
+
+async function renderStats(el) {
+  el.innerHTML = `
+    <div class="section-header">
+      <span class="section-title">📊 Statistiques de consommation</span>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:20px;flex-wrap:wrap">
+      <span style="font-weight:600;font-size:14px">Période :</span>
+      ${[7,30,90].map(d => `<button class="btn btn-outline stats-period-btn" data-days="${d}" onclick="loadStats(${d})">${d === 7 ? '7 jours' : d === 30 ? '30 jours' : '3 mois'}</button>`).join('')}
+    </div>
+    <div id="stats-loading" style="color:var(--text-muted);padding:20px 0">Chargement…</div>
+    <div id="stats-content" class="hidden">
+      <div class="stock-summary" style="margin-bottom:24px" id="stats-kpi"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px" id="stats-charts-row">
+        <div class="card" style="padding:16px">
+          <div style="font-weight:600;margin-bottom:12px">Consommation par catégorie</div>
+          <canvas id="chart-cat" height="220"></canvas>
+        </div>
+        <div class="card" style="padding:16px">
+          <div style="font-weight:600;margin-bottom:12px">Évolution journalière</div>
+          <canvas id="chart-daily" height="220"></canvas>
+        </div>
+      </div>
+      <div class="card" style="padding:16px;margin-bottom:24px">
+        <div style="font-weight:600;margin-bottom:12px">🏆 Top produits consommés</div>
+        <canvas id="chart-top" height="300"></canvas>
+      </div>
+      <div class="card" style="padding:16px">
+        <div style="font-weight:600;margin-bottom:12px">Détail par produit</div>
+        <div id="stats-table"></div>
+      </div>
+    </div>`;
+  loadStats(30);
+}
+
+async function loadStats(days) {
+  // Met à jour le bouton actif
+  document.querySelectorAll(".stats-period-btn").forEach(b => {
+    b.classList.toggle("btn-primary", parseInt(b.dataset.days) === days);
+    b.classList.toggle("btn-outline", parseInt(b.dataset.days) !== days);
+  });
+
+  document.getElementById("stats-loading").classList.remove("hidden");
+  document.getElementById("stats-content").classList.add("hidden");
+
+  // Détruit les anciens graphiques
+  _statsCharts.forEach(c => c.destroy());
+  _statsCharts = [];
+
+  try {
+    const data = await api(`/api/stats/consommation?periode=${days}`);
+    document.getElementById("stats-loading").classList.add("hidden");
+    document.getElementById("stats-content").classList.remove("hidden");
+
+    // KPI
+    document.getElementById("stats-kpi").innerHTML = `
+      <div class="summary-card">
+        <div class="s-label">Mouvements totaux</div>
+        <div class="s-value">${data.total.toFixed(0)}</div>
+        <div class="s-sub">unités consommées</div>
+      </div>
+      <div class="summary-card">
+        <div class="s-label">Produits actifs</div>
+        <div class="s-value">${data.top_products.length}</div>
+        <div class="s-sub">sur ${days} jours</div>
+      </div>
+      <div class="summary-card">
+        <div class="s-label">Catégories</div>
+        <div class="s-value">${data.by_category.length}</div>
+        <div class="s-sub">concernées</div>
+      </div>
+      <div class="summary-card">
+        <div class="s-label">Moy. / jour</div>
+        <div class="s-value">${(data.total / days).toFixed(1)}</div>
+        <div class="s-sub">unités</div>
+      </div>`;
+
+    // Graphique catégories (donut)
+    const catCtx = document.getElementById("chart-cat").getContext("2d");
+    const colors = ["#15803D","#16A34A","#4ADE80","#86EFAC","#BBF7D0","#DCFCE7","#FCD34D","#FB923C","#F87171","#A78BFA"];
+    _statsCharts.push(new Chart(catCtx, {
+      type: "doughnut",
+      data: {
+        labels: data.by_category.map(c => c.category),
+        datasets: [{ data: data.by_category.map(c => c.qty), backgroundColor: colors, borderWidth: 2 }]
+      },
+      options: { responsive: true, plugins: { legend: { position: "bottom", labels: { font: { size: 11 } } } } }
+    }));
+
+    // Graphique journalier (ligne)
+    const dailyCtx = document.getElementById("chart-daily").getContext("2d");
+    _statsCharts.push(new Chart(dailyCtx, {
+      type: "line",
+      data: {
+        labels: data.daily.map(d => d.date.slice(5)),  // MM-DD
+        datasets: [{
+          label: "Unités", data: data.daily.map(d => d.qty),
+          borderColor: "#15803D", backgroundColor: "rgba(21,128,61,0.08)",
+          fill: true, tension: 0.3, pointRadius: 2,
+        }]
+      },
+      options: { responsive: true, plugins: { legend: { display: false } },
+        scales: { x: { ticks: { font: { size: 10 }, maxTicksLimit: 10 } }, y: { beginAtZero: true } } }
+    }));
+
+    // Top produits (barres horizontales)
+    const top15 = data.top_products.slice(0, 15);
+    const topCtx = document.getElementById("chart-top").getContext("2d");
+    _statsCharts.push(new Chart(topCtx, {
+      type: "bar",
+      data: {
+        labels: top15.map(p => p.name),
+        datasets: [{ label: "Quantité", data: top15.map(p => p.qty), backgroundColor: "#15803D", borderRadius: 4 }]
+      },
+      options: {
+        indexAxis: "y", responsive: true,
+        plugins: { legend: { display: false } },
+        scales: { x: { beginAtZero: true }, y: { ticks: { font: { size: 11 } } } }
+      }
+    }));
+
+    // Tableau détail
+    let thtml = `<div class="table-wrap"><table><thead><tr>
+      <th>Produit</th><th>Catégorie</th><th>Quantité consommée</th>
+    </tr></thead><tbody>`;
+    data.top_products.forEach(p => {
+      thtml += `<tr>
+        <td><strong>${esc(p.name)}</strong></td>
+        <td>${esc(p.category)}</td>
+        <td>${p.qty}</td>
+      </tr>`;
+    });
+    thtml += `</tbody></table></div>`;
+    document.getElementById("stats-table").innerHTML = thtml;
+
+  } catch(e) {
+    document.getElementById("stats-loading").textContent = "Erreur : " + e.message;
+  }
+}
+
 // VIEW: HISTORIQUE
 // ══════════════════════════════════════════════════════════
 async function renderHistory(el) {

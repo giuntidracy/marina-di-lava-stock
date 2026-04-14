@@ -1595,6 +1595,94 @@ def annuler_import(import_id: int, db: Session = Depends(get_db)):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# STATISTIQUES DE CONSOMMATION
+# ══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/stats/consommation")
+def stats_consommation(periode: int = 30, db: Session = Depends(get_db)):
+    """
+    Agrège les consommations sur N jours (sorties réserve + Cashpad).
+    Retourne : top produits, par catégorie, évolution journalière.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=periode)
+    rows = db.query(StockHistory).filter(
+        StockHistory.created_at >= cutoff,
+        StockHistory.event_type.in_(["mouvement_manuel", "import_cashpad"])
+    ).order_by(StockHistory.created_at).all()
+
+    # Récupère les infos produits pour la catégorie
+    products_map = {p.id: p for p in db.query(Product).all()}
+
+    by_product = {}   # product_name → {qty, category, product_id}
+    by_day = {}       # "YYYY-MM-DD" → qty totale
+
+    for row in rows:
+        try:
+            d = json.loads(row.data_json)
+        except Exception:
+            continue
+
+        day = row.created_at.strftime("%Y-%m-%d")
+
+        if row.event_type == "mouvement_manuel":
+            qty = d.get("quantity", 0)
+            if qty >= 0:
+                continue  # ignore les entrées, seulement les sorties
+            qty = abs(qty)
+            name = d.get("product", "?")
+            pid = d.get("product_id")
+            cat = products_map[pid].category if pid and pid in products_map else "Autres"
+            key = name
+            if key not in by_product:
+                by_product[key] = {"qty": 0, "category": cat, "product_id": pid}
+            by_product[key]["qty"] += qty
+            by_day[day] = by_day.get(day, 0) + qty
+
+        elif row.event_type == "import_cashpad":
+            deductions = d.get("deductions", [])
+            for ded in deductions:
+                qty = abs(float(ded.get("quantity", ded.get("qty", 0)) or 0))
+                if qty <= 0:
+                    continue
+                name = ded.get("product", ded.get("nom", "?"))
+                pid = ded.get("product_id")
+                cat = products_map[pid].category if pid and pid in products_map else "Autres"
+                key = name
+                if key not in by_product:
+                    by_product[key] = {"qty": 0, "category": cat, "product_id": pid}
+                by_product[key]["qty"] += qty
+                by_day[day] = by_day.get(day, 0) + qty
+
+    # Top produits triés
+    top_products = sorted(
+        [{"name": k, "qty": round(v["qty"], 2), "category": v["category"]} for k, v in by_product.items()],
+        key=lambda x: x["qty"], reverse=True
+    )
+
+    # Par catégorie
+    by_cat = {}
+    for item in top_products:
+        c = item["category"]
+        by_cat[c] = round(by_cat.get(c, 0) + item["qty"], 2)
+    by_category = sorted([{"category": k, "qty": v} for k, v in by_cat.items()], key=lambda x: x["qty"], reverse=True)
+
+    # Évolution journalière (tous les jours de la période)
+    from datetime import date, timedelta as td
+    daily = []
+    for i in range(periode):
+        d_str = (date.today() - td(days=periode - 1 - i)).strftime("%Y-%m-%d")
+        daily.append({"date": d_str, "qty": round(by_day.get(d_str, 0), 2)})
+
+    return {
+        "periode": periode,
+        "top_products": top_products[:20],
+        "by_category": by_category,
+        "daily": daily,
+        "total": round(sum(x["qty"] for x in top_products), 2),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # INVENTAIRE DU SOIR
 # ══════════════════════════════════════════════════════════════════════════
 
