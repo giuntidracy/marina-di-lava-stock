@@ -6,7 +6,7 @@ import os
 from database import engine, SessionLocal
 from models import Base, Supplier, Product, Cocktail, CocktailIngredient, CashpadMapping
 
-DB_FILE = "marina_stock.db"
+DB_FILE = os.environ.get("DATABASE_PATH", "./marina_stock.db")
 already_exists = os.path.exists(DB_FILE)
 
 Base.metadata.create_all(bind=engine)
