@@ -1745,6 +1745,10 @@ async def import_historique(file: UploadFile = File(...), db: Session = Depends(
             else:
                 continue
 
+            # Récupère aussi le CA (colonne suivante)
+            ca_val = row[ci + 1] if ci + 1 < len(row) else None
+            ca = round(float(ca_val), 2) if ca_val else 0.0
+
             h = StockHistory(
                 event_type="ventes_historiques",
                 description=f"Historique {mois_dt.strftime('%b %Y') if hasattr(mois_dt,'strftime') else mois_dt} — {nom}",
@@ -1752,6 +1756,7 @@ async def import_historique(file: UploadFile = File(...), db: Session = Depends(
                     "product": nom,
                     "category": cat,
                     "quantity": qty,
+                    "ca": ca,
                     "mois": event_date.strftime("%Y-%m"),
                     "source": source_tag,
                 }, ensure_ascii=False),
@@ -1766,14 +1771,14 @@ async def import_historique(file: UploadFile = File(...), db: Session = Depends(
 
 @app.get("/api/stats/historique")
 def stats_historique(db: Session = Depends(get_db)):
-    """Retourne les ventes historiques agrégées par mois et par catégorie."""
+    """Retourne les ventes historiques avec analyses décisionnelles."""
     rows = db.query(StockHistory).filter(
         StockHistory.event_type == "ventes_historiques"
     ).all()
 
-    by_month = {}   # "2025-05" → qty
-    by_product = {} # nom → qty total
-    by_cat = {}     # cat → qty
+    by_month = {}     # "2025-05" → {qty, ca}
+    by_product = {}   # nom → {qty, ca, category, par_mois}
+    by_cat = {}       # cat → {qty, ca}
 
     for row in rows:
         try:
@@ -1781,23 +1786,64 @@ def stats_historique(db: Session = Depends(get_db)):
         except Exception:
             continue
         mois = d.get("mois", "")
-        qty = float(d.get("quantity", 0))
-        nom = d.get("product", "?")
-        cat = d.get("category", "Autres")
+        qty  = float(d.get("quantity", 0))
+        ca   = float(d.get("ca", 0))
+        nom  = d.get("product", "?")
+        cat  = d.get("category", "Autres")
 
-        by_month[mois] = round(by_month.get(mois, 0) + qty, 1)
-        by_product[nom] = round(by_product.get(nom, 0) + qty, 1)
-        by_cat[cat] = round(by_cat.get(cat, 0) + qty, 1)
+        if mois not in by_month:
+            by_month[mois] = {"qty": 0, "ca": 0}
+        by_month[mois]["qty"] = round(by_month[mois]["qty"] + qty, 1)
+        by_month[mois]["ca"]  = round(by_month[mois]["ca"]  + ca,  2)
 
-    monthly = sorted([{"mois": k, "qty": v} for k, v in by_month.items()], key=lambda x: x["mois"])
-    top_products = sorted([{"name": k, "qty": v} for k, v in by_product.items()], key=lambda x: x["qty"], reverse=True)
-    by_category = sorted([{"category": k, "qty": v} for k, v in by_cat.items()], key=lambda x: x["qty"], reverse=True)
+        if nom not in by_product:
+            by_product[nom] = {"qty": 0, "ca": 0, "category": cat, "par_mois": {}}
+        by_product[nom]["qty"] = round(by_product[nom]["qty"] + qty, 1)
+        by_product[nom]["ca"]  = round(by_product[nom]["ca"]  + ca,  2)
+        by_product[nom]["par_mois"][mois] = round(by_product[nom]["par_mois"].get(mois, 0) + qty, 1)
+
+        if cat not in by_cat:
+            by_cat[cat] = {"qty": 0, "ca": 0}
+        by_cat[cat]["qty"] = round(by_cat[cat]["qty"] + qty, 1)
+        by_cat[cat]["ca"]  = round(by_cat[cat]["ca"]  + ca,  2)
+
+    total_qty = round(sum(v["qty"] for v in by_month.values()), 1)
+    total_ca  = round(sum(v["ca"]  for v in by_month.values()), 2)
+
+    # Classement produits
+    all_products = sorted(
+        [{"name": k, "qty": v["qty"], "ca": v["ca"], "category": v["category"],
+          "par_mois": v["par_mois"],
+          "pct": round(v["qty"] / total_qty * 100, 1) if total_qty else 0}
+         for k, v in by_product.items()],
+        key=lambda x: x["qty"], reverse=True
+    )
+
+    # Top 20 par catégorie
+    by_cat_products = {}
+    for p in all_products:
+        c = p["category"]
+        if c not in by_cat_products:
+            by_cat_products[c] = []
+        by_cat_products[c].append(p)
+
+    # Mois peak
+    peak = max(by_month.items(), key=lambda x: x[1]["qty"]) if by_month else ("—", {"qty": 0})
+
+    monthly = sorted([{"mois": k, "qty": v["qty"], "ca": v["ca"]} for k, v in by_month.items()], key=lambda x: x["mois"])
+    by_category = sorted([{"category": k, "qty": v["qty"], "ca": v["ca"]} for k, v in by_cat.items()], key=lambda x: x["qty"], reverse=True)
 
     return {
+        "total_qty": total_qty,
+        "total_ca": total_ca,
+        "peak_mois": peak[0],
+        "peak_qty": peak[1]["qty"],
         "monthly": monthly,
-        "top_products": top_products[:30],
         "by_category": by_category,
-        "total": round(sum(v for v in by_month.values()), 1),
+        "top_products": all_products[:20],
+        "bottom_products": all_products[-30:][::-1],  # 30 moins vendus, du moins au plus
+        "by_cat_products": {k: v[:20] for k, v in by_cat_products.items()},
+        "nb_produits": len(all_products),
     }
 
 

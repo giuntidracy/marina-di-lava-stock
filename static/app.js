@@ -1300,84 +1300,179 @@ async function importHistorique(input) {
   input.value = "";
 }
 
+const MOIS_FR = {"01":"Jan","02":"Fév","03":"Mar","04":"Avr","05":"Mai","06":"Juin","07":"Juil","08":"Août","09":"Sept","10":"Oct","11":"Nov","12":"Déc"};
+function fmtMois(m) { const [y,mo] = m.split("-"); return (MOIS_FR[mo]||mo)+" "+y; }
+
 async function loadHistorique() {
   const container = document.getElementById("stats-histo");
   container.innerHTML = `<div style="color:var(--text-muted);padding:16px 0">Chargement…</div>`;
   try {
     const data = await api("/api/stats/historique");
-    if (!data.monthly.length) {
-      container.innerHTML = `<div class="info-box">Aucune donnée historique. Importez un fichier Cashpad Synthèse via le bouton "⬆ Importer saison".</div>`;
+    if (!data.monthly || !data.monthly.length) {
+      container.innerHTML = `<div class="info-box">Aucune donnée historique. Cliquez sur "⬆ Importer saison" pour importer votre fichier Cashpad Synthèse.</div>`;
       return;
     }
 
     _statsCharts.forEach(c => c.destroy()); _statsCharts = [];
-
-    const moisLabels = {
-      "2025-05":"Mai","2025-06":"Juin","2025-07":"Juil","2025-08":"Août",
-      "2025-09":"Sept","2025-10":"Oct","2024-05":"Mai 24","2024-06":"Juin 24",
-    };
+    const colors10 = ["#15803D","#16A34A","#4ADE80","#86EFAC","#FCD34D","#FB923C","#F87171","#A78BFA","#60A5FA","#34D399","#F472B6","#94A3B8"];
 
     container.innerHTML = `
-      <div class="stock-summary" style="margin-bottom:20px">
-        <div class="summary-card"><div class="s-label">Total vendu</div><div class="s-value">${data.total.toLocaleString()}</div><div class="s-sub">unités saison 2025</div></div>
-        <div class="summary-card"><div class="s-label">Produits</div><div class="s-value">${data.top_products.length}</div><div class="s-sub">références actives</div></div>
-        <div class="summary-card"><div class="s-label">Catégories</div><div class="s-value">${data.by_category.length}</div><div class="s-sub">&nbsp;</div></div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+    <!-- KPIs -->
+    <div class="stock-summary" style="margin-bottom:24px">
+      <div class="summary-card"><div class="s-label">Total vendu</div><div class="s-value">${data.total_qty.toLocaleString()}</div><div class="s-sub">unités saison</div></div>
+      <div class="summary-card"><div class="s-label">CA total HT</div><div class="s-value">€${Math.round(data.total_ca).toLocaleString()}</div><div class="s-sub">hors taxes</div></div>
+      <div class="summary-card"><div class="s-label">Mois record</div><div class="s-value">${fmtMois(data.peak_mois)}</div><div class="s-sub">${data.peak_qty.toLocaleString()} unités</div></div>
+      <div class="summary-card"><div class="s-label">Références</div><div class="s-value">${data.nb_produits}</div><div class="s-sub">produits vendus</div></div>
+    </div>
+
+    <!-- Onglets internes -->
+    <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap">
+      ${["Vue globale","🏆 Top 20 par catégorie","🔻 30 moins vendus","📊 Catégories"].map((t,i)=>
+        `<button class="btn ${i===0?'btn-primary':'btn-outline'} histo-tab-btn" data-tab="${i}" onclick="switchHistoTab(${i})">${t}</button>`
+      ).join("")}
+    </div>
+
+    <!-- Tab 0 : Vue globale -->
+    <div id="histo-tab-0">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
         <div class="card" style="padding:16px">
-          <div style="font-weight:600;margin-bottom:10px">📅 Ventes par mois</div>
+          <div style="font-weight:600;margin-bottom:10px">📅 Ventes mensuelles</div>
           <canvas id="histo-monthly" height="200"></canvas>
         </div>
         <div class="card" style="padding:16px">
-          <div style="font-weight:600;margin-bottom:10px">Ventes par catégorie</div>
+          <div style="font-weight:600;margin-bottom:10px">CA par catégorie</div>
           <canvas id="histo-cat" height="200"></canvas>
         </div>
       </div>
-      <div class="card" style="padding:16px;margin-bottom:20px">
-        <div style="font-weight:600;margin-bottom:10px">🏆 Top 20 produits — Saison 2025</div>
-        <canvas id="histo-top" height="350"></canvas>
-      </div>`;
+      <div class="card" style="padding:16px">
+        <div style="font-weight:600;margin-bottom:10px">🏆 Top 20 toutes catégories</div>
+        <canvas id="histo-top20" height="360"></canvas>
+      </div>
+    </div>
 
-    // Mensuel
+    <!-- Tab 1 : Top 20 par catégorie -->
+    <div id="histo-tab-1" class="hidden">
+      <div id="histo-by-cat-content"></div>
+    </div>
+
+    <!-- Tab 2 : 30 moins vendus -->
+    <div id="histo-tab-2" class="hidden">
+      <div class="info-box" style="margin-bottom:12px">⚠️ Ces produits se vendent très peu — à revoir pour la prochaine saison (réduire les commandes ou retirer de la carte).</div>
+      <div class="table-wrap"><table id="histo-bottom-table">
+        <thead><tr><th>Rang</th><th>Produit</th><th>Catégorie</th><th>Qté vendue</th><th>CA HT</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </div>
+
+    <!-- Tab 3 : Catégories -->
+    <div id="histo-tab-3" class="hidden">
+      <div class="table-wrap"><table>
+        <thead><tr><th>Catégorie</th><th>Qté vendue</th><th>CA HT</th><th>% du total</th></tr></thead>
+        <tbody>${data.by_category.map(c=>`<tr>
+          <td><strong>${esc(c.category)}</strong></td>
+          <td>${c.qty.toLocaleString()}</td>
+          <td>€${c.ca.toLocaleString()}</td>
+          <td><div style="display:flex;align-items:center;gap:6px">
+            <div style="background:#E5E7EB;border-radius:4px;height:8px;width:80px">
+              <div style="background:#15803D;border-radius:4px;height:8px;width:${Math.round(c.qty/data.total_qty*80)}px"></div>
+            </div>
+            ${(c.qty/data.total_qty*100).toFixed(1)}%
+          </div></td>
+        </tr>`).join("")}</tbody>
+      </table></div>
+    </div>`;
+
+    // Graphique mensuel
     const mCtx = document.getElementById("histo-monthly").getContext("2d");
     _statsCharts.push(new Chart(mCtx, {
       type: "bar",
       data: {
-        labels: data.monthly.map(m => moisLabels[m.mois] || m.mois),
-        datasets: [{ label: "Unités vendues", data: data.monthly.map(m => m.qty),
-          backgroundColor: "#15803D", borderRadius: 6 }]
+        labels: data.monthly.map(m => fmtMois(m.mois)),
+        datasets: [
+          { label: "Unités", data: data.monthly.map(m => m.qty), backgroundColor: "#15803D", borderRadius: 4, yAxisID: "y" },
+          { label: "CA HT €", data: data.monthly.map(m => m.ca), type: "line", borderColor: "#F59E0B", backgroundColor: "rgba(245,158,11,0.1)", yAxisID: "y1", tension: 0.3, fill: true },
+        ]
       },
-      options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+      options: { responsive: true,
+        scales: { y: { beginAtZero: true, position: "left" }, y1: { beginAtZero: true, position: "right", grid: { drawOnChartArea: false } } },
+        plugins: { legend: { labels: { font: { size: 11 } } } }
+      }
     }));
 
-    // Catégories
-    const colors = ["#15803D","#16A34A","#4ADE80","#86EFAC","#FCD34D","#FB923C","#F87171","#A78BFA","#60A5FA","#34D399"];
+    // Donut catégories
     const cCtx = document.getElementById("histo-cat").getContext("2d");
     _statsCharts.push(new Chart(cCtx, {
       type: "doughnut",
-      data: {
-        labels: data.by_category.map(c => c.category),
-        datasets: [{ data: data.by_category.map(c => c.qty), backgroundColor: colors, borderWidth: 2 }]
-      },
+      data: { labels: data.by_category.map(c => c.category), datasets: [{ data: data.by_category.map(c => c.ca), backgroundColor: colors10, borderWidth: 2 }] },
       options: { responsive: true, plugins: { legend: { position: "bottom", labels: { font: { size: 10 } } } } }
     }));
 
-    // Top produits
-    const top20 = data.top_products.slice(0,20);
-    const tCtx = document.getElementById("histo-top").getContext("2d");
+    // Top 20 barres
+    const tCtx = document.getElementById("histo-top20").getContext("2d");
     _statsCharts.push(new Chart(tCtx, {
       type: "bar",
       data: {
-        labels: top20.map(p => p.name),
-        datasets: [{ label: "Quantité", data: top20.map(p => p.qty), backgroundColor: "#15803D", borderRadius: 4 }]
+        labels: data.top_products.map(p => p.name),
+        datasets: [{ label: "Qté", data: data.top_products.map(p => p.qty), backgroundColor: "#15803D", borderRadius: 4 }]
       },
       options: { indexAxis: "y", responsive: true, plugins: { legend: { display: false } },
         scales: { x: { beginAtZero: true }, y: { ticks: { font: { size: 11 } } } } }
     }));
 
+    // Tab 1 : par catégorie
+    const catContainer = document.getElementById("histo-by-cat-content");
+    let catHtml = "";
+    const cats = Object.keys(data.by_cat_products).sort((a,b) => {
+      const qa = data.by_cat_products[a].reduce((s,p)=>s+p.qty,0);
+      const qb = data.by_cat_products[b].reduce((s,p)=>s+p.qty,0);
+      return qb - qa;
+    });
+    cats.forEach(cat => {
+      const prods = data.by_cat_products[cat];
+      catHtml += `<div class="card" style="padding:16px;margin-bottom:14px">
+        <div style="font-weight:700;font-size:15px;margin-bottom:10px;color:var(--primary)">${esc(cat)}</div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>#</th><th>Produit</th><th>Qté vendue</th><th>CA HT</th><th>% total</th><th>Meilleur mois</th></tr></thead>
+          <tbody>${prods.map((p,i) => {
+            const bestMois = Object.entries(p.par_mois||{}).sort((a,b)=>b[1]-a[1])[0];
+            return `<tr>
+              <td><strong style="color:${i<3?'#15803D':'var(--text-muted)'}">${i===0?'🥇':i===1?'🥈':i===2?'🥉':`#${i+1}`}</strong></td>
+              <td><strong>${esc(p.name)}</strong></td>
+              <td>${p.qty.toLocaleString()}</td>
+              <td>€${p.ca.toLocaleString()}</td>
+              <td><span style="background:#F0FDF4;color:#15803D;padding:2px 6px;border-radius:10px;font-size:11px">${p.pct}%</span></td>
+              <td style="font-size:12px;color:var(--text-muted)">${bestMois ? fmtMois(bestMois[0])+" ("+bestMois[1]+")" : "—"}</td>
+            </tr>`;
+          }).join("")}</tbody>
+        </table></div>
+      </div>`;
+    });
+    catContainer.innerHTML = catHtml || `<div class="info-box">Aucune donnée.</div>`;
+
+    // Tab 2 : 30 moins vendus
+    const bottomTbody = document.querySelector("#histo-bottom-table tbody");
+    bottomTbody.innerHTML = data.bottom_products.map((p,i) => `<tr>
+      <td style="color:var(--text-muted)">#${i+1}</td>
+      <td>${esc(p.name)}</td>
+      <td><span style="background:#F3F4F6;padding:2px 6px;border-radius:10px;font-size:11px">${esc(p.category)}</span></td>
+      <td style="color:#DC2626;font-weight:600">${p.qty}</td>
+      <td>€${p.ca}</td>
+    </tr>`).join("");
+
   } catch(e) {
     container.innerHTML = `<div class="info-box">Erreur : ${esc(e.message)}</div>`;
   }
+}
+
+function switchHistoTab(tab) {
+  document.querySelectorAll(".histo-tab-btn").forEach(b => {
+    b.classList.toggle("btn-primary", parseInt(b.dataset.tab) === tab);
+    b.classList.toggle("btn-outline", parseInt(b.dataset.tab) !== tab);
+  });
+  [0,1,2,3].forEach(i => {
+    const el = document.getElementById(`histo-tab-${i}`);
+    if (el) el.classList.toggle("hidden", i !== tab);
+  });
 }
 
 async function loadStats(days) {
