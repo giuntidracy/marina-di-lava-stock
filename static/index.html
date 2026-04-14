@@ -11,25 +11,29 @@
 <!-- Écran de connexion -->
 <div id="login-screen">
   <div id="login-box">
-    <img src="/static/logo.png" alt="Marina Di Lava" style="height:70px;object-fit:contain;margin-bottom:8px"/>
+    <img src="/static/logo.png" alt="Marina Di Lava" style="height:80px;object-fit:contain;margin-bottom:14px;filter:drop-shadow(0 4px 16px rgba(0,0,0,.4))"/>
     <div class="login-sub">Gestion de Stock</div>
-    <div style="font-size:11px;color:#C9A84C;margin-bottom:20px;letter-spacing:0.5px">By Giunti J-Marc</div>
+    <div style="font-size:10px;color:rgba(201,168,76,.6);margin-bottom:28px;letter-spacing:1.5px;text-transform:uppercase;font-weight:500">By Giunti J-Marc</div>
     <div id="login-buttons">
       <button class="login-btn service-btn" onclick="loginService()">
         <span class="login-btn-icon">🍸</span>
-        <span class="login-btn-label">Service</span>
-        <span class="login-btn-desc">Enregistrer les sorties</span>
+        <div>
+          <span class="login-btn-label">Service</span>
+          <span class="login-btn-desc">Enregistrer les sorties</span>
+        </div>
       </button>
       <button class="login-btn manager-btn" onclick="showPinInput()">
         <span class="login-btn-icon">⚙️</span>
-        <span class="login-btn-label">Gérant</span>
-        <span class="login-btn-desc">Accès complet</span>
+        <div>
+          <span class="login-btn-label">Gérant</span>
+          <span class="login-btn-desc">Accès complet</span>
+        </div>
       </button>
     </div>
     <div id="pin-area" class="hidden">
       <p class="pin-label">Code PIN</p>
       <input id="pin-input" type="password" inputmode="numeric" maxlength="8" placeholder="••••" autocomplete="off" onkeydown="if(event.key==='Enter') loginManager()"/>
-      <button class="login-btn manager-btn" style="margin-top:12px" onclick="loginManager()">Valider</button>
+      <button class="login-btn manager-btn" style="margin-top:14px;justify-content:center;font-size:15px;font-weight:700" onclick="loginManager()">Valider</button>
       <p id="pin-error" class="pin-error hidden">Code incorrect</p>
       <button class="back-btn" onclick="hidePinInput()">← Retour</button>
     </div>
