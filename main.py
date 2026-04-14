@@ -3,16 +3,21 @@ import random
 import base64
 import io
 import os
-from datetime import datetime
+import secrets
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv(override=True)
 from typing import Optional, List
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel
+
+# ── Sessions en mémoire ────────────────────────────────────────────────────
+_sessions: dict = {}       # token → {role, expires}
+_pin_failures: dict = {}   # ip → {count, locked_until}
 
 from database import get_db, engine
 from models import (
@@ -33,6 +38,29 @@ with engine.connect() as _conn:
 
 app = FastAPI(title="Marina di Lava — Gestion Stock")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+# ── Middleware auth ────────────────────────────────────────────────────────
+OPEN_PATHS = {"/api/auth", "/api/auth/service"}
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    # Laisser passer : pages HTML, assets statiques, endpoints d'auth
+    if not path.startswith("/api/") or path in OPEN_PATHS:
+        return await call_next(request)
+    # Vérifier le token
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    session = _sessions.get(token)
+    if not session:
+        return JSONResponse({"detail": "Non authentifié"}, status_code=401)
+    if datetime.utcnow() > session["expires"]:
+        _sessions.pop(token, None)
+        return JSONResponse({"detail": "Session expirée"}, status_code=401)
+    # Renouvelle la session à chaque appel (inactivité 30 min)
+    session["expires"] = datetime.utcnow() + timedelta(minutes=30)
+    return await call_next(request)
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -168,12 +196,38 @@ def root():
 class PinIn(BaseModel):
     pin: str
 
+@app.post("/api/auth/service")
+def auth_service():
+    """Connexion service — pas de PIN, accès limité."""
+    token = secrets.token_urlsafe(32)
+    _sessions[token] = {"role": "service", "expires": datetime.utcnow() + timedelta(minutes=30)}
+    return {"ok": True, "role": "service", "token": token}
+
 @app.post("/api/auth")
-def auth_pin(body: PinIn):
+def auth_pin(body: PinIn, request: Request):
+    """Connexion gérant — vérifie PIN avec anti-brute-force."""
+    ip = request.client.host if request.client else "unknown"
+    failure = _pin_failures.get(ip, {})
+    locked_until = failure.get("locked_until")
+    if locked_until and datetime.utcnow() < locked_until:
+        secs = int((locked_until - datetime.utcnow()).total_seconds())
+        raise HTTPException(429, f"Trop de tentatives. Réessayez dans {secs}s")
+
     manager_pin = os.environ.get("MANAGER_PIN", "1234")
     if body.pin == manager_pin:
-        return {"ok": True, "role": "manager"}
-    raise HTTPException(status_code=401, detail="Code PIN incorrect")
+        _pin_failures.pop(ip, None)
+        token = secrets.token_urlsafe(32)
+        _sessions[token] = {"role": "manager", "expires": datetime.utcnow() + timedelta(minutes=30)}
+        return {"ok": True, "role": "manager", "token": token}
+
+    count = failure.get("count", 0) + 1
+    if count >= 3:
+        _pin_failures[ip] = {"count": count, "locked_until": datetime.utcnow() + timedelta(minutes=15)}
+        raise HTTPException(429, "3 erreurs — accès bloqué 15 minutes")
+    else:
+        _pin_failures[ip] = {"count": count}
+        remaining = 3 - count
+        raise HTTPException(401, f"Code PIN incorrect — {remaining} tentative(s) restante(s)")
 
 
 # ══════════════════════════════════════════════════════════════════════════

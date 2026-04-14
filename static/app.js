@@ -9,13 +9,17 @@ let allSuppliers = [];
 let allCocktails = [];
 let stockSort = { col: null, dir: 1 };
 let userRole = null; // "service" ou "manager"
+let authToken = null; // token API
+let inactivityTimer = null;
 
 // Onglets accessibles par rôle
 const SERVICE_VIEWS = ["inventory"];
 const MANAGER_VIEWS = ["stock","cocktails","alerts","cashpad","delivery","inventory","history","suppliers","mapping"];
 
 // ── Login ──────────────────────────────────────────────────
-function loginService() {
+async function loginService() {
+  const res = await api("/api/auth/service", { method: "POST" });
+  authToken = res.token;
   userRole = "service";
   startApp();
 }
@@ -28,9 +32,12 @@ async function loginManager() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pin })
     });
+    authToken = res.token;
     userRole = "manager";
     startApp();
-  } catch {
+  } catch(e) {
+    const msg = e.message || "Code incorrect";
+    document.getElementById("pin-error").textContent = msg;
     document.getElementById("pin-error").classList.remove("hidden");
     document.getElementById("pin-input").value = "";
     document.getElementById("pin-input").focus();
@@ -54,6 +61,10 @@ function startApp() {
   document.getElementById("login-screen").classList.add("hidden");
   document.querySelector("header").style.display = "";
   document.getElementById("app").style.display = "";
+  resetInactivityTimer();
+  // Réinitialise le timer sur toute interaction utilisateur
+  ["click","touchstart","keydown"].forEach(evt =>
+    document.addEventListener(evt, resetOnActivity, { passive: true }));
 
   const allowedViews = userRole === "manager" ? MANAGER_VIEWS : SERVICE_VIEWS;
 
@@ -88,6 +99,8 @@ function startApp() {
 
 function logout() {
   userRole = null;
+  authToken = null;
+  clearTimeout(inactivityTimer);
   location.reload();
 }
 
@@ -139,16 +152,38 @@ function renderView(view) {
 
 // ── API helper ─────────────────────────────────────────────
 async function api(url, options = {}) {
+  // Ajoute le token d'authentification sur tous les appels /api/
+  if (authToken && url.startsWith("/api/")) {
+    options.headers = { ...(options.headers || {}), "Authorization": `Bearer ${authToken}` };
+  }
   const res = await fetch(url, options);
+  if (res.status === 401) {
+    // Session expirée → retour à l'écran de connexion
+    logout();
+    throw new Error("Session expirée, veuillez vous reconnecter");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    // err.detail peut être un tableau (erreurs de validation FastAPI) ou une string
     const msg = Array.isArray(err.detail)
       ? err.detail.map(e => e.msg || JSON.stringify(e)).join(", ")
       : (err.detail || res.statusText);
     throw new Error(msg);
   }
+  resetInactivityTimer();
   return res.json();
+}
+
+// ── Déconnexion automatique après 30 min ───────────────────
+function resetInactivityTimer() {
+  clearTimeout(inactivityTimer);
+  inactivityTimer = setTimeout(() => {
+    alert("⏱ Session expirée après 30 min d'inactivité. Veuillez vous reconnecter.");
+    logout();
+  }, 30 * 60 * 1000);
+}
+
+function resetOnActivity() {
+  if (authToken) resetInactivityTimer();
 }
 
 // ── Alert badge ────────────────────────────────────────────
