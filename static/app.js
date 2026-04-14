@@ -17,7 +17,6 @@ const MANAGER_VIEWS = ["stock","cocktails","alerts","cashpad","delivery","invent
 // ── Login ──────────────────────────────────────────────────
 function loginService() {
   userRole = "service";
-  sessionStorage.setItem("role", "service");
   startApp();
 }
 
@@ -30,7 +29,6 @@ async function loginManager() {
       body: JSON.stringify({ pin })
     });
     userRole = "manager";
-    sessionStorage.setItem("role", "manager");
     startApp();
   } catch {
     document.getElementById("pin-error").classList.remove("hidden");
@@ -89,7 +87,6 @@ function startApp() {
 }
 
 function logout() {
-  sessionStorage.removeItem("role");
   userRole = null;
   location.reload();
 }
@@ -100,12 +97,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelector("header").style.display = "none";
   document.getElementById("app").style.display = "none";
 
-  // Reprend la session si déjà connecté
-  const savedRole = sessionStorage.getItem("role");
-  if (savedRole) {
-    userRole = savedRole;
-    startApp();
-  }
+  // Toujours afficher l'écran de connexion à l'ouverture
 });
 
 async function loadAll() {
