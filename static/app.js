@@ -798,6 +798,13 @@ function renderDelivery(el) {
         <button class="btn btn-primary" onclick="analyzeDelivery()">🔍 Analyser avec Claude AI</button>
       </div>
       <div id="delivery-result" style="margin-top:16px"></div>
+    </div>
+    <div style="margin-top:32px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <strong style="font-size:15px">📋 Derniers imports (7 jours)</strong>
+        <button class="btn btn-sm" onclick="loadRecentImports()">🔄 Rafraîchir</button>
+      </div>
+      <div id="recent-imports-list">Chargement…</div>
     </div>`;
 
   const zone = document.getElementById("delivery-zone");
@@ -808,6 +815,56 @@ function renderDelivery(el) {
     const f = e.dataTransfer.files[0];
     if (f) { document.getElementById("delivery-file").files = e.dataTransfer.files; setDeliveryFile({ files: [f] }); }
   });
+  loadRecentImports();
+}
+
+async function loadRecentImports() {
+  const container = document.getElementById("recent-imports-list");
+  if (!container) return;
+  try {
+    const imports = await api("/api/imports/recent?days=7");
+    if (imports.length === 0) {
+      container.innerHTML = `<div style="color:var(--text-muted);font-size:13px;padding:8px 0">Aucun import ces 7 derniers jours.</div>`;
+      return;
+    }
+    let html = '';
+    imports.forEach(imp => {
+      const annule = imp.annule;
+      html += `<div class="import-preview" style="margin-bottom:10px;${annule ? 'opacity:0.5' : ''}">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div>
+            <strong>${esc(imp.supplier || 'Fournisseur inconnu')}</strong>
+            <span style="color:var(--text-muted);font-size:12px;margin-left:8px">BL n°${esc(imp.reference)} — ${esc(imp.created_at)}</span>
+            <span style="font-size:12px;margin-left:8px;color:var(--text-muted)">${imp.nb_produits} produit(s)</span>
+            ${annule ? '<span style="background:#FEF2F2;color:#DC2626;font-size:11px;padding:2px 8px;border-radius:20px;margin-left:6px">Annulé</span>' : ''}
+          </div>
+          ${!annule ? `<button class="btn btn-sm" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA"
+            onclick="annulerImport(${imp.id}, '${esc(imp.reference)}', '${esc(imp.supplier)}')">↩ Annuler cet import</button>` : ''}
+        </div>
+        ${imp.details && imp.details.length > 0 ? `
+        <div style="margin-top:8px;font-size:12px;color:var(--text-muted)">
+          ${imp.details.slice(0,5).map(d => `${esc(d.product)} +${d.added}`).join(' · ')}
+          ${imp.details.length > 5 ? ` · <em>+${imp.details.length - 5} autres</em>` : ''}
+        </div>` : ''}
+      </div>`;
+    });
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = `<div style="color:var(--text-muted);font-size:13px">Erreur : ${esc(e.message)}</div>`;
+  }
+}
+
+async function annulerImport(importId, reference, supplier) {
+  if (!confirm(`Annuler l'import BL n°${reference} (${supplier}) ?\n\nLes quantités seront retirées du stock et les anciens prix restaurés.`)) return;
+  try {
+    const res = await api(`/api/imports/${importId}/annuler`, { method: "POST" });
+    alert(`✓ Import annulé — ${res.reversed.length} produit(s) corrigés.`);
+    allProducts = await api("/api/produits");
+    updateAlertBadge();
+    loadRecentImports();
+  } catch(e) {
+    alert("Erreur : " + e.message);
+  }
 }
 
 function setDeliveryFile(input) {

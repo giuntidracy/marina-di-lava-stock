@@ -22,6 +22,15 @@ from models import (
 
 Base.metadata.create_all(bind=engine)
 
+# Migration : ajoute details_json à imports_log si absent
+from sqlalchemy import text as _text
+with engine.connect() as _conn:
+    try:
+        _conn.execute(_text("ALTER TABLE imports_log ADD COLUMN details_json TEXT DEFAULT '[]'"))
+        _conn.commit()
+    except Exception:
+        pass  # colonne déjà présente
+
 app = FastAPI(title="Marina di Lava — Gestion Stock")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -1425,13 +1434,26 @@ def confirm_delivery(body: DeliveryConfirmIn, db: Session = Depends(get_db)):
             actual_qty = raw_qty
 
         if actual_qty > 0:
+            old_price = p.purchase_price
             p.stock += actual_qty
             if prix is not None and prix > 0:
                 p.purchase_price = prix
                 p.is_estimated = False
-            updated.append({"product": p.name, "added": actual_qty})
+            updated.append({
+                "product_id": p.id,
+                "product": p.name,
+                "added": actual_qty,
+                "old_price": old_price,
+                "new_price": p.purchase_price,
+            })
 
-    db.add(ImportLog(import_type="delivery", reference=body.numero_facture, supplier=body.fournisseur))
+    import_log = ImportLog(
+        import_type="delivery",
+        reference=body.numero_facture,
+        supplier=body.fournisseur,
+        details_json=json.dumps(updated, ensure_ascii=False),
+    )
+    db.add(import_log)
     log_event(
         db,
         "livraison",
@@ -1439,12 +1461,83 @@ def confirm_delivery(body: DeliveryConfirmIn, db: Session = Depends(get_db)):
         {
             "numero_facture": body.numero_facture,
             "fournisseur": body.fournisseur,
-            "updated": updated,
+            "updated": [{"product": u["product"], "added": u["added"]} for u in updated],
             "not_found": not_found,
         }
     )
     db.commit()
     return {"ok": True, "updated": updated, "not_found": not_found}
+
+
+@app.get("/api/imports/recent")
+def recent_imports(days: int = 7, db: Session = Depends(get_db)):
+    from datetime import timedelta
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    imports = db.query(ImportLog).filter(
+        ImportLog.import_type == "delivery",
+        ImportLog.created_at >= cutoff,
+    ).order_by(ImportLog.created_at.desc()).all()
+
+    result = []
+    for imp in imports:
+        try:
+            details = json.loads(getattr(imp, 'details_json', '[]') or '[]')
+        except Exception:
+            details = []
+        annule = isinstance(details, dict) and details.get('annule', False)
+        items = details.get('details', []) if isinstance(details, dict) else details
+        result.append({
+            "id": imp.id,
+            "reference": imp.reference,
+            "supplier": imp.supplier or "",
+            "created_at": imp.created_at.strftime("%d/%m/%Y %H:%M"),
+            "annule": annule,
+            "nb_produits": len(items),
+            "details": items,
+        })
+    return result
+
+
+@app.post("/api/imports/{import_id}/annuler")
+def annuler_import(import_id: int, db: Session = Depends(get_db)):
+    from datetime import timedelta
+    imp = db.query(ImportLog).get(import_id)
+    if not imp or imp.import_type != "delivery":
+        raise HTTPException(404, "Import introuvable")
+
+    try:
+        details = json.loads(getattr(imp, 'details_json', '[]') or '[]')
+    except Exception:
+        details = []
+
+    if isinstance(details, dict) and details.get('annule'):
+        raise HTTPException(400, "Cet import a déjà été annulé")
+
+    if datetime.utcnow() - imp.created_at > timedelta(days=7):
+        raise HTTPException(400, "Annulation impossible après 7 jours")
+
+    items = details if isinstance(details, list) else details.get('details', [])
+    reversed_items = []
+
+    for item in items:
+        p = db.query(Product).get(item.get('product_id'))
+        if not p:
+            continue
+        p.stock = round(p.stock - item['added'], 3)
+        old_price = item.get('old_price')
+        if old_price is not None:
+            p.purchase_price = old_price
+            p.is_estimated = old_price is None
+        reversed_items.append({"product": p.name, "removed": item['added']})
+
+    # Marquer comme annulé
+    imp.details_json = json.dumps({"annule": True, "details": items}, ensure_ascii=False)
+
+    log_event(db, "annulation_livraison",
+              f"Annulation BL n°{imp.reference} ({imp.supplier})",
+              {"numero_facture": imp.reference, "fournisseur": imp.supplier, "reversed": reversed_items})
+    db.commit()
+    return {"ok": True, "reversed": reversed_items}
 
 
 # ══════════════════════════════════════════════════════════════════════════
