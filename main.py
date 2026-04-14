@@ -828,7 +828,10 @@ def _parse_socobo_pdf(content_bytes):
                     nom = (rest[:m_cx.start()].strip() + ' ' + kw + ' ' + str(n) + ' X').strip()
                     rest_after = rest_up[m_cx.end():]
                     pr = _re.findall(r'\d+[,\.]\d+', rest_after)
-                    prix = float(pr[0].replace(',', '.')) if pr else None
+                    # SOCOBO affiche le prix par unité (€/L pour fûts, €/bouteille pour cartons)
+                    # → multiplier par n pour obtenir le prix par fût ou par carton
+                    prix_unit = float(pr[0].replace(',', '.')) if pr else None
+                    prix = round(prix_unit * n, 4) if prix_unit is not None else None
 
                 elif m_lot:
                     n = int(m_lot.group(1))
