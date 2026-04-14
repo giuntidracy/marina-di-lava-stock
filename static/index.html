@@ -8,6 +8,34 @@
 </head>
 <body>
 
+<!-- Écran de connexion -->
+<div id="login-screen">
+  <div id="login-box">
+    <div class="login-logo">🍹</div>
+    <div class="login-brand">Marina di Lava</div>
+    <div class="login-sub">Gestion de Stock</div>
+    <div id="login-buttons">
+      <button class="login-btn service-btn" onclick="loginService()">
+        <span class="login-btn-icon">🍸</span>
+        <span class="login-btn-label">Service</span>
+        <span class="login-btn-desc">Enregistrer les sorties</span>
+      </button>
+      <button class="login-btn manager-btn" onclick="showPinInput()">
+        <span class="login-btn-icon">⚙️</span>
+        <span class="login-btn-label">Gérant</span>
+        <span class="login-btn-desc">Accès complet</span>
+      </button>
+    </div>
+    <div id="pin-area" class="hidden">
+      <p class="pin-label">Code PIN</p>
+      <input id="pin-input" type="password" inputmode="numeric" maxlength="8" placeholder="••••" autocomplete="off" onkeydown="if(event.key==='Enter') loginManager()"/>
+      <button class="login-btn manager-btn" style="margin-top:12px" onclick="loginManager()">Valider</button>
+      <p id="pin-error" class="pin-error hidden">Code incorrect</p>
+      <button class="back-btn" onclick="hidePinInput()">← Retour</button>
+    </div>
+  </div>
+</div>
+
 <header>
   <div class="header-brand">
     <span class="logo">🍹</span>

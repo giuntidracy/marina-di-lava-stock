@@ -8,13 +8,104 @@ let allProducts = [];
 let allSuppliers = [];
 let allCocktails = [];
 let stockSort = { col: null, dir: 1 };
+let userRole = null; // "service" ou "manager"
+
+// Onglets accessibles par rôle
+const SERVICE_VIEWS = ["inventory"];
+const MANAGER_VIEWS = ["stock","cocktails","alerts","cashpad","delivery","inventory","history","suppliers","mapping"];
+
+// ── Login ──────────────────────────────────────────────────
+function loginService() {
+  userRole = "service";
+  sessionStorage.setItem("role", "service");
+  startApp();
+}
+
+async function loginManager() {
+  const pin = document.getElementById("pin-input").value;
+  try {
+    await api("/api/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin })
+    });
+    userRole = "manager";
+    sessionStorage.setItem("role", "manager");
+    startApp();
+  } catch {
+    document.getElementById("pin-error").classList.remove("hidden");
+    document.getElementById("pin-input").value = "";
+    document.getElementById("pin-input").focus();
+  }
+}
+
+function showPinInput() {
+  document.getElementById("login-buttons").classList.add("hidden");
+  document.getElementById("pin-area").classList.remove("hidden");
+  document.getElementById("pin-input").focus();
+}
+
+function hidePinInput() {
+  document.getElementById("pin-area").classList.add("hidden");
+  document.getElementById("login-buttons").classList.remove("hidden");
+  document.getElementById("pin-error").classList.add("hidden");
+  document.getElementById("pin-input").value = "";
+}
+
+function startApp() {
+  document.getElementById("login-screen").classList.add("hidden");
+  document.querySelector("header").style.display = "";
+  document.getElementById("app").style.display = "";
+
+  const allowedViews = userRole === "manager" ? MANAGER_VIEWS : SERVICE_VIEWS;
+
+  // Affiche/cache les boutons de nav
+  document.querySelectorAll(".nav-btn").forEach(btn => {
+    if (allowedViews.includes(btn.dataset.view)) {
+      btn.style.display = "";
+    } else {
+      btn.style.display = "none";
+    }
+  });
+
+  // Ajoute bouton déconnexion
+  const nav = document.getElementById("main-nav");
+  if (!document.getElementById("logout-btn")) {
+    const logoutBtn = document.createElement("button");
+    logoutBtn.id = "logout-btn";
+    logoutBtn.className = "nav-btn logout-nav-btn";
+    logoutBtn.textContent = "🔓 Déconnexion";
+    logoutBtn.onclick = logout;
+    nav.appendChild(logoutBtn);
+  }
+
+  document.querySelectorAll(".nav-btn").forEach(btn => {
+    btn.addEventListener("click", () => btn.id !== "logout-btn" && switchView(btn.dataset.view));
+  });
+
+  const defaultView = userRole === "manager" ? "stock" : "inventory";
+  switchView(defaultView);
+  loadAll();
+}
+
+function logout() {
+  sessionStorage.removeItem("role");
+  userRole = null;
+  location.reload();
+}
 
 // ── Init ───────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  document.querySelectorAll(".nav-btn").forEach(btn => {
-    btn.addEventListener("click", () => switchView(btn.dataset.view));
-  });
-  loadAll();
+  // Cache l'app en attendant la connexion
+  document.querySelector("header").style.display = "none";
+  document.getElementById("app").style.display = "none";
+
+  // Reprend la session si déjà connecté
+  const savedRole = sessionStorage.getItem("role");
+  if (savedRole) {
+    userRole = savedRole;
+    startApp();
+  }
 });
 
 async function loadAll() {

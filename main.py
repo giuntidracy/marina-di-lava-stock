@@ -154,6 +154,16 @@ def root():
     return FileResponse("static/index.html")
 
 
+class PinIn(BaseModel):
+    pin: str
+
+@app.post("/api/auth")
+def auth_pin(body: PinIn):
+    manager_pin = os.environ.get("MANAGER_PIN", "1234")
+    if body.pin == manager_pin:
+        return {"ok": True, "role": "manager"}
+    raise HTTPException(status_code=401, detail="Code PIN incorrect")
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # FOURNISSEURS / SUPPLIERS
