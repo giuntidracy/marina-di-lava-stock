@@ -154,16 +154,6 @@ def root():
     return FileResponse("static/index.html")
 
 
-@app.post("/admin/restore-db")
-async def restore_db(file: UploadFile = File(...)):
-    """Endpoint temporaire pour restaurer la base de données depuis un fichier."""
-    import shutil
-    db_path = os.environ.get("DATABASE_PATH", "./marina_stock.db")
-    content = await file.read()
-    with open(db_path, "wb") as f:
-        f.write(content)
-    return {"ok": True, "message": f"Base de données restaurée ({len(content)} bytes)"}
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # FOURNISSEURS / SUPPLIERS
