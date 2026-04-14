@@ -27,7 +27,7 @@ async function loginService() {
 async function loginManager() {
   const pin = document.getElementById("pin-input").value;
   try {
-    await api("/api/auth", {
+    const res = await api("/api/auth", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pin })
