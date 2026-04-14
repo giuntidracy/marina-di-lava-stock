@@ -246,24 +246,24 @@ function renderStock(el) {
       </div>
     </div>
     <div class="stock-summary">
-      <div class="summary-card">
+      <div class="summary-card card-gold" style="--card-icon:'💰'">
         <div class="s-label">Valeur totale stock</div>
         <div class="s-value">€${totalVal.toFixed(0)}</div>
         <div class="s-sub">${withVal.length} produits valorisés</div>
       </div>
-      <div class="summary-card">
+      <div class="summary-card" style="--card-icon:'📦'">
         <div class="s-label">Produits</div>
         <div class="s-value">${allProducts.length}</div>
         <div class="s-sub">${allProducts.filter(p => p.stock > 0).length} en stock</div>
       </div>
-      <div class="summary-card" style="${ruptures > 0 ? 'border-color:#E74C3C' : ''}">
+      <div class="summary-card ${ruptures > 0 ? 'card-danger' : 'card-success'}" style="--card-icon:'${ruptures > 0 ? '🚨' : '✅'}'">
         <div class="s-label">Ruptures</div>
-        <div class="s-value" style="${ruptures > 0 ? 'color:#E74C3C' : ''}">${ruptures}</div>
-        <div class="s-sub">${stockBas} stock bas</div>
+        <div class="s-value">${ruptures}</div>
+        <div class="s-sub">${stockBas > 0 ? `⚠️ ${stockBas} stock bas` : 'Stock sain'}</div>
       </div>
-      <div class="summary-card">
+      <div class="summary-card card-success" style="--card-icon:'📈'">
         <div class="s-label">Marge ≥ 70%</div>
-        <div class="s-value" style="color:#27500A">${margesOk}</div>
+        <div class="s-value">${margesOk}</div>
         <div class="s-sub">sur ${allProducts.filter(p => p.marge !== null).length} valorisés</div>
       </div>
     </div>
