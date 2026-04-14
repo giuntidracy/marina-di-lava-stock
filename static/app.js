@@ -929,8 +929,16 @@ async function renderInventory(el) {
       </button>
       <span id="reserve-count-label" style="margin-left:12px;color:var(--text-muted);font-size:14px"></span>
     </div>
-    <div id="reserve-result" style="margin-top:16px"></div>`;
+    <div id="reserve-result" style="margin-top:16px"></div>
+    <div style="margin-top:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <strong style="font-size:14px">Sorties du jour</strong>
+        <button class="btn btn-sm" onclick="loadSortiesToday()" style="font-size:12px">🔄 Rafraîchir</button>
+      </div>
+      <div id="sorties-today"></div>
+    </div>`;
   loadReserveProducts();
+  loadSortiesToday();
 }
 
 async function loadReserveProducts() {
@@ -1032,7 +1040,6 @@ async function submitReserve() {
 
   if (sorties.length === 0) { alert("Aucune sortie saisie."); return; }
 
-  // Utilise l'endpoint d'ajustement manuel pour chaque sortie
   try {
     const results = [];
     for (const s of sorties) {
@@ -1042,19 +1049,21 @@ async function submitReserve() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           product_id: s.product_id,
-          quantity: -s.qty,   // sortie = négatif
+          quantity: -s.qty,
           note: `Sortie réserve${staff ? " par " + staff : ""} : -${s.qty} ${prod?.unit || ""}`,
         }),
       });
-      results.push({ name: prod?.name || "?", qty: s.qty, unit: prod?.unit || "", new_stock: res.new_stock });
+      results.push({ history_id: res.history_id, name: prod?.name || "?", qty: s.qty, unit: prod?.unit || "", new_stock: res.new_stock });
     }
 
+    // Affiche résumé avec bouton Annuler par ligne
     let html = `<div class="import-preview">
       <h4>📦 Sorties enregistrées (${results.length} produit${results.length > 1 ? 's' : ''})</h4>`;
     results.forEach(r => {
-      html += `<div class="result-item">
-        <span>${esc(r.name)}</span>
-        <span style="color:var(--primary);font-weight:600">−${r.qty} ${esc(r.unit)} sorti(s)</span>
+      html += `<div class="result-item" id="sortie-line-${r.history_id}">
+        <span>${esc(r.name)} — <strong>−${r.qty} ${esc(r.unit)}</strong></span>
+        <button class="btn btn-sm" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA"
+          onclick="annulerSortie(${r.history_id}, '${esc(r.name)}', ${r.qty})">↩ Annuler</button>
       </div>`;
     });
     html += `</div>`;
@@ -1066,8 +1075,51 @@ async function submitReserve() {
     updateReserveBar();
     allProducts = await api("/api/produits");
     updateAlertBadge();
-    await loadReserveProducts(); // rafraîchir les stocks affichés
+    await loadReserveProducts();
+    await loadSortiesToday();
   } catch (e) { alert(e.message); }
+}
+
+async function annulerSortie(historyId, nom, qty) {
+  if (!confirm(`Annuler la sortie de ${qty} × ${nom} ?`)) return;
+  try {
+    await api(`/api/sorties/annuler/${historyId}`, { method: "POST" });
+    const line = document.getElementById(`sortie-line-${historyId}`);
+    if (line) {
+      line.innerHTML = `<span style="color:var(--text-muted);text-decoration:line-through">${esc(nom)}</span>
+        <span style="color:#16A34A;font-size:12px">✓ Annulée</span>`;
+    }
+    allProducts = await api("/api/produits");
+    updateAlertBadge();
+    await loadReserveProducts();
+    await loadSortiesToday();
+  } catch (e) { alert("Erreur : " + e.message); }
+}
+
+async function loadSortiesToday() {
+  const staff = document.getElementById("inv-staff")?.value || "";
+  const container = document.getElementById("sorties-today");
+  if (!container) return;
+  try {
+    const sorties = await api(`/api/sorties/today?staff=${encodeURIComponent(staff)}`);
+    if (sorties.length === 0) {
+      container.innerHTML = `<div style="color:var(--text-muted);font-size:13px;padding:8px 0">Aucune sortie aujourd'hui${staff ? " pour " + esc(staff) : ""}.</div>`;
+      return;
+    }
+    let html = `<div class="import-preview" style="margin-top:0">
+      <h4 style="margin-bottom:10px">🕐 Sorties du jour${staff ? " — " + esc(staff) : ""}</h4>`;
+    sorties.forEach(s => {
+      html += `<div class="result-item" id="sortie-line-${s.history_id}">
+        <span style="font-size:13px"><strong>${esc(s.product)}</strong> — ${Math.abs(s.quantity)} sorti(s) à ${s.created_at}</span>
+        <button class="btn btn-sm" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA"
+          onclick="annulerSortie(${s.history_id}, '${esc(s.product)}', ${Math.abs(s.quantity)})">↩ Corriger</button>
+      </div>`;
+    });
+    html += `</div>`;
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = "";
+  }
 }
 
 // ══════════════════════════════════════════════════════════

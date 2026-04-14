@@ -145,6 +145,8 @@ def log_event(db: Session, event_type: str, description: str, data: dict = None)
         data_json=json.dumps(data or {}, ensure_ascii=False),
     )
     db.add(h)
+    db.flush()  # pour obtenir h.id immédiatement
+    return h
 
 
 # ── root ───────────────────────────────────────────────────────────────────
@@ -436,9 +438,69 @@ def manual_movement(body: ManualMovementIn, db: Session = Depends(get_db)):
     old = p.stock
     p.stock += body.quantity
     db.commit()
-    log_event(db, "mouvement_manuel", f"Mouvement manuel : {p.name} ({'+' if body.quantity >= 0 else ''}{body.quantity})", {
-        "product": p.name, "old_stock": old, "new_stock": p.stock, "note": body.note
-    })
+    data = {"product_id": p.id, "product": p.name, "old_stock": old, "new_stock": p.stock,
+            "quantity": body.quantity, "note": body.note or ""}
+    h = log_event(db, "mouvement_manuel", f"Mouvement manuel : {p.name} ({'+' if body.quantity >= 0 else ''}{body.quantity})", data)
+    db.commit()
+    return {"ok": True, "new_stock": p.stock, "history_id": h.id}
+
+
+@app.get("/api/sorties/today")
+def sorties_today(staff: str = "", db: Session = Depends(get_db)):
+    """Retourne les sorties réserve du jour, filtrées par prénom si fourni."""
+    from datetime import date
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    rows = db.query(StockHistory).filter(
+        StockHistory.event_type == "mouvement_manuel",
+        StockHistory.created_at >= today_start
+    ).order_by(StockHistory.created_at.desc()).all()
+
+    result = []
+    for r in rows:
+        try:
+            d = json.loads(r.data_json)
+        except Exception:
+            continue
+        if d.get("quantity", 0) >= 0:
+            continue  # garder seulement les sorties (négatif)
+        note = d.get("note", "")
+        if staff and staff.lower() not in note.lower():
+            continue
+        result.append({
+            "history_id": r.id,
+            "product_id": d.get("product_id"),
+            "product": d.get("product", "?"),
+            "quantity": d.get("quantity", 0),
+            "note": note,
+            "created_at": r.created_at.strftime("%H:%M"),
+        })
+    return result
+
+
+@app.post("/api/sorties/annuler/{history_id}")
+def annuler_sortie(history_id: int, db: Session = Depends(get_db)):
+    """Annule une sortie en créant un mouvement inverse."""
+    h = db.query(StockHistory).get(history_id)
+    if not h or h.event_type != "mouvement_manuel":
+        raise HTTPException(404, "Sortie introuvable")
+    try:
+        d = json.loads(h.data_json)
+    except Exception:
+        raise HTTPException(400, "Données invalides")
+    qty = d.get("quantity", 0)
+    if qty >= 0:
+        raise HTTPException(400, "Ce n'est pas une sortie")
+    product_id = d.get("product_id")
+    p = db.query(Product).get(product_id)
+    if not p:
+        raise HTTPException(404, "Produit introuvable")
+    old = p.stock
+    p.stock -= qty  # inverse : réintègre la quantité
+    db.commit()
+    log_event(db, "mouvement_manuel",
+              f"Annulation sortie : {p.name} (+{abs(qty)})",
+              {"product_id": p.id, "product": p.name, "old_stock": old,
+               "new_stock": p.stock, "quantity": abs(qty), "note": f"Annulation de la sortie #{history_id}"})
     db.commit()
     return {"ok": True, "new_stock": p.stock}
 
