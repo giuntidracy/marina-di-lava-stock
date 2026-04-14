@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Marina di Lava — Gestion Stock</title>
+<link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+
+<header>
+  <div class="header-brand">
+    <span class="logo">🍹</span>
+    <div>
+      <span class="brand-name">Marina di Lava</span>
+      <span class="brand-sub">Gestion de Stock</span>
+    </div>
+  </div>
+  <button id="hamburger" onclick="toggleNav()" aria-label="Menu">&#9776;</button>
+  <nav id="main-nav">
+    <button class="nav-btn active" data-view="stock">Stock &amp; Marges</button>
+    <button class="nav-btn" data-view="cocktails">Cocktails &amp; Marges</button>
+    <button class="nav-btn" data-view="alerts">Alertes <span id="alert-badge" class="badge hidden">0</span></button>
+    <button class="nav-btn" data-view="cashpad">Import Cashpad</button>
+    <button class="nav-btn" data-view="delivery">Bon de Livraison</button>
+    <button class="nav-btn" data-view="inventory">Sortie Réserve</button>
+    <button class="nav-btn" data-view="history">Historique</button>
+    <button class="nav-btn" data-view="suppliers">Fournisseurs</button>
+    <button class="nav-btn" data-view="mapping">Mapping Cashpad</button>
+  </nav>
+</header>
+
+<main id="app"></main>
+
+<!-- Modal -->
+<div id="modal-overlay" class="hidden">
+  <div id="modal-box">
+    <button id="modal-close" onclick="closeModal()">✕</button>
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import sqlite3; conn = sqlite3.connect\\('marina_stock.db'\\); print\\([x[0] for x in conn.execute\\(\\\\\"SELECT name FROM sqlite_master WHERE type='table'\\\\\"\\).fetchall\\(\\)]\\)\")",
+      "Bash(sed -i '' 's|\"/api/products\"|\"/api/produits\"|g' app.js)",
+      "Bash(sed -i '' 's|\"/api/suppliers\"|\"/api/fournisseurs\"|g' app.js)",
+      "Bash(sed -i '' 's|\"/api/cocktails\"|\"/api/recettes\"|g' app.js)",
+      "Bash(sed -i '' 's|\"/api/alerts\"|\"/api/alertes\"|g' app.js)",
+      "Bash(sed -i '' 's|\"/api/history\"|\"/api/historique\"|g' app.js)",
+      "Bash(grep -n 'api\\(`/api/' \"/Users/marinadilava/Desktop/claude code  essai/static/app.js\")",
+      "Bash(sed -i '' 's|`/api/products/|`/api/produits/|g' app.js)",
+      "Bash(sed -i '' 's|`/api/suppliers/|`/api/fournisseurs/|g' app.js)",
+      "Bash(sed -i '' 's|`/api/cocktails/|`/api/recettes/|g' app.js)",
+      "Bash(sed -i '' 's|\"/api/import/delivery/analyze\"|\"/api/import/livraison\"|g' app.js)",
+      "Bash(sed -i '' 's|\"/api/import/delivery/confirm\"|\"/api/import/livraison/confirm\"|g' app.js)",
+      "Bash(sed -i '' 's|\"/api/inventory/session\"|\"/api/inventaire/session\"|g' app.js)",
+      "Bash(sed -i '' 's|\"/api/inventory/submit\"|\"/api/inventaire/compter\"|g' app.js)"
+    ]
+  }
+}
