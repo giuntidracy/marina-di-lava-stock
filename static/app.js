@@ -1226,12 +1226,27 @@ async function renderStats(el) {
     <div class="section-header">
       <span class="section-title">📊 Statistiques de consommation</span>
     </div>
-    <div style="display:flex;gap:10px;align-items:center;margin-bottom:20px;flex-wrap:wrap">
-      <span style="font-weight:600;font-size:14px">Période :</span>
-      ${[7,30,90].map(d => `<button class="btn btn-outline stats-period-btn" data-days="${d}" onclick="loadStats(${d})">${d === 7 ? '7 jours' : d === 30 ? '30 jours' : '3 mois'}</button>`).join('')}
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:20px;flex-wrap:wrap">
+      <span style="font-weight:600;font-size:14px">Vue :</span>
+      <button class="btn btn-primary stats-view-btn" data-view="live" onclick="switchStatsView('live')">Temps réel</button>
+      <button class="btn btn-outline stats-view-btn" data-view="historique" onclick="switchStatsView('historique')">📅 Saison 2025</button>
+      <label class="btn btn-outline" style="cursor:pointer;position:relative">
+        ⬆ Importer saison
+        <input type="file" accept=".xlsx" style="position:absolute;opacity:0;width:100%;height:100%;top:0;left:0;cursor:pointer"
+          onchange="importHistorique(this)"/>
+      </label>
     </div>
+    <div id="stats-import-msg" style="margin-bottom:12px"></div>
+
+    <div id="stats-live">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
+        <span style="font-weight:600;font-size:13px">Période :</span>
+        ${[7,30,90,180].map(d => `<button class="btn btn-outline stats-period-btn" data-days="${d}" onclick="loadStats(${d})">${d===7?'7j':d===30?'30j':d===90?'3 mois':'Saison'}</button>`).join('')}
+      </div>
+    </div>
+    <div id="stats-histo" class="hidden"></div>
     <div id="stats-loading" style="color:var(--text-muted);padding:20px 0">Chargement…</div>
-    <div id="stats-content" class="hidden">
+    <div id="stats-content" class="hidden" style="margin-top:4px">
       <div class="stock-summary" style="margin-bottom:24px" id="stats-kpi"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px" id="stats-charts-row">
         <div class="card" style="padding:16px">
@@ -1253,6 +1268,116 @@ async function renderStats(el) {
       </div>
     </div>`;
   loadStats(30);
+}
+
+function switchStatsView(view) {
+  document.querySelectorAll(".stats-view-btn").forEach(b => {
+    b.classList.toggle("btn-primary", b.dataset.view === view);
+    b.classList.toggle("btn-outline", b.dataset.view !== view);
+  });
+  document.getElementById("stats-live").classList.toggle("hidden", view !== "live");
+  document.getElementById("stats-histo").classList.toggle("hidden", view !== "historique");
+  document.getElementById("stats-content").classList.toggle("hidden", view !== "live");
+  document.getElementById("stats-loading").classList.add("hidden");
+  if (view === "historique") loadHistorique();
+}
+
+async function importHistorique(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const msg = document.getElementById("stats-import-msg");
+  msg.innerHTML = `<div class="info-box">⏳ Import en cours…</div>`;
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const res = await api("/api/stats/import-historique", { method: "POST", body: fd });
+    msg.innerHTML = `<div class="info-box" style="background:#F0FDF4;border-color:#86EFAC">✅ ${res.imported} entrées importées (${res.mois} mois) depuis ${esc(res.source)}</div>`;
+    loadHistorique();
+    switchStatsView("historique");
+  } catch(e) {
+    msg.innerHTML = `<div class="info-box" style="background:#FEF2F2">❌ Erreur : ${esc(e.message)}</div>`;
+  }
+  input.value = "";
+}
+
+async function loadHistorique() {
+  const container = document.getElementById("stats-histo");
+  container.innerHTML = `<div style="color:var(--text-muted);padding:16px 0">Chargement…</div>`;
+  try {
+    const data = await api("/api/stats/historique");
+    if (!data.monthly.length) {
+      container.innerHTML = `<div class="info-box">Aucune donnée historique. Importez un fichier Cashpad Synthèse via le bouton "⬆ Importer saison".</div>`;
+      return;
+    }
+
+    _statsCharts.forEach(c => c.destroy()); _statsCharts = [];
+
+    const moisLabels = {
+      "2025-05":"Mai","2025-06":"Juin","2025-07":"Juil","2025-08":"Août",
+      "2025-09":"Sept","2025-10":"Oct","2024-05":"Mai 24","2024-06":"Juin 24",
+    };
+
+    container.innerHTML = `
+      <div class="stock-summary" style="margin-bottom:20px">
+        <div class="summary-card"><div class="s-label">Total vendu</div><div class="s-value">${data.total.toLocaleString()}</div><div class="s-sub">unités saison 2025</div></div>
+        <div class="summary-card"><div class="s-label">Produits</div><div class="s-value">${data.top_products.length}</div><div class="s-sub">références actives</div></div>
+        <div class="summary-card"><div class="s-label">Catégories</div><div class="s-value">${data.by_category.length}</div><div class="s-sub">&nbsp;</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+        <div class="card" style="padding:16px">
+          <div style="font-weight:600;margin-bottom:10px">📅 Ventes par mois</div>
+          <canvas id="histo-monthly" height="200"></canvas>
+        </div>
+        <div class="card" style="padding:16px">
+          <div style="font-weight:600;margin-bottom:10px">Ventes par catégorie</div>
+          <canvas id="histo-cat" height="200"></canvas>
+        </div>
+      </div>
+      <div class="card" style="padding:16px;margin-bottom:20px">
+        <div style="font-weight:600;margin-bottom:10px">🏆 Top 20 produits — Saison 2025</div>
+        <canvas id="histo-top" height="350"></canvas>
+      </div>`;
+
+    // Mensuel
+    const mCtx = document.getElementById("histo-monthly").getContext("2d");
+    _statsCharts.push(new Chart(mCtx, {
+      type: "bar",
+      data: {
+        labels: data.monthly.map(m => moisLabels[m.mois] || m.mois),
+        datasets: [{ label: "Unités vendues", data: data.monthly.map(m => m.qty),
+          backgroundColor: "#15803D", borderRadius: 6 }]
+      },
+      options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+    }));
+
+    // Catégories
+    const colors = ["#15803D","#16A34A","#4ADE80","#86EFAC","#FCD34D","#FB923C","#F87171","#A78BFA","#60A5FA","#34D399"];
+    const cCtx = document.getElementById("histo-cat").getContext("2d");
+    _statsCharts.push(new Chart(cCtx, {
+      type: "doughnut",
+      data: {
+        labels: data.by_category.map(c => c.category),
+        datasets: [{ data: data.by_category.map(c => c.qty), backgroundColor: colors, borderWidth: 2 }]
+      },
+      options: { responsive: true, plugins: { legend: { position: "bottom", labels: { font: { size: 10 } } } } }
+    }));
+
+    // Top produits
+    const top20 = data.top_products.slice(0,20);
+    const tCtx = document.getElementById("histo-top").getContext("2d");
+    _statsCharts.push(new Chart(tCtx, {
+      type: "bar",
+      data: {
+        labels: top20.map(p => p.name),
+        datasets: [{ label: "Quantité", data: top20.map(p => p.qty), backgroundColor: "#15803D", borderRadius: 4 }]
+      },
+      options: { indexAxis: "y", responsive: true, plugins: { legend: { display: false } },
+        scales: { x: { beginAtZero: true }, y: { ticks: { font: { size: 11 } } } } }
+    }));
+
+  } catch(e) {
+    container.innerHTML = `<div class="info-box">Erreur : ${esc(e.message)}</div>`;
+  }
 }
 
 async function loadStats(days) {

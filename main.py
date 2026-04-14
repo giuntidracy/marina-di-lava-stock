@@ -1682,6 +1682,125 @@ def stats_consommation(periode: int = 30, db: Session = Depends(get_db)):
     }
 
 
+@app.post("/api/stats/import-historique")
+async def import_historique(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """
+    Importe un fichier Cashpad Synthèse (Excel) pour alimenter les stats historiques.
+    Utilise la feuille 'Ventes-par-produit-par-date-4' (données mensuelles).
+    """
+    import openpyxl, io as _io
+    content = await file.read()
+    wb = openpyxl.load_workbook(_io.BytesIO(content), data_only=True)
+
+    # Cherche la feuille par-date
+    sheet_name = None
+    for s in wb.sheetnames:
+        if "par-date" in s.lower() or "date" in s.lower():
+            sheet_name = s
+            break
+    if not sheet_name:
+        raise HTTPException(400, "Feuille 'par date' introuvable dans ce fichier")
+
+    ws = wb[sheet_name]
+    rows = list(ws.iter_rows(values_only=True))
+
+    # Ligne 11 (index 11) = en-têtes avec les dates des mois
+    header_row = rows[11]
+    # Colonnes paires = Quantité, impaires = Montant (à partir de col 2)
+    months = []  # liste de (col_index_qty, datetime_mois)
+    for ci, cell in enumerate(header_row):
+        if ci < 2:
+            continue
+        from datetime import datetime as _dt
+        if hasattr(cell, 'year') or (isinstance(cell, _dt)):
+            months.append((ci, cell))
+
+    if not months:
+        raise HTTPException(400, "Impossible de trouver les colonnes de dates")
+
+    # Supprime les anciens imports historiques de ce fichier (évite doublons)
+    source_tag = file.filename or "cashpad_historique"
+
+    imported = 0
+    errors = []
+
+    for row in rows[13:]:
+        if not row[0] and not row[1]:
+            continue
+        cat = str(row[0] or "").strip()
+        nom = str(row[1] or "").strip()
+        if not nom or nom.startswith("Total"):
+            continue
+
+        for ci, mois_dt in months:
+            qty_val = row[ci] if ci < len(row) else None
+            if not qty_val or float(qty_val or 0) <= 0:
+                continue
+            qty = float(qty_val)
+
+            # Crée une entrée StockHistory par mois/produit
+            from datetime import datetime as _dt2
+            if hasattr(mois_dt, 'year'):
+                event_date = _dt2(mois_dt.year, mois_dt.month, 15)  # milieu du mois
+            else:
+                continue
+
+            h = StockHistory(
+                event_type="ventes_historiques",
+                description=f"Historique {mois_dt.strftime('%b %Y') if hasattr(mois_dt,'strftime') else mois_dt} — {nom}",
+                data_json=json.dumps({
+                    "product": nom,
+                    "category": cat,
+                    "quantity": qty,
+                    "mois": event_date.strftime("%Y-%m"),
+                    "source": source_tag,
+                }, ensure_ascii=False),
+                created_at=event_date,
+            )
+            db.add(h)
+            imported += 1
+
+    db.commit()
+    return {"ok": True, "imported": imported, "mois": len(months), "source": source_tag}
+
+
+@app.get("/api/stats/historique")
+def stats_historique(db: Session = Depends(get_db)):
+    """Retourne les ventes historiques agrégées par mois et par catégorie."""
+    rows = db.query(StockHistory).filter(
+        StockHistory.event_type == "ventes_historiques"
+    ).all()
+
+    by_month = {}   # "2025-05" → qty
+    by_product = {} # nom → qty total
+    by_cat = {}     # cat → qty
+
+    for row in rows:
+        try:
+            d = json.loads(row.data_json)
+        except Exception:
+            continue
+        mois = d.get("mois", "")
+        qty = float(d.get("quantity", 0))
+        nom = d.get("product", "?")
+        cat = d.get("category", "Autres")
+
+        by_month[mois] = round(by_month.get(mois, 0) + qty, 1)
+        by_product[nom] = round(by_product.get(nom, 0) + qty, 1)
+        by_cat[cat] = round(by_cat.get(cat, 0) + qty, 1)
+
+    monthly = sorted([{"mois": k, "qty": v} for k, v in by_month.items()], key=lambda x: x["mois"])
+    top_products = sorted([{"name": k, "qty": v} for k, v in by_product.items()], key=lambda x: x["qty"], reverse=True)
+    by_category = sorted([{"category": k, "qty": v} for k, v in by_cat.items()], key=lambda x: x["qty"], reverse=True)
+
+    return {
+        "monthly": monthly,
+        "top_products": top_products[:30],
+        "by_category": by_category,
+        "total": round(sum(v for v in by_month.values()), 1),
+    }
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # INVENTAIRE DU SOIR
 # ══════════════════════════════════════════════════════════════════════════
