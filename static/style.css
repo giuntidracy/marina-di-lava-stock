@@ -582,3 +582,8 @@ details[open] .history-details summary::before { content: '▼'; }
   .summary-card .s-value { font-size: 22px; }
   .section-title { font-size: 16px; }
 }
+
+/* Colonnes masquées sur mobile */
+@media (max-width: 768px) {
+  .col-desktop { display: none !important; }
+}

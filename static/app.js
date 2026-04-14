@@ -261,10 +261,10 @@ function renderStock(el) {
             <th class="sortable" onclick="sortStock('name')">Produit</th>
             <th class="sortable" onclick="sortStock('category')">Catégorie</th>
             <th class="sortable" onclick="sortStock('stock')">Stock</th>
-            <th class="sortable" onclick="sortStock('cout_unitaire')">Coût unit.</th>
-            <th class="sortable" onclick="sortStock('sale_price_ttc')">PV TTC</th>
-            <th class="sortable" onclick="sortStock('marge')">Marge HT</th>
-            <th class="sortable" onclick="sortStock('valeur_stock')">Val. stock</th>
+            <th class="sortable col-desktop" onclick="sortStock('cout_unitaire')">Coût unit.</th>
+            <th class="sortable col-desktop" onclick="sortStock('sale_price_ttc')">PV TTC</th>
+            <th class="sortable col-desktop" onclick="sortStock('marge')">Marge HT</th>
+            <th class="sortable col-desktop" onclick="sortStock('valeur_stock')">Val. stock</th>
             <th class="sortable" onclick="sortStock('supplier_name')">Fournisseur</th>
             <th></th>
           </tr>
@@ -370,10 +370,10 @@ function filterStock() {
       <td><strong>${esc(p.name)}</strong>${p.is_estimated ? '<span class="estimated-tag">~</span>' : ''}</td>
       <td>${esc(p.category)}</td>
       <td class="${stockClass(p.stock, p.alert_threshold)}">${fmtStock(p)}</td>
-      <td>${p.cout_unitaire !== null ? "€" + p.cout_unitaire.toFixed(3) : "—"}</td>
-      <td>${p.sale_price_ttc !== null ? "€" + p.sale_price_ttc.toFixed(2) : "—"}</td>
-      <td>${margePill(p.marge, p.marge_color, p.is_estimated)}</td>
-      <td>${p.valeur_stock !== null ? "€" + p.valeur_stock.toFixed(2) : "—"}</td>
+      <td class="col-desktop">${p.cout_unitaire !== null ? "€" + p.cout_unitaire.toFixed(3) : "—"}</td>
+      <td class="col-desktop">${p.sale_price_ttc !== null ? "€" + p.sale_price_ttc.toFixed(2) : "—"}</td>
+      <td class="col-desktop">${margePill(p.marge, p.marge_color, p.is_estimated)}</td>
+      <td class="col-desktop">${p.valeur_stock !== null ? "€" + p.valeur_stock.toFixed(2) : "—"}</td>
       <td>${esc(p.supplier_name || "—")}</td>
       <td style="white-space:nowrap">
         <button class="btn btn-outline btn-sm" onclick="openProductForm(${p.id})">✏️</button>
