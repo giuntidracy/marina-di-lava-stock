@@ -838,8 +838,8 @@ async def import_cashpad(
                 for ing in cocktail.ingredients:
                     p = ing.product
                     if p and p.volume_cl and p.qty_per_pack:
-                        # volume total du conditionnement (ex: Carton 24 x 33cl = 792cl)
-                        total_vol = p.volume_cl * p.qty_per_pack
+                        # Stock en unités individuelles : déduire dose/volume par unité vendue
+                        total_vol = p.volume_cl
                         deduct = (ing.dose_cl / total_vol) * qty_sold
                         p.stock = p.stock - deduct
                         deductions.append({
@@ -852,8 +852,8 @@ async def import_cashpad(
         elif mapping.mapping_type == "direct" and mapping.product_id:
             p = db.query(Product).get(mapping.product_id)
             if p and p.volume_cl and mapping.dose_cl:
-                # volume total du conditionnement
-                total_vol = p.volume_cl * (p.qty_per_pack or 1)
+                # Stock en unités individuelles : déduire dose/volume par unité vendue
+                total_vol = p.volume_cl
                 deduct = (mapping.dose_cl / total_vol) * qty_sold
                 p.stock = p.stock - deduct
                 deductions.append({
@@ -1689,11 +1689,9 @@ def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
         raw_qty = entry["total_qty"]
         prix = entry["prix"]
 
-        # Les parsers envoient des unités individuelles (bouteilles/canettes).
-        # Le stock est stocké dans l'unité du produit (carton pour qty_per_pack > 1).
-        # On convertit donc : unités → cartons en divisant par qty_per_pack.
-        qpp = float(getattr(p, 'qty_per_pack', None) or 1)
-        actual_qty = round(raw_qty / qpp, 4) if qpp > 1 else raw_qty
+        # Le stock est toujours en unités individuelles (bouteilles/canettes).
+        # qty_per_pack sert uniquement à l'affichage (équivalent cartons).
+        actual_qty = raw_qty
 
         if actual_qty != 0:
             if actual_qty < 0:
@@ -1734,8 +1732,7 @@ def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
             updated.append({
                 "product_id": p.id,
                 "product": p.name,
-                "added": actual_qty,        # en unité stock (cartons si qpp>1)
-                "added_units": raw_qty,     # en unités individuelles (pour affichage)
+                "added": actual_qty,
                 "old_price": old_price,
                 "new_price": p.purchase_price,
             })
@@ -1880,20 +1877,9 @@ def update_import_line(import_id: int, product_id: int, body: ImportLineIn, db: 
         raise HTTPException(404, "Ligne introuvable dans cet import")
 
     old_added = line['added']
+    delta = body.new_qty - old_added
+
     p = db.query(Product).get(product_id)
-
-    # Déterminer l'unité de stockage : nouveau format → added est en cartons
-    # ancien format (pas de added_units) → added est en unités individuelles
-    qpp = float(getattr(p, 'qty_per_pack', None) or 1) if p else 1
-    is_new_format = 'added_units' in line and qpp > 1
-
-    if is_new_format:
-        new_qty_stock = round(body.new_qty / qpp, 4)
-        delta = new_qty_stock - old_added
-    else:
-        new_qty_stock = body.new_qty
-        delta = body.new_qty - old_added
-
     if p:
         p.stock = round(p.stock + delta, 3)
         if body.new_price is not None:
@@ -1910,9 +1896,7 @@ def update_import_line(import_id: int, product_id: int, body: ImportLineIn, db: 
                     if ps:
                         ps.purchase_price = body.new_price
 
-    line['added'] = new_qty_stock
-    if is_new_format:
-        line['added_units'] = body.new_qty
+    line['added'] = body.new_qty
     if body.new_price is not None:
         line['new_price'] = body.new_price
     imp.details_json = json.dumps({"items": items, "not_found": not_found}, ensure_ascii=False)
