@@ -2176,13 +2176,14 @@ function renderSuppliers(el) {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Nom</th><th>Contact</th><th>Téléphone</th><th>Catégories</th><th></th></tr></thead>
+        <thead><tr><th>Nom</th><th>Contact</th><th>Téléphone</th><th>Email</th><th>Catégories</th><th></th></tr></thead>
         <tbody>
           ${allSuppliers.map(s => `
             <tr>
               <td><strong>${esc(s.name)}</strong></td>
               <td>${esc(s.contact||"—")}</td>
               <td>${s.phone ? `<a href="tel:${esc(s.phone)}">${esc(s.phone)}</a>` : "—"}</td>
+              <td>${s.email ? `<a href="mailto:${esc(s.email)}">${esc(s.email)}</a>` : "<span style='color:var(--text-faint)'>—</span>"}</td>
               <td>${esc(s.categories||"—")}</td>
               <td style="white-space:nowrap">
                 <button class="btn btn-outline btn-sm" onclick="openSupplierForm(${s.id})">✏️</button>
@@ -2204,6 +2205,7 @@ function openSupplierForm(id) {
         <div class="form-group"><label>Contact</label><input type="text" name="contact" value="${s ? esc(s.contact||'') : ''}"/></div>
         <div class="form-group"><label>Téléphone</label><input type="text" name="phone" value="${s ? esc(s.phone||'') : ''}"/></div>
       </div>
+      <div class="form-group"><label>Email commandes ✉</label><input type="email" name="email" placeholder="commandes@fournisseur.fr" value="${s ? esc(s.email||'') : ''}"/></div>
       <div class="form-group"><label>Catégories</label><input type="text" name="categories" value="${s ? esc(s.categories||'') : ''}"/></div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button type="button" class="btn btn-outline" onclick="closeModal()">Annuler</button>
@@ -2215,7 +2217,7 @@ function openSupplierForm(id) {
 async function submitSupplierForm(e, id) {
   e.preventDefault();
   const fd = new FormData(e.target);
-  const body = { name: fd.get("name"), contact: fd.get("contact"), phone: fd.get("phone"), categories: fd.get("categories") };
+  const body = { name: fd.get("name"), contact: fd.get("contact"), phone: fd.get("phone"), email: fd.get("email")||"", categories: fd.get("categories") };
   try {
     if (id) {
       await api(`/api/fournisseurs/${id}`, { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
