@@ -1438,6 +1438,16 @@ def _find_best_product(nom: str, all_products) -> object:
     # Extraire le volume du nom OCR (ex: "75cl", "33cl", "1l")
     ocr_vols = set(_re.findall(r'\d+cl|\d+l\b', no_accent(nom)))
 
+    # Descripteurs génériques qui ne suffisent PAS à identifier un produit seuls
+    # (saveur, couleur, style) — évite "Lipton Pêche" → "Pago Pêche" via token "peche"
+    GENERIC_DESCRIPTORS = {
+        'peche', 'citron', 'menthe', 'fraise', 'framboise', 'cerise',
+        'pomme', 'raisin', 'mangue', 'grenade', 'tropical', 'agrumes',
+        'rouge', 'blanc', 'rose', 'vert', 'noir', 'bleu',
+        'light', 'zero', 'original', 'classic', 'nature', 'special',
+        'premium', 'extra', 'brut', 'sec', 'doux', 'vieux',
+    }
+
     best_p, best_score = None, 0.0
     for p in all_products:
         db_tokens = _normalize_tokens(p.name)
@@ -1451,6 +1461,11 @@ def _find_best_product(nom: str, all_products) -> object:
             db_vols = set(_re.findall(r'\d+cl|\d+l\b', no_accent(p.name)))
             if db_vols and not ocr_vols & db_vols:
                 score *= 0.4  # pénalité forte si aucun volume en commun
+
+        # Pénalité si le seul token commun est un descripteur générique (saveur, couleur…)
+        # Ex : "LIPTON PECHE SLEEK" ne doit PAS matcher "Pago Pêche" via "peche" seul
+        if len(common) == 1 and common <= GENERIC_DESCRIPTORS:
+            score *= 0.25
 
         if score > best_score:
             best_score = score
