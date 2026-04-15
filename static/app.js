@@ -164,11 +164,17 @@ async function api(url, options = {}) {
     throw new Error("Session expirée, veuillez vous reconnecter");
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    const msg = Array.isArray(err.detail)
-      ? err.detail.map(e => e.msg || JSON.stringify(e)).join(", ")
-      : (err.detail || res.statusText);
-    throw new Error(msg);
+    let errText = "";
+    try {
+      const err = await res.json();
+      errText = Array.isArray(err.detail)
+        ? err.detail.map(e => e.msg || JSON.stringify(e)).join(", ")
+        : (err.detail || "");
+    } catch (_) {
+      errText = await res.text().catch(() => "");
+    }
+    // HTTP/2 sur Railway a statusText vide — fallback sur le code HTTP
+    throw new Error(errText || `Erreur serveur ${res.status}`);
   }
   resetInactivityTimer();
   return res.json();

@@ -1434,6 +1434,7 @@ def _find_best_product(nom: str, all_products) -> object:
 @app.post("/api/import/livraison/confirm")
 @app.post("/api/import/delivery/confirm")
 def confirm_delivery(body: DeliveryConfirmIn, db: Session = Depends(get_db)):
+    import traceback
     existing = db.query(ImportLog).filter(
         ImportLog.import_type == "delivery",
         ImportLog.reference == body.numero_facture,
@@ -1525,7 +1526,11 @@ def confirm_delivery(body: DeliveryConfirmIn, db: Session = Depends(get_db)):
                 "not_found": not_found,
             }
         )
-    db.commit()
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, detail=f"Erreur base de données : {str(e)}")
     return {"ok": True, "updated": updated, "not_found": not_found, "is_avoir": is_avoir}
 
 
