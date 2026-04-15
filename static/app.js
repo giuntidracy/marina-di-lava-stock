@@ -991,35 +991,125 @@ async function loadRecentImports() {
   }
 }
 
+let _currentImportDetail = null;
+
 async function showImportDetail(importId, reference, supplier, date) {
   try {
     const data = await api(`/api/imports/${importId}/detail`);
-    const details = data.details || [];
-    let rows = details.map((d, i) => `
-      <tr>
-        <td style="font-weight:600">${esc(d.product)}</td>
-        <td style="color:${d.added < 0 ? '#DC2626' : 'var(--primary)'}; font-weight:700; text-align:center">
-          ${d.added > 0 ? '+' : ''}${d.added}
-        </td>
-        <td style="color:var(--text-muted); text-align:right">
-          ${d.old_price != null ? `${d.old_price.toFixed(2)} €` : '—'}
-          ${d.new_price != null && d.new_price !== d.old_price ? ` → <strong>${d.new_price.toFixed(2)} €</strong>` : ''}
-        </td>
-      </tr>`).join('');
-
-    openModal(`
-      <h3>📋 Détail — ${esc(supplier)}</h3>
-      <div style="color:var(--text-muted);font-size:12px;margin-bottom:16px">BL n°${esc(reference)} · ${esc(date)}</div>
-      ${rows.length ? `
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Produit</th><th style="text-align:center">Qté</th><th style="text-align:right">Prix achat</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>` : '<div class="info-box">Aucun détail disponible pour cet import.</div>'}
-    `);
+    // L'endpoint retourne toujours un tableau plat + flag annule
+    const details = Array.isArray(data.details) ? data.details : [];
+    _currentImportDetail = { importId, reference, supplier, date, details, annule: !!data.annule };
+    _renderImportDetailModal();
   } catch(e) {
-    openModal(`<h3>Détail import</h3><div class="info-box">Erreur : ${esc(e.message)}</div>`);
+    openModal(`<h3>Détail import</h3><div class="info-box">Erreur chargement : ${esc(e.message)}</div>`);
+  }
+}
+
+function _renderImportDetailModal() {
+  if (!_currentImportDetail) return;
+  const { importId, reference, supplier, date, details, annule } = _currentImportDetail;
+
+  const canEdit = !annule;
+
+  const rows = details.map((d, i) => {
+    const hasPid = d.product_id != null;
+    const priceDisplay = d.old_price != null
+      ? `${Number(d.old_price).toFixed(2)} €${d.new_price != null && d.new_price !== d.old_price ? ` → <strong>${Number(d.new_price).toFixed(2)} €</strong>` : ''}`
+      : (d.new_price != null ? `<strong>${Number(d.new_price).toFixed(2)} €</strong>` : '—');
+    const editBtns = canEdit && hasPid
+      ? `<button class="btn btn-sm btn-outline" style="padding:2px 7px;font-size:12px" title="Modifier" onclick="editImportLine(${importId},${d.product_id},${i},${d.added},${d.new_price != null ? d.new_price : 'null'})">✏️</button>
+         <button class="btn btn-sm" style="padding:2px 7px;font-size:12px;background:#FEF2F2;color:#DC2626;border:1px solid #FECACA" title="Supprimer" onclick="deleteImportLine(${importId},${d.product_id},'${esc(d.product)}',${d.added})">🗑</button>`
+      : '';
+    return `<tr id="bl-row-${i}">
+      <td style="font-weight:600">${esc(d.product)}</td>
+      <td style="color:${d.added < 0 ? '#DC2626' : 'var(--primary)'};font-weight:700;text-align:center">${d.added > 0 ? '+' : ''}${d.added}</td>
+      <td style="color:var(--text-muted);text-align:right">${priceDisplay}</td>
+      <td style="text-align:right;white-space:nowrap">${editBtns}</td>
+    </tr>`;
+  }).join('');
+
+  const annuleBanner = annule
+    ? `<div style="background:#FEF2F2;color:#DC2626;font-size:12px;padding:8px 12px;border-radius:8px;margin-bottom:12px">⚠️ Cet import a été annulé — modification impossible</div>`
+    : '';
+
+  openModal(`
+    <h3>📋 Détail — ${esc(supplier)}</h3>
+    <div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">BL n°${esc(reference)} · ${esc(date)}</div>
+    ${annuleBanner}
+    ${rows.length
+      ? `<div class="table-wrap"><table>
+           <thead><tr><th>Produit</th><th style="text-align:center">Qté</th><th style="text-align:right">Prix achat</th><th></th></tr></thead>
+           <tbody id="bl-tbody">${rows}</tbody>
+         </table></div>`
+      : '<div class="info-box">Aucun détail disponible pour cet import.</div>'}
+  `);
+}
+
+async function deleteImportLine(importId, productId, productName, qty) {
+  if (!confirm(`Supprimer la ligne "${productName}" (${qty > 0 ? '+' : ''}${qty}) ?\n\nLe stock sera ajusté en conséquence.`)) return;
+  try {
+    await api(`/api/imports/${importId}/lines/${productId}`, { method: "DELETE" });
+    _currentImportDetail.details = _currentImportDetail.details.filter(d => d.product_id !== productId);
+    _renderImportDetailModal();
+    allProducts = await api("/api/produits");
+    updateAlertBadge();
+  } catch(e) {
+    alert("Erreur suppression : " + e.message);
+  }
+}
+
+function editImportLine(importId, productId, rowIndex, currentQty, currentPrice) {
+  const row = document.getElementById(`bl-row-${rowIndex}`);
+  if (!row) { alert("Erreur : ligne introuvable dans le DOM"); return; }
+  const d = _currentImportDetail && _currentImportDetail.details[rowIndex];
+  if (!d) { alert("Erreur : données de ligne introuvables"); return; }
+
+  const priceVal = currentPrice != null && currentPrice !== 'null' ? currentPrice : '';
+  row.innerHTML = `
+    <td style="font-weight:600;font-size:12px">${esc(d.product)}</td>
+    <td colspan="2" style="padding:4px 6px">
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <label style="font-size:11px;color:var(--text-muted)">Qté</label>
+        <input id="edit-qty-${rowIndex}" type="number" step="0.01" value="${currentQty}"
+          style="width:70px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px"/>
+        <label style="font-size:11px;color:var(--text-muted)">Prix€</label>
+        <input id="edit-price-${rowIndex}" type="number" step="0.01" value="${priceVal}" placeholder="inchangé"
+          style="width:80px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px"/>
+      </div>
+    </td>
+    <td style="text-align:right;white-space:nowrap">
+      <button class="btn btn-sm" style="padding:2px 8px;font-size:12px" onclick="saveImportLine(${importId},${productId},${rowIndex})">✓</button>
+      <button class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:12px" onclick="_renderImportDetailModal()">✕</button>
+    </td>`;
+}
+
+async function saveImportLine(importId, productId, rowIndex) {
+  const qtyEl = document.getElementById(`edit-qty-${rowIndex}`);
+  const priceEl = document.getElementById(`edit-price-${rowIndex}`);
+  if (!qtyEl) { alert("Erreur : champ quantité introuvable"); return; }
+
+  const newQty = parseFloat(qtyEl.value);
+  if (isNaN(newQty) || newQty < 0) { alert("Quantité invalide"); return; }
+  const rawPrice = priceEl ? priceEl.value.trim() : '';
+  const newPrice = rawPrice !== '' ? parseFloat(rawPrice) : null;
+  if (rawPrice !== '' && isNaN(newPrice)) { alert("Prix invalide"); return; }
+
+  try {
+    await api(`/api/imports/${importId}/lines/${productId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_qty: newQty, new_price: newPrice })
+    });
+    const d = _currentImportDetail.details[rowIndex];
+    if (d) {
+      d.added = newQty;
+      if (newPrice != null) d.new_price = newPrice;
+    }
+    _renderImportDetailModal();
+    allProducts = await api("/api/produits");
+    updateAlertBadge();
+  } catch(e) {
+    alert("Erreur sauvegarde : " + e.message);
   }
 }
 

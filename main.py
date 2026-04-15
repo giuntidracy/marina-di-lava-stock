@@ -1736,15 +1736,23 @@ def import_detail(import_id: int, db: Session = Depends(get_db)):
     if not imp:
         raise HTTPException(404, detail="Import introuvable")
     try:
-        details = json.loads(getattr(imp, "details_json", "[]") or "[]")
+        raw = json.loads(getattr(imp, "details_json", "[]") or "[]")
     except Exception:
-        details = []
+        raw = []
+    # Normalise : les imports annulés ont la forme {"annule": True, "details": [...]}
+    if isinstance(raw, dict):
+        is_annule = bool(raw.get("annule"))
+        items = raw.get("details", [])
+    else:
+        is_annule = False
+        items = raw if isinstance(raw, list) else []
     return {
         "id": imp.id,
         "reference": imp.reference,
         "supplier": imp.supplier,
         "created_at": to_local(imp.created_at).strftime("%d/%m/%Y %H:%M"),
-        "details": details,
+        "annule": is_annule,
+        "details": items,
     }
 
 
@@ -1775,6 +1783,108 @@ def recent_imports(days: int = 7, db: Session = Depends(get_db)):
             "details": items,
         })
     return result
+
+
+@app.delete("/api/imports/{import_id}/lines/{product_id}")
+def delete_import_line(import_id: int, product_id: int, db: Session = Depends(get_db)):
+    imp = db.query(ImportLog).get(import_id)
+    if not imp or imp.import_type != "delivery":
+        raise HTTPException(404, "Import introuvable")
+
+    try:
+        details = json.loads(getattr(imp, 'details_json', '[]') or '[]')
+    except Exception:
+        details = []
+
+    if isinstance(details, dict) and details.get('annule'):
+        raise HTTPException(400, "Cet import a été annulé, modification impossible")
+
+    items = details if isinstance(details, list) else details.get('details', [])
+
+    # Find the line
+    line = next((x for x in items if x.get('product_id') == product_id), None)
+    if not line:
+        raise HTTPException(404, "Ligne introuvable dans cet import")
+
+    # Reverse stock
+    p = db.query(Product).get(product_id)
+    if p:
+        p.stock = round(p.stock - line['added'], 3)
+        old_price = line.get('old_price')
+        if old_price is not None:
+            p.purchase_price = old_price
+
+    # Remove line from details
+    new_items = [x for x in items if x.get('product_id') != product_id]
+    imp.details_json = json.dumps(new_items, ensure_ascii=False)
+
+    log_event(db, "modif_livraison",
+              f"Suppression ligne BL n°{imp.reference} — {line.get('product', '')}",
+              {"import_id": import_id, "product_id": product_id, "removed_qty": line['added']})
+    db.commit()
+    return {"ok": True, "removed": line.get('product', ''), "qty": line['added']}
+
+
+class ImportLineIn(BaseModel):
+    new_qty: float
+    new_price: Optional[float] = None
+
+
+@app.patch("/api/imports/{import_id}/lines/{product_id}")
+def update_import_line(import_id: int, product_id: int, body: ImportLineIn, db: Session = Depends(get_db)):
+    imp = db.query(ImportLog).get(import_id)
+    if not imp or imp.import_type != "delivery":
+        raise HTTPException(404, "Import introuvable")
+
+    try:
+        details = json.loads(getattr(imp, 'details_json', '[]') or '[]')
+    except Exception:
+        details = []
+
+    if isinstance(details, dict) and details.get('annule'):
+        raise HTTPException(400, "Cet import a été annulé, modification impossible")
+
+    items = details if isinstance(details, list) else details.get('details', [])
+
+    # Find the line
+    line = next((x for x in items if x.get('product_id') == product_id), None)
+    if not line:
+        raise HTTPException(404, "Ligne introuvable dans cet import")
+
+    old_added = line['added']
+    delta = body.new_qty - old_added
+
+    # Apply stock delta
+    p = db.query(Product).get(product_id)
+    if p:
+        p.stock = round(p.stock + delta, 3)
+        if body.new_price is not None:
+            p.purchase_price = body.new_price
+            p.is_estimated = False
+            # Update product_supplier price for this import's supplier
+            if imp.supplier:
+                sup = db.query(Supplier).filter(
+                    func.lower(Supplier.name) == imp.supplier.lower()
+                ).first()
+                if sup:
+                    ps = db.query(ProductSupplier).filter_by(
+                        product_id=product_id, supplier_id=sup.id
+                    ).first()
+                    if ps:
+                        ps.purchase_price = body.new_price
+
+    # Update the line in details_json
+    line['added'] = body.new_qty
+    if body.new_price is not None:
+        line['new_price'] = body.new_price
+    imp.details_json = json.dumps(items, ensure_ascii=False)
+
+    log_event(db, "modif_livraison",
+              f"Modification ligne BL n°{imp.reference} — {line.get('product', '')}",
+              {"import_id": import_id, "product_id": product_id,
+               "old_qty": old_added, "new_qty": body.new_qty, "new_price": body.new_price})
+    db.commit()
+    return {"ok": True, "product": line.get('product', ''), "old_qty": old_added, "new_qty": body.new_qty}
 
 
 @app.post("/api/imports/{import_id}/annuler")
