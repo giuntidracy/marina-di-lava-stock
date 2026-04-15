@@ -597,17 +597,47 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
       </div>
     </div>"""
 
-    # ── 1. Resend API (HTTP — fonctionne sur Railway) ──────────
+    # ── 1. Brevo API (HTTP — fonctionne sur Railway, pas de domaine requis) ──
+    brevo_key = os.getenv("BREVO_API_KEY", "")
+    if brevo_key:
+        if not to_email:
+            raise HTTPException(400, detail="Adresse email du fournisseur non renseignée")
+        from_addr = reply_to or "marinadilava.commandes@gmail.com"
+        payload = json.dumps({
+            "sender":      {"name": "Marina di Lava Commandes", "email": from_addr},
+            "to":          [{"email": to_email}],
+            "replyTo":     {"email": from_addr},
+            "subject":     subject,
+            "htmlContent": html_body,
+        }).encode("utf-8")
+        req = _urllib.Request(
+            "https://api.brevo.com/v3/smtp/email",
+            data=payload,
+            headers={"api-key": brevo_key, "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with _urllib.urlopen(req, timeout=15) as resp:
+                json.loads(resp.read())
+        except Exception as e:
+            raise HTTPException(500, detail=f"Erreur Brevo : {str(e)}")
+        o.status = "sent"
+        if not o.sent_at:
+            o.sent_at = datetime.utcnow()
+        db.commit()
+        return {"ok": True, "to": to_email, "provider": "brevo"}
+
+    # ── 2. Resend API (nécessite domaine vérifié) ──────────────
     resend_key = os.getenv("RESEND_API_KEY", "")
     if resend_key:
         if not to_email:
             raise HTTPException(400, detail="Adresse email du fournisseur non renseignée")
         payload = json.dumps({
-            "from": "Marina di Lava Commandes <onboarding@resend.dev>",
+            "from":     "Marina di Lava Commandes <onboarding@resend.dev>",
             "reply_to": reply_to or None,
-            "to": [to_email],
-            "subject": subject,
-            "html": html_body,
+            "to":       [to_email],
+            "subject":  subject,
+            "html":     html_body,
         }).encode("utf-8")
         req = _urllib.Request(
             "https://api.resend.com/emails",
@@ -617,7 +647,7 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
         )
         try:
             with _urllib.urlopen(req, timeout=15) as resp:
-                resp_data = json.loads(resp.read())
+                json.loads(resp.read())
         except Exception as e:
             raise HTTPException(500, detail=f"Erreur Resend : {str(e)}")
         o.status = "sent"
