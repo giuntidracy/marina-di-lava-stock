@@ -10,9 +10,11 @@ class Supplier(Base):
     name = Column(String, nullable=False)
     contact = Column(String, default="")
     phone = Column(String, default="")
+    email = Column(String, default="")
     categories = Column(String, default="")
     products = relationship("Product", back_populates="supplier_rel")
     product_suppliers = relationship("ProductSupplier", back_populates="supplier")
+    orders = relationship("SupplierOrder", back_populates="supplier", cascade="all, delete-orphan")
 
 
 class Product(Base):
@@ -116,3 +118,33 @@ class InventorySession(Base):
     difference = Column(Float, nullable=False)
     staff_name = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SupplierOrder(Base):
+    """Commande fournisseur (brouillon → envoyée → reçue)."""
+    __tablename__ = "supplier_orders"
+    id = Column(Integer, primary_key=True, index=True)
+    reference = Column(String, nullable=False, unique=True)   # CMD-YYYYMMDD-XXX
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False)
+    status = Column(String, default="draft")  # draft / sent / partial / received
+    notes = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sent_at = Column(DateTime, nullable=True)
+    received_at = Column(DateTime, nullable=True)
+
+    supplier = relationship("Supplier", back_populates="orders")
+    items = relationship("SupplierOrderItem", back_populates="order", cascade="all, delete-orphan")
+
+
+class SupplierOrderItem(Base):
+    """Ligne d'une commande fournisseur."""
+    __tablename__ = "supplier_order_items"
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("supplier_orders.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    product_name = Column(String, default="")   # snapshot au moment de la commande
+    qty_ordered = Column(Float, default=0)
+    unit_price_ht = Column(Float, nullable=True)
+
+    order = relationship("SupplierOrder", back_populates="items")
+    product = relationship("Product")

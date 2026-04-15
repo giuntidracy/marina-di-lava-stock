@@ -32,7 +32,8 @@ _pin_failures: dict = {}   # ip → {count, locked_until}
 from database import get_db, engine
 from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
-    CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier
+    CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
+    SupplierOrder, SupplierOrderItem
 )
 
 Base.metadata.create_all(bind=engine)
@@ -43,6 +44,12 @@ with engine.connect() as _conn:
     # details_json sur imports_log
     try:
         _conn.execute(_text("ALTER TABLE imports_log ADD COLUMN details_json TEXT DEFAULT '[]'"))
+        _conn.commit()
+    except Exception:
+        pass
+    # email sur suppliers
+    try:
+        _conn.execute(_text("ALTER TABLE suppliers ADD COLUMN email TEXT DEFAULT ''"))
         _conn.commit()
     except Exception:
         pass
@@ -277,6 +284,7 @@ class SupplierIn(BaseModel):
     name: str
     contact: str = ""
     phone: str = ""
+    email: str = ""
     categories: str = ""
 
 
@@ -288,6 +296,7 @@ def _supplier_dict(s: Supplier) -> dict:
         "contact": s.contact,
         "telephone": s.phone,
         "phone": s.phone,
+        "email": s.email or "",
         "categories": s.categories,
     }
 
@@ -329,6 +338,303 @@ def delete_supplier(sid: int, db: Session = Depends(get_db)):
     db.delete(s)
     db.commit()
     return {"ok": True}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# COMMANDES FOURNISSEURS / SUPPLIER ORDERS
+# ══════════════════════════════════════════════════════════════════════════
+
+def _order_dict(o: SupplierOrder) -> dict:
+    total_ht = sum(
+        (it.qty_ordered or 0) * (it.unit_price_ht or 0)
+        for it in o.items
+    )
+    return {
+        "id": o.id,
+        "reference": o.reference,
+        "supplier_id": o.supplier_id,
+        "supplier_name": o.supplier.name if o.supplier else "",
+        "supplier_email": (o.supplier.email or "") if o.supplier else "",
+        "status": o.status,
+        "notes": o.notes or "",
+        "total_ht": round(total_ht, 2),
+        "items_count": len(o.items),
+        "created_at": to_local(o.created_at).strftime("%d/%m/%Y %H:%M") if o.created_at else "",
+        "sent_at": to_local(o.sent_at).strftime("%d/%m/%Y %H:%M") if o.sent_at else None,
+        "received_at": to_local(o.received_at).strftime("%d/%m/%Y %H:%M") if o.received_at else None,
+        "items": [
+            {
+                "id": it.id,
+                "product_id": it.product_id,
+                "product_name": it.product_name or (it.product.name if it.product else ""),
+                "qty_ordered": it.qty_ordered,
+                "unit_price_ht": it.unit_price_ht,
+                "line_total": round((it.qty_ordered or 0) * (it.unit_price_ht or 0), 2) if it.unit_price_ht else None,
+                "current_stock": it.product.stock if it.product else None,
+                "alert_threshold": it.product.alert_threshold if it.product else None,
+            }
+            for it in o.items
+        ],
+    }
+
+
+def _gen_order_ref(db: Session) -> str:
+    """Génère une référence unique CMD-YYYYMMDD-NNN."""
+    today = datetime.utcnow().strftime("%Y%m%d")
+    prefix = f"CMD-{today}-"
+    existing = db.query(SupplierOrder).filter(
+        SupplierOrder.reference.like(f"{prefix}%")
+    ).count()
+    return f"{prefix}{existing + 1:03d}"
+
+
+class OrderItemIn(BaseModel):
+    product_id: Optional[int] = None
+    product_name: str = ""
+    qty_ordered: float = 0
+    unit_price_ht: Optional[float] = None
+
+
+class OrderIn(BaseModel):
+    supplier_id: int
+    notes: str = ""
+    items: List[OrderItemIn] = []
+
+
+@app.get("/api/orders")
+def get_orders(db: Session = Depends(get_db)):
+    orders = db.query(SupplierOrder).order_by(SupplierOrder.created_at.desc()).all()
+    return [_order_dict(o) for o in orders]
+
+
+@app.get("/api/orders/suggestions/{supplier_id}")
+def get_order_suggestions(supplier_id: int, db: Session = Depends(get_db)):
+    """Retourne les produits du fournisseur avec suggestions de quantité à commander."""
+    products = db.query(Product).filter(Product.supplier_id == supplier_id).all()
+    result = []
+    for p in products:
+        stock = p.stock or 0
+        threshold = p.alert_threshold or 0
+        # Suggestion : si stock < 3× seuil, commander pour remonter à 3× seuil
+        target = threshold * 3
+        suggested = max(0, target - stock)
+        result.append({
+            "product_id": p.id,
+            "product_name": p.name,
+            "category": p.category,
+            "stock": stock,
+            "alert_threshold": threshold,
+            "unit_price_ht": p.purchase_price,
+            "suggested_qty": round(suggested, 0) if suggested > 0 else 0,
+            "stock_status": "rupture" if stock == 0 else ("low" if stock <= threshold else "ok"),
+        })
+    # Tri : ruptures en tête, puis stock bas, puis ok — par catégorie
+    order_map = {"rupture": 0, "low": 1, "ok": 2}
+    result.sort(key=lambda x: (order_map[x["stock_status"]], x["category"], x["product_name"]))
+    return result
+
+
+@app.post("/api/orders")
+def create_order(body: OrderIn, db: Session = Depends(get_db)):
+    ref = _gen_order_ref(db)
+    order = SupplierOrder(
+        reference=ref,
+        supplier_id=body.supplier_id,
+        notes=body.notes,
+        status="draft",
+    )
+    db.add(order)
+    db.flush()
+    for it in body.items:
+        if it.qty_ordered <= 0:
+            continue
+        product_name = it.product_name
+        if it.product_id and not product_name:
+            p = db.query(Product).get(it.product_id)
+            product_name = p.name if p else ""
+        db.add(SupplierOrderItem(
+            order_id=order.id,
+            product_id=it.product_id,
+            product_name=product_name,
+            qty_ordered=it.qty_ordered,
+            unit_price_ht=it.unit_price_ht,
+        ))
+    db.commit()
+    db.refresh(order)
+    return _order_dict(order)
+
+
+@app.get("/api/orders/{order_id}")
+def get_order(order_id: int, db: Session = Depends(get_db)):
+    o = db.query(SupplierOrder).get(order_id)
+    if not o:
+        raise HTTPException(404)
+    return _order_dict(o)
+
+
+@app.put("/api/orders/{order_id}")
+def update_order(order_id: int, body: OrderIn, db: Session = Depends(get_db)):
+    o = db.query(SupplierOrder).get(order_id)
+    if not o:
+        raise HTTPException(404)
+    if o.status != "draft":
+        raise HTTPException(400, detail="Seuls les brouillons sont modifiables")
+    o.supplier_id = body.supplier_id
+    o.notes = body.notes
+    # Replace items
+    for it in o.items:
+        db.delete(it)
+    db.flush()
+    for it in body.items:
+        if it.qty_ordered <= 0:
+            continue
+        product_name = it.product_name
+        if it.product_id and not product_name:
+            p = db.query(Product).get(it.product_id)
+            product_name = p.name if p else ""
+        db.add(SupplierOrderItem(
+            order_id=o.id,
+            product_id=it.product_id,
+            product_name=product_name,
+            qty_ordered=it.qty_ordered,
+            unit_price_ht=it.unit_price_ht,
+        ))
+    db.commit()
+    db.refresh(o)
+    return _order_dict(o)
+
+
+@app.delete("/api/orders/{order_id}")
+def delete_order(order_id: int, db: Session = Depends(get_db)):
+    o = db.query(SupplierOrder).get(order_id)
+    if not o:
+        raise HTTPException(404)
+    db.delete(o)
+    db.commit()
+    return {"ok": True}
+
+
+class OrderStatusIn(BaseModel):
+    status: str  # sent / partial / received
+
+
+@app.patch("/api/orders/{order_id}/status")
+def update_order_status(order_id: int, body: OrderStatusIn, db: Session = Depends(get_db)):
+    o = db.query(SupplierOrder).get(order_id)
+    if not o:
+        raise HTTPException(404)
+    o.status = body.status
+    if body.status == "sent" and not o.sent_at:
+        o.sent_at = datetime.utcnow()
+    if body.status == "received" and not o.received_at:
+        o.received_at = datetime.utcnow()
+    db.commit()
+    return _order_dict(o)
+
+
+@app.post("/api/orders/{order_id}/send-email")
+def send_order_email(order_id: int, db: Session = Depends(get_db)):
+    """Envoie la commande par email au fournisseur via SMTP configuré dans les env vars."""
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    o = db.query(SupplierOrder).get(order_id)
+    if not o:
+        raise HTTPException(404)
+
+    supplier = o.supplier
+    to_email = supplier.email if supplier else ""
+
+    # Construction du corps email (HTML)
+    items_rows = ""
+    total_ht = 0.0
+    for it in o.items:
+        line_total = (it.qty_ordered or 0) * (it.unit_price_ht or 0)
+        total_ht += line_total
+        prix_str = f"{it.unit_price_ht:.4f} €" if it.unit_price_ht else "—"
+        total_str = f"{line_total:.2f} €" if it.unit_price_ht else "—"
+        items_rows += f"""
+        <tr>
+          <td style="padding:8px 12px;border-bottom:1px solid #eee">{it.product_name}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">{int(it.qty_ordered)}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">{prix_str}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">{total_str}</td>
+        </tr>"""
+
+    notes_block = f'<p style="margin-top:16px;font-style:italic;color:#666">{o.notes}</p>' if o.notes else ""
+    total_block = f'<p style="text-align:right;font-weight:bold;font-size:15px;margin-top:8px">Total estimé HT : {total_ht:.2f} €</p>' if total_ht > 0 else ""
+
+    html_body = f"""
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#333">
+      <div style="background:linear-gradient(135deg,#1a1a2e,#2d1f0e);padding:24px 28px;border-radius:10px 10px 0 0">
+        <h1 style="color:#C9A84C;margin:0;font-size:22px;letter-spacing:.05em">Marina di Lava</h1>
+        <p style="color:rgba(201,168,76,.7);margin:4px 0 0;font-size:13px">Bon de Commande</p>
+      </div>
+      <div style="background:#fff;padding:24px 28px;border:1px solid #e5e7eb;border-top:none">
+        <p><strong>Référence :</strong> {o.reference}</p>
+        <p><strong>Fournisseur :</strong> {supplier.name if supplier else ''}</p>
+        <p><strong>Date :</strong> {to_local(datetime.utcnow()).strftime('%d/%m/%Y')}</p>
+        {notes_block}
+        <table style="width:100%;border-collapse:collapse;margin-top:20px">
+          <thead>
+            <tr style="background:#f9fafb">
+              <th style="padding:10px 12px;text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Produit</th>
+              <th style="padding:10px 12px;text-align:center;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Qté</th>
+              <th style="padding:10px 12px;text-align:right;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Prix unit. HT</th>
+              <th style="padding:10px 12px;text-align:right;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Total HT</th>
+            </tr>
+          </thead>
+          <tbody>{items_rows}</tbody>
+        </table>
+        {total_block}
+        <p style="margin-top:28px;font-size:12px;color:#9ca3af">
+          Ce bon de commande a été généré automatiquement par le système de gestion de stock Marina di Lava.
+        </p>
+      </div>
+    </div>"""
+
+    # SMTP config depuis env vars
+    smtp_host = os.getenv("SMTP_HOST", "")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASS", "")
+    from_email = os.getenv("FROM_EMAIL", smtp_user)
+
+    if not smtp_host or not smtp_user:
+        # Pas de config SMTP → retourner le contenu pour mailto fallback
+        return {
+            "ok": False,
+            "no_smtp": True,
+            "to": to_email,
+            "subject": f"Bon de commande {o.reference} — Marina di Lava",
+            "html": html_body,
+        }
+
+    if not to_email:
+        raise HTTPException(400, detail="Adresse email du fournisseur non renseignée")
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"Bon de commande {o.reference} — Marina di Lava"
+        msg["From"] = from_email
+        msg["To"] = to_email
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(from_email, to_email, msg.as_string())
+
+        # Marquer comme envoyée
+        o.status = "sent"
+        if not o.sent_at:
+            o.sent_at = datetime.utcnow()
+        db.commit()
+        return {"ok": True, "to": to_email}
+    except Exception as e:
+        raise HTTPException(500, detail=f"Erreur envoi email : {str(e)}")
 
 
 # ══════════════════════════════════════════════════════════════════════════

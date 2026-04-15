@@ -14,7 +14,7 @@ let inactivityTimer = null;
 
 // Onglets accessibles par rôle
 const SERVICE_VIEWS = ["inventory"];
-const MANAGER_VIEWS = ["stock","cocktails","alerts","cashpad","delivery","inventory","stats","history","suppliers","mapping"];
+const MANAGER_VIEWS = ["stock","cocktails","alerts","cashpad","delivery","inventory","stats","history","suppliers","orders","mapping"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
@@ -147,6 +147,7 @@ function renderView(view) {
     case "stats":     renderStats(app); break;
     case "history":   renderHistory(app); break;
     case "suppliers": renderSuppliers(app); break;
+    case "orders":    renderOrders(app); break;
     case "mapping":   renderMapping(app); break;
   }
 }
@@ -2239,6 +2240,547 @@ async function deleteSupplier(id, name) {
 // ══════════════════════════════════════════════════════════
 // VIEW: MAPPING CASHPAD
 // ══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+// VIEW: COMMANDES FOURNISSEURS
+// ══════════════════════════════════════════════════════════════════════════
+
+let _ordersData = [];
+let _orderFormSupplier = null;
+let _orderFormData = null;  // draft en cours d'édition
+let _orderEditId = null;
+
+async function renderOrders(el) {
+  el.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">Chargement…</div>`;
+  try {
+    const [orders, suppliers] = await Promise.all([
+      api("/api/orders"),
+      api("/api/suppliers"),
+    ]);
+    _ordersData = orders;
+    el.innerHTML = _buildOrdersListHTML(orders, suppliers);
+  } catch(e) {
+    el.innerHTML = `<div style="padding:40px;color:#DC2626">Erreur : ${e.message}</div>`;
+  }
+}
+
+function _buildOrdersListHTML(orders, suppliers) {
+  const statusLabel = { draft: "Brouillon", sent: "Envoyée", partial: "Partielle", received: "Reçue" };
+  const statusIcon  = { draft: "📝", sent: "📤", partial: "📦", received: "✅" };
+  const statusClass = { draft: "ord-draft", sent: "ord-sent", partial: "ord-partial", received: "ord-received" };
+
+  // KPIs
+  const drafts   = orders.filter(o => o.status === "draft").length;
+  const sent     = orders.filter(o => o.status === "sent").length;
+  const received = orders.filter(o => o.status === "received").length;
+
+  // Dernières commandes par fournisseur
+  const lastBySupp = {};
+  orders.forEach(o => {
+    if (!lastBySupp[o.supplier_id] || o.id > lastBySupp[o.supplier_id].id)
+      lastBySupp[o.supplier_id] = o;
+  });
+
+  const suppCards = suppliers.map(s => {
+    const last = lastBySupp[s.id];
+    const lastStr = last
+      ? `${statusIcon[last.status]} ${last.reference} — ${last.created_at}`
+      : `<span style="color:var(--text-faint)">Aucune commande</span>`;
+    const emailWarn = !s.email
+      ? `<span class="ord-email-warn" title="Ajoutez l'email dans Fournisseurs">⚠️ Email manquant</span>`
+      : `<span class="ord-email-ok">✉ ${s.email}</span>`;
+    return `
+    <div class="ord-supplier-card">
+      <div class="ord-supplier-header">
+        <div>
+          <div class="ord-supplier-name">${s.name}</div>
+          <div class="ord-supplier-meta">${emailWarn}</div>
+        </div>
+        <button class="btn btn-primary ord-new-btn" onclick="openOrderForm(${s.id}, '${s.name.replace(/'/g,"\\'")}')">
+          + Commander
+        </button>
+      </div>
+      <div class="ord-supplier-last">Dernière : ${lastStr}</div>
+    </div>`;
+  }).join("");
+
+  const orderRows = orders.length === 0
+    ? `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-muted)">Aucune commande pour l'instant</td></tr>`
+    : orders.map(o => `
+    <tr class="ord-row" onclick="openOrderDetail(${o.id})">
+      <td><span class="ord-ref">${o.reference}</span></td>
+      <td>${o.supplier_name}</td>
+      <td>${o.created_at}</td>
+      <td><span class="ord-badge ${statusClass[o.status]}">${statusIcon[o.status]} ${statusLabel[o.status]}</span></td>
+      <td style="text-align:right">${o.total_ht > 0 ? `€${o.total_ht.toFixed(2)}` : "—"}</td>
+      <td style="text-align:right">${o.items_count} ligne${o.items_count > 1 ? "s" : ""}</td>
+    </tr>`).join("");
+
+  return `
+  <div class="section-header">
+    <span class="section-title">🛒 Commandes Fournisseurs</span>
+  </div>
+
+  <!-- KPIs -->
+  <div class="stock-summary" style="margin-bottom:24px">
+    <div class="summary-card ord-kpi-draft" style="--card-icon:'📝'">
+      <div class="s-label">Brouillons</div>
+      <div class="s-value">${drafts}</div>
+      <div class="s-sub">En préparation</div>
+    </div>
+    <div class="summary-card ord-kpi-sent" style="--card-icon:'📤'">
+      <div class="s-label">Envoyées</div>
+      <div class="s-value">${sent}</div>
+      <div class="s-sub">En attente livraison</div>
+    </div>
+    <div class="summary-card ord-kpi-received" style="--card-icon:'✅'">
+      <div class="s-label">Reçues</div>
+      <div class="s-value">${received}</div>
+      <div class="s-sub">Traitées</div>
+    </div>
+  </div>
+
+  <!-- Cartes fournisseurs -->
+  <div class="ord-section-title">Commander par fournisseur</div>
+  <div class="ord-supplier-grid">${suppCards}</div>
+
+  <!-- Historique -->
+  <div class="ord-section-title" style="margin-top:28px">Historique des commandes</div>
+  <div class="table-wrap">
+    <table class="kpi-table" style="cursor:pointer">
+      <thead><tr>
+        <th>Référence</th><th>Fournisseur</th><th>Date</th>
+        <th>Statut</th><th style="text-align:right">Total HT</th><th style="text-align:right">Lignes</th>
+      </tr></thead>
+      <tbody id="orders-tbody">${orderRows}</tbody>
+    </table>
+  </div>`;
+}
+
+async function openOrderForm(supplierId, suppName) {
+  _orderFormSupplier = { id: supplierId, name: suppName };
+  _orderEditId = null;
+
+  const app = document.getElementById("app");
+  app.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">Chargement des produits…</div>`;
+
+  try {
+    const suggestions = await api(`/api/orders/suggestions/${supplierId}`);
+    _orderFormData = suggestions.map(s => ({ ...s, qty_input: s.suggested_qty || 0 }));
+    _renderOrderForm(app);
+  } catch(e) {
+    app.innerHTML = `<div style="padding:40px;color:#DC2626">Erreur : ${e.message}</div>`;
+  }
+}
+
+async function openOrderEdit(orderId) {
+  _orderEditId = orderId;
+  const app = document.getElementById("app");
+  app.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">Chargement…</div>`;
+  try {
+    const order = await api(`/api/orders/${orderId}`);
+    const suggestions = await api(`/api/orders/suggestions/${order.supplier_id}`);
+    _orderFormSupplier = { id: order.supplier_id, name: order.supplier_name };
+    // Merge: utiliser les qtés de la commande existante
+    const qtyMap = {};
+    order.items.forEach(it => { if (it.product_id) qtyMap[it.product_id] = it.qty_ordered; });
+    _orderFormData = suggestions.map(s => ({
+      ...s,
+      qty_input: qtyMap[s.product_id] ?? 0,
+    }));
+    _renderOrderForm(app, order.notes);
+  } catch(e) {
+    app.innerHTML = `<div style="padding:40px;color:#DC2626">Erreur : ${e.message}</div>`;
+  }
+}
+
+function _renderOrderForm(el, existingNotes) {
+  const rows = (_orderFormData || []).map((p, i) => {
+    const stockIcon = p.stock_status === "rupture" ? "🔴" : p.stock_status === "low" ? "🟠" : "🟢";
+    const stockVal = p.stock % 1 < 0.05 ? Math.round(p.stock) : parseFloat(p.stock.toFixed(1));
+    const hasQty = p.qty_input > 0;
+    const prix = p.unit_price_ht != null ? p.unit_price_ht.toFixed(4) : "";
+    const lineTotal = (p.qty_input > 0 && p.unit_price_ht) ? `€${(p.qty_input * p.unit_price_ht).toFixed(2)}` : "—";
+    return `
+    <tr class="ord-form-row ${hasQty ? 'ord-row-active' : ''}" id="ord-row-${i}">
+      <td>
+        <div class="ord-prod-name">${stockIcon} ${p.product_name}</div>
+        <div class="ord-prod-cat">${p.category}</div>
+      </td>
+      <td class="ord-stock-cell ${p.stock_status === 'rupture' ? 'ord-stock-rupture' : p.stock_status === 'low' ? 'ord-stock-low' : ''}">
+        ${stockVal}
+        <div style="font-size:10px;color:var(--text-faint)">seuil: ${p.alert_threshold}</div>
+      </td>
+      <td style="text-align:center">
+        ${p.suggested_qty > 0 ? `<span class="ord-suggestion">${p.suggested_qty}</span>` : `<span style="color:var(--text-faint)">—</span>`}
+      </td>
+      <td>
+        <input type="number" class="ord-qty-input" min="0" step="1"
+          value="${p.qty_input || ''}" placeholder="0"
+          data-idx="${i}"
+          oninput="updateOrderRow(${i}, this.value)"
+          onclick="this.select()"/>
+      </td>
+      <td>
+        <input type="number" class="ord-price-input" min="0" step="0.0001"
+          value="${prix}" placeholder="prix HT"
+          data-idx="${i}"
+          oninput="updateOrderPrice(${i}, this.value)"/>
+      </td>
+      <td class="ord-line-total" id="ord-lt-${i}">${lineTotal}</td>
+    </tr>`;
+  }).join("");
+
+  el.innerHTML = `
+  <div class="ord-form-container">
+    <div class="ord-form-topbar">
+      <button class="btn btn-outline" onclick="renderOrders(document.getElementById('app'))">← Retour</button>
+      <div class="ord-form-title">
+        Commande — <strong>${_orderFormSupplier.name}</strong>
+        ${_orderEditId ? `<span class="ord-edit-badge">Modification</span>` : `<span class="ord-new-badge">Nouveau</span>`}
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="autoFillSuggestions()">💡 Auto-remplir</button>
+        <button class="btn btn-outline" onclick="clearOrderForm()">🗑 Vider</button>
+      </div>
+    </div>
+
+    <div class="ord-form-notes-row">
+      <input type="text" id="ord-notes" class="ord-notes-input" placeholder="Notes / instructions pour le fournisseur…" value="${existingNotes || ''}"/>
+    </div>
+
+    <div class="table-wrap ord-form-table-wrap">
+      <table class="ord-form-table">
+        <thead>
+          <tr>
+            <th>Produit</th>
+            <th style="text-align:right">Stock actuel</th>
+            <th style="text-align:center">Suggéré 💡</th>
+            <th style="text-align:center">Qté à commander</th>
+            <th>Prix unit. HT</th>
+            <th style="text-align:right">Total ligne</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+
+    <div class="ord-form-footer">
+      <div class="ord-total-block">
+        <div class="ord-total-label">Total estimé HT</div>
+        <div class="ord-total-val" id="ord-grand-total">—</div>
+        <div class="ord-total-sub" id="ord-lines-count">0 ligne(s)</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button class="btn btn-outline ord-save-btn" onclick="saveOrderDraft()">💾 Enregistrer brouillon</button>
+        <button class="btn btn-primary ord-send-btn" onclick="previewAndSendOrder()">📧 Aperçu &amp; Envoyer</button>
+      </div>
+    </div>
+  </div>`;
+
+  recalcOrderTotal();
+}
+
+function updateOrderRow(idx, val) {
+  if (_orderFormData[idx]) {
+    _orderFormData[idx].qty_input = parseFloat(val) || 0;
+    const row = document.getElementById(`ord-row-${idx}`);
+    if (row) row.classList.toggle("ord-row-active", _orderFormData[idx].qty_input > 0);
+    // Recalc line total
+    const lt = document.getElementById(`ord-lt-${idx}`);
+    if (lt) {
+      const qty = _orderFormData[idx].qty_input;
+      const prix = _orderFormData[idx].unit_price_ht;
+      lt.textContent = (qty > 0 && prix) ? `€${(qty * prix).toFixed(2)}` : "—";
+    }
+    recalcOrderTotal();
+  }
+}
+
+function updateOrderPrice(idx, val) {
+  if (_orderFormData[idx]) {
+    _orderFormData[idx].unit_price_ht = parseFloat(val) || null;
+    const qty = _orderFormData[idx].qty_input;
+    const prix = _orderFormData[idx].unit_price_ht;
+    const lt = document.getElementById(`ord-lt-${idx}`);
+    if (lt) lt.textContent = (qty > 0 && prix) ? `€${(qty * prix).toFixed(2)}` : "—";
+    recalcOrderTotal();
+  }
+}
+
+function recalcOrderTotal() {
+  const items = (_orderFormData || []).filter(p => p.qty_input > 0);
+  const total = items.reduce((s, p) => s + (p.qty_input * (p.unit_price_ht || 0)), 0);
+  const el = document.getElementById("ord-grand-total");
+  const lc = document.getElementById("ord-lines-count");
+  if (el) el.textContent = total > 0 ? `€${total.toFixed(2)}` : "—";
+  if (lc) lc.textContent = `${items.length} ligne${items.length > 1 ? "s" : ""}`;
+}
+
+function autoFillSuggestions() {
+  (_orderFormData || []).forEach((p, i) => {
+    if (p.suggested_qty > 0 && p.qty_input === 0) {
+      p.qty_input = p.suggested_qty;
+      const input = document.querySelector(`input.ord-qty-input[data-idx="${i}"]`);
+      if (input) { input.value = p.suggested_qty; }
+      const row = document.getElementById(`ord-row-${i}`);
+      if (row) row.classList.add("ord-row-active");
+      const lt = document.getElementById(`ord-lt-${i}`);
+      if (lt) {
+        const prix = p.unit_price_ht;
+        lt.textContent = prix ? `€${(p.suggested_qty * prix).toFixed(2)}` : "—";
+      }
+    }
+  });
+  recalcOrderTotal();
+}
+
+function clearOrderForm() {
+  (_orderFormData || []).forEach((p, i) => {
+    p.qty_input = 0;
+    const input = document.querySelector(`input.ord-qty-input[data-idx="${i}"]`);
+    if (input) input.value = "";
+    const row = document.getElementById(`ord-row-${i}`);
+    if (row) row.classList.remove("ord-row-active");
+    const lt = document.getElementById(`ord-lt-${i}`);
+    if (lt) lt.textContent = "—";
+  });
+  recalcOrderTotal();
+}
+
+function _buildOrderPayload() {
+  const notes = document.getElementById("ord-notes")?.value || "";
+  const items = (_orderFormData || [])
+    .filter(p => p.qty_input > 0)
+    .map(p => ({
+      product_id: p.product_id,
+      product_name: p.product_name,
+      qty_ordered: p.qty_input,
+      unit_price_ht: p.unit_price_ht || null,
+    }));
+  return { supplier_id: _orderFormSupplier.id, notes, items };
+}
+
+async function saveOrderDraft() {
+  const payload = _buildOrderPayload();
+  if (payload.items.length === 0) {
+    alert("Aucune quantité saisie.");
+    return;
+  }
+  try {
+    let order;
+    if (_orderEditId) {
+      order = await api(`/api/orders/${_orderEditId}`, {
+        method: "PUT", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      });
+    } else {
+      order = await api("/api/orders", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      });
+      _orderEditId = order.id;
+    }
+    showToast(`✅ Brouillon enregistré — ${order.reference}`);
+    renderOrders(document.getElementById("app"));
+  } catch(e) {
+    alert("Erreur : " + e.message);
+  }
+}
+
+async function previewAndSendOrder() {
+  const payload = _buildOrderPayload();
+  if (payload.items.length === 0) { alert("Aucune quantité saisie."); return; }
+
+  // Sauvegarder d'abord
+  let order;
+  try {
+    if (_orderEditId) {
+      order = await api(`/api/orders/${_orderEditId}`, {
+        method: "PUT", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      });
+    } else {
+      order = await api("/api/orders", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      });
+      _orderEditId = order.id;
+    }
+  } catch(e) { alert("Erreur sauvegarde : " + e.message); return; }
+
+  // Aperçu email
+  const total = order.items.reduce((s,it) => s + (it.qty_ordered * (it.unit_price_ht||0)), 0);
+  const itemsHtml = order.items.map(it => `
+    <tr>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${it.product_name}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center;font-weight:700">${it.qty_ordered}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right">${it.unit_price_ht ? `€${it.unit_price_ht.toFixed(4)}` : "—"}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right">${it.line_total != null ? `€${it.line_total.toFixed(2)}` : "—"}</td>
+    </tr>`).join("");
+
+  const emailAddr = order.supplier_email || "(email non renseigné)";
+
+  openModal(`
+    <div class="kpi-modal-header kpi-blue" style="display:flex;justify-content:space-between;align-items:center">
+      <span>📧 Aperçu de la commande</span>
+      <span style="font-size:13px;font-weight:500">${order.reference}</span>
+    </div>
+    <div style="margin:14px 0 6px;font-size:13px">
+      <strong>Destinataire :</strong>
+      <span style="${!order.supplier_email ? 'color:#DC2626' : 'color:#15803D'}">${emailAddr}</span>
+    </div>
+    ${!order.supplier_email ? `<div class="kpi-alert-bar">⚠️ Ajoutez l'email du fournisseur dans l'onglet Fournisseurs avant d'envoyer.</div>` : ''}
+    <div class="ord-email-preview">
+      <div class="ord-email-header">Marina di Lava — Bon de Commande</div>
+      <p><strong>Réf :</strong> ${order.reference} &nbsp;|&nbsp; <strong>Fournisseur :</strong> ${order.supplier_name}</p>
+      ${order.notes ? `<p style="font-style:italic">${order.notes}</p>` : ''}
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:12px">
+        <thead><tr style="background:#f9fafb">
+          <th style="padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Produit</th>
+          <th style="padding:6px 10px;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Qté</th>
+          <th style="padding:6px 10px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Prix unit. HT</th>
+          <th style="padding:6px 10px;text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Total HT</th>
+        </tr></thead>
+        <tbody>${itemsHtml}</tbody>
+      </table>
+      ${total > 0 ? `<p style="text-align:right;font-weight:700;margin-top:8px">Total estimé HT : €${total.toFixed(2)}</p>` : ''}
+    </div>
+    <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">
+      <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
+      ${order.supplier_email
+        ? `<button class="btn btn-primary" onclick="sendOrderNow(${order.id})">📤 Envoyer par email</button>`
+        : `<button class="btn btn-outline" onclick="copyOrderMailto(${order.id})">📋 Copier / ouvrir email</button>`
+      }
+    </div>
+  `);
+}
+
+async function sendOrderNow(orderId) {
+  try {
+    const res = await api(`/api/orders/${orderId}/send-email`, { method: "POST" });
+    if (res.no_smtp) {
+      // Pas de config SMTP → fallback mailto
+      _openMailto(res.to, res.subject, orderId);
+    } else {
+      closeModal();
+      showToast("✅ Commande envoyée par email !");
+      renderOrders(document.getElementById("app"));
+    }
+  } catch(e) {
+    alert("Erreur envoi : " + e.message);
+  }
+}
+
+async function copyOrderMailto(orderId) {
+  try {
+    const res = await api(`/api/orders/${orderId}/send-email`, { method: "POST" });
+    _openMailto(res.to || "", res.subject || "", orderId);
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+function _openMailto(to, subject, orderId) {
+  closeModal();
+  // Marquer comme envoyée manuellement
+  api(`/api/orders/${orderId}/status`, {
+    method: "PATCH",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ status: "sent" })
+  }).then(() => renderOrders(document.getElementById("app")));
+  const mailto = `mailto:${to}?subject=${encodeURIComponent(subject)}`;
+  window.open(mailto, "_blank");
+  showToast("✉ Email ouvert dans votre client mail");
+}
+
+async function openOrderDetail(orderId) {
+  const app = document.getElementById("app");
+  app.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">Chargement…</div>`;
+  const order = await api(`/api/orders/${orderId}`);
+
+  const statusLabel = { draft: "Brouillon", sent: "Envoyée", partial: "Partielle", received: "Reçue" };
+  const statusIcon  = { draft: "📝", sent: "📤", partial: "📦", received: "✅" };
+  const statusClass = { draft: "ord-draft", sent: "ord-sent", partial: "ord-partial", received: "ord-received" };
+
+  const total = order.items.reduce((s,it) => s + (it.qty_ordered * (it.unit_price_ht||0)), 0);
+
+  const itemRows = order.items.map(it => `
+    <tr>
+      <td>${it.product_name}</td>
+      <td style="text-align:center;font-weight:700">${it.qty_ordered}</td>
+      <td style="text-align:right">${it.unit_price_ht ? `€${it.unit_price_ht.toFixed(4)}` : "—"}</td>
+      <td style="text-align:right">${it.line_total != null ? `€${it.line_total.toFixed(2)}` : "—"}</td>
+      <td style="text-align:right;font-size:12px;color:var(--text-muted)">${it.current_stock != null ? it.current_stock : "—"}</td>
+    </tr>`).join("");
+
+  const canEdit = order.status === "draft";
+
+  app.innerHTML = `
+  <div class="ord-form-container">
+    <div class="ord-form-topbar">
+      <button class="btn btn-outline" onclick="renderOrders(document.getElementById('app'))">← Retour</button>
+      <div class="ord-form-title">
+        ${order.reference}
+        <span class="ord-badge ${statusClass[order.status]}">${statusIcon[order.status]} ${statusLabel[order.status]}</span>
+      </div>
+      <div style="display:flex;gap:8px">
+        ${canEdit ? `<button class="btn btn-outline" onclick="openOrderEdit(${order.id})">✏️ Modifier</button>` : ''}
+        ${order.status !== 'received' ? `
+          <select class="ord-status-select" onchange="changeOrderStatus(${order.id}, this.value)">
+            <option value="">Changer statut…</option>
+            ${order.status !== 'sent' ? `<option value="sent">📤 Marquer envoyée</option>` : ''}
+            ${order.status !== 'partial' ? `<option value="partial">📦 Partielle</option>` : ''}
+            <option value="received">✅ Marquer reçue</option>
+          </select>` : ''}
+        ${canEdit ? `<button class="btn" style="background:#FEE2E2;color:#DC2626;border-color:#FECACA" onclick="deleteOrder(${order.id})">🗑 Supprimer</button>` : ''}
+      </div>
+    </div>
+
+    <div class="ord-detail-meta">
+      <div class="ord-meta-item"><span>Fournisseur</span><strong>${order.supplier_name}</strong></div>
+      <div class="ord-meta-item"><span>Créée le</span><strong>${order.created_at}</strong></div>
+      ${order.sent_at ? `<div class="ord-meta-item"><span>Envoyée le</span><strong>${order.sent_at}</strong></div>` : ''}
+      ${order.received_at ? `<div class="ord-meta-item"><span>Reçue le</span><strong>${order.received_at}</strong></div>` : ''}
+      ${order.notes ? `<div class="ord-meta-item" style="grid-column:1/-1"><span>Notes</span><strong>${order.notes}</strong></div>` : ''}
+    </div>
+
+    <div class="table-wrap" style="margin-top:16px">
+      <table class="kpi-table">
+        <thead><tr>
+          <th>Produit</th>
+          <th style="text-align:center">Qté commandée</th>
+          <th style="text-align:right">Prix unit. HT</th>
+          <th style="text-align:right">Total ligne HT</th>
+          <th style="text-align:right">Stock actuel</th>
+        </tr></thead>
+        <tbody>${itemRows}</tbody>
+      </table>
+    </div>
+
+    ${total > 0 ? `<div style="text-align:right;font-size:17px;font-weight:800;margin-top:12px;color:var(--accent)">Total HT : €${total.toFixed(2)}</div>` : ''}
+
+    ${order.status === 'sent' ? `
+    <div style="margin-top:20px;padding:16px;background:rgba(201,168,76,.08);border:1px solid rgba(201,168,76,.3);border-radius:10px;display:flex;align-items:center;justify-content:space-between">
+      <span style="font-size:13px;color:var(--text-muted)">Commande envoyée — en attente de livraison</span>
+      <button class="btn btn-primary" onclick="changeOrderStatus(${order.id},'received')">✅ Marquer comme reçue</button>
+    </div>` : ''}
+  </div>`;
+}
+
+async function changeOrderStatus(orderId, status) {
+  if (!status) return;
+  await api(`/api/orders/${orderId}/status`, {
+    method: "PATCH",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ status })
+  });
+  openOrderDetail(orderId);
+}
+
+async function deleteOrder(orderId) {
+  if (!confirm("Supprimer ce brouillon ?")) return;
+  await api(`/api/orders/${orderId}`, { method: "DELETE" });
+  renderOrders(document.getElementById("app"));
+}
+
 let allMappings = [];
 
 async function renderMapping(el) {
