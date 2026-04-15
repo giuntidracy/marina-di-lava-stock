@@ -462,7 +462,7 @@ th.sort-desc::after { content: " ↓"; color: var(--accent); font-size: 11px; }
 .summary-card::after {
   content: var(--card-icon, '');
   position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
-  font-size: 36px; opacity: .06; pointer-events: none;
+  font-size: 42px; opacity: .18; pointer-events: none;
   line-height: 1;
 }
 
