@@ -1284,23 +1284,25 @@ async def analyze_delivery(file: UploadFile = File(...)):
     import anthropic as _anthropic
     client = _anthropic.Anthropic(api_key=api_key)
 
-    prompt_text = """Tu lis une facture SOCOBO au format DSAC.
+    prompt_text = """Tu analyses une facture ou un bon de livraison fournisseur.
 
-COLONNES du document (gauche → droite) :
-  LIBELLE | COLIS | CONTENANT | COLS | PRIX UNIT HT | REMISE | NET HT | VOLUME EFFECTIF | ALCOOL PUR
+TÂCHE 1 — Identifie le nom du fournisseur (ex : "Socobo", "PGV Distribution", "Auchan", "Esprit du Vin"…).
+Si introuvable, laisse "fournisseur" vide.
 
-⚠️ VOLUME EFFECTIF et ALCOOL PUR = colonnes fiscales en LITRES. NE JAMAIS les utiliser comme quantités.
+TÂCHE 2 — Extrait les produits livrés :
+- "nom" : nom complet du produit
+- "quantite" : total d'unités individuelles (si NxVol ou N colis de X unités → quantite = N×X)
+- "prix_unitaire_ht" : prix unitaire HT en euros (null si absent)
+- "numero_facture" : numéro de facture/bon (même valeur pour toutes les lignes, "" si absent)
 
-Calcule "quantite" = total d'unités individuelles reçues :
-Si le nom contient xN ou /N → quantite = COLIS × N
-Sinon → quantite = COLIS uniquement
-Pour les FÛTS → quantite = COLIS uniquement
+COLONNES typiques (format Socobo/DSAC) : LIBELLE | COLIS | CONTENANT | COLS | PRIX UNIT HT | REMISE | NET HT | VOLUME EFFECTIF | ALCOOL PUR
+⚠️ VOLUME EFFECTIF et ALCOOL PUR = colonnes fiscales en LITRES — NE JAMAIS les utiliser comme quantités.
 
 LIGNES À IGNORER : FRAIS DE REGIE, DECONSIGNE, CONSIGNE, FUT 30 EUROS.
-PROMO FOURN / GRATUIT : ajoute leur COLIS au produit principal.
+PROMO FOURN / GRATUIT : ajoute les COLIS au produit principal.
 
 Réponds UNIQUEMENT en JSON valide :
-[{"nom": "Pastis 51 1L", "quantite": 12, "prix_unitaire_ht": 16.84, "numero_facture": "100051"}]"""
+{"fournisseur": "Socobo", "produits": [{"nom": "Pastis 51 1L", "quantite": 12, "prix_unitaire_ht": 16.84, "numero_facture": "100051"}]}"""
 
     try:
         if is_pdf:
@@ -1338,16 +1340,33 @@ Réponds UNIQUEMENT en JSON valide :
         raise HTTPException(500, detail=f"Erreur lors de l'analyse : {str(e)}")
 
     raw = message.content[0].text.strip()
-    start = raw.find("[")
-    end = raw.rfind("]") + 1
-    if start == -1:
-        raise HTTPException(400, detail="Impossible d'extraire les données du document. Essayez avec une meilleure photo.")
-    try:
-        products = json.loads(raw[start:end])
-    except json.JSONDecodeError:
-        raise HTTPException(400, detail="Le document n'a pas pu être analysé correctement.")
 
-    return {"products": products}
+    # Essayer d'abord le format objet {"fournisseur": "...", "produits": [...]}
+    fournisseur_ia = ""
+    products = None
+    obj_start = raw.find("{")
+    if obj_start != -1:
+        obj_end = raw.rfind("}") + 1
+        try:
+            parsed = json.loads(raw[obj_start:obj_end])
+            if isinstance(parsed, dict) and ("produits" in parsed or "products" in parsed):
+                products = parsed.get("produits") or parsed.get("products") or []
+                fournisseur_ia = parsed.get("fournisseur", "")
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback : ancien format tableau [...]
+    if products is None:
+        start = raw.find("[")
+        end = raw.rfind("]") + 1
+        if start == -1:
+            raise HTTPException(400, detail="Impossible d'extraire les données du document. Essayez avec une meilleure photo.")
+        try:
+            products = json.loads(raw[start:end])
+        except json.JSONDecodeError:
+            raise HTTPException(400, detail="Le document n'a pas pu être analysé correctement.")
+
+    return {"products": products, "fournisseur": fournisseur_ia}
 
 
 class DeliveryConfirmIn(BaseModel):
