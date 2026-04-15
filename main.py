@@ -1204,15 +1204,19 @@ def _parse_auchan_pdf(content_bytes):
         sorted_cl = sorted(clean_lines.items(), key=lambda kv: abs(kv[0] - y_q))[:2]
         sorted_cl.sort(key=lambda kv: kv[0])
 
-        nom = _clean_nom(' '.join(v for k, v in sorted_cl))
+        # Appliquer la détection de pack sur le nom BRUT (avant nettoyage)
+        # afin que "6X 1.5L" (format Saint Georges) soit bien détecté même si
+        # _clean_nom supprime ensuite le suffixe volume "1.5L".
+        raw_nom = ' '.join(v for k, v in sorted_cl)
+        nom = _clean_nom(raw_nom)
         if not nom or len(nom) < 3:
             continue
 
-        # Calcul quantité individuelle
+        # Calcul quantité individuelle — regex sur le nom BRUT
         # Format NxVol : "6X33CL", "20X25CL", "12X20CL", "6X 1.5L", "24X33"
-        m1 = _re.search(r'(\d+)\s*[Xx]\s*\d+[,\.]?\d*\s*(?:cl|CL|L\b|l\b)?', nom)
+        m1 = _re.search(r'(\d+)\s*[Xx]\s*\d+[,\.]?\d*\s*(?:cl|CL|L\b|l\b)?', raw_nom)
         # Format VolxN : "20CL X12", "20CLX12"
-        m2 = _re.search(r'\d+[,\.]?\d*\s*[Cc][Ll]\s*[Xx]\s*(\d+)', nom)
+        m2 = _re.search(r'\d+[,\.]?\d*\s*[Cc][Ll]\s*[Xx]\s*(\d+)', raw_nom)
 
         if m2:
             quantite = qty * int(m2.group(1))
@@ -1382,6 +1386,8 @@ def _normalize_tokens(s: str) -> set:
     s = unicodedata.normalize('NFD', s)
     s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
     s = s.lower()
+    # Normaliser "saint" → "st" pour matcher "Saint Georges" ↔ "St Georges"
+    s = re.sub(r'\bsaint\b', 'st', s)
     # Normaliser décimales : "1,5" "1.5" → "15"
     s = re.sub(r'(\d)[,.](\d)', r'\1\2', s)
     # Supprimer multiplicateurs de pack : "6x", "12x", "x6", "33clx6" → "33cl"
@@ -1525,10 +1531,10 @@ def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
         raw_qty = entry["total_qty"]
         prix = entry["prix"]
 
-        if p.unit and "Carton" in p.unit and p.qty_per_pack and p.qty_per_pack > 1:
-            actual_qty = round(raw_qty / p.qty_per_pack, 2)
-        else:
-            actual_qty = raw_qty
+        # Les parsers (Auchan, Socobo, PGV…) envoient déjà la quantité en unités
+        # individuelles (bouteilles/canettes). On n'applique PAS de division par
+        # qty_per_pack ici — ce serait une double opération.
+        actual_qty = raw_qty
 
         if actual_qty != 0:
             if actual_qty < 0:
