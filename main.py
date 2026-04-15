@@ -1512,6 +1512,11 @@ def _normalize_tokens(s: str) -> set:
     s = re.sub(r'\bsaint\b', 'st', s)
     # Synonymes marques : "lipton" → "ice tea" (BL Auchan vs catalogue)
     s = re.sub(r'\blipton\b', 'ice tea', s)
+    # Synonymes variantes : "sans sucre" / "low sucres" / "zero sucre" → "zero"
+    s = re.sub(r'\bsans\s+sucre\b', 'zero', s)
+    s = re.sub(r'\blow\s+sucres?\b', 'zero', s)
+    s = re.sub(r'\bzero\s+sucre\b', 'zero', s)
+    s = re.sub(r'\bsugar\s+free\b', 'zero', s)
     # Normaliser décimales : "1,5" "1.5" → "15"
     s = re.sub(r'(\d)[,.](\d)', r'\1\2', s)
     # Supprimer multiplicateurs de pack : "6x", "12x", "x6", "33clx6" → "33cl"
