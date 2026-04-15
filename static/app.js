@@ -936,6 +936,22 @@ function renderDelivery(el) {
         <button class="btn btn-sm" onclick="loadRecentImports()">🔄 Rafraîchir</button>
       </div>
       <div id="recent-imports-list">Chargement…</div>
+    </div>
+
+    <div style="margin-top:40px;border-top:2px solid #FEF2F2;padding-top:24px">
+      <div style="font-size:13px;font-weight:700;color:#DC2626;margin-bottom:14px;letter-spacing:.5px;text-transform:uppercase">
+        ⚠️ Zone d'administration
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <button class="btn" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA;font-weight:600"
+          onclick="adminResetStocks()">
+          🔄 Remettre tous les stocks à 0
+        </button>
+        <button class="btn" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA;font-weight:600"
+          onclick="adminClearImports()">
+          🗑 Supprimer tous les BL
+        </button>
+      </div>
     </div>`;
 
   const zone = document.getElementById("delivery-zone");
@@ -996,9 +1012,9 @@ let _currentImportDetail = null;
 async function showImportDetail(importId, reference, supplier, date) {
   try {
     const data = await api(`/api/imports/${importId}/detail`);
-    // L'endpoint retourne toujours un tableau plat + flag annule
     const details = Array.isArray(data.details) ? data.details : [];
-    _currentImportDetail = { importId, reference, supplier, date, details, annule: !!data.annule };
+    const notFound = Array.isArray(data.not_found) ? data.not_found : [];
+    _currentImportDetail = { importId, reference, supplier, date, details, notFound, annule: !!data.annule };
     _renderImportDetailModal();
   } catch(e) {
     openModal(`<h3>Détail import</h3><div class="info-box">Erreur chargement : ${esc(e.message)}</div>`);
@@ -1007,7 +1023,7 @@ async function showImportDetail(importId, reference, supplier, date) {
 
 function _renderImportDetailModal() {
   if (!_currentImportDetail) return;
-  const { importId, reference, supplier, date, details, annule } = _currentImportDetail;
+  const { importId, reference, supplier, date, details, notFound, annule } = _currentImportDetail;
 
   const canEdit = !annule;
 
@@ -1032,6 +1048,19 @@ function _renderImportDetailModal() {
     ? `<div style="background:#FEF2F2;color:#DC2626;font-size:12px;padding:8px 12px;border-radius:8px;margin-bottom:12px">⚠️ Cet import a été annulé — modification impossible</div>`
     : '';
 
+  const notFoundHtml = (notFound && notFound.length)
+    ? `<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+         <div style="color:#DC2626;font-weight:600;font-size:13px;margin-bottom:8px">
+           ⚠️ ${notFound.length} produit(s) non reconnu(s) — à créer ou mapper
+         </div>
+         ${notFound.map(n => `
+           <div style="display:flex;align-items:center;gap:8px;background:#FEF2F2;border:1px solid #FECACA;
+                       border-radius:6px;padding:6px 10px;margin-bottom:4px;font-size:13px;color:#991B1B">
+             <span>❌</span><span>${esc(n)}</span>
+           </div>`).join('')}
+       </div>`
+    : '';
+
   openModal(`
     <h3>📋 Détail — ${esc(supplier)}</h3>
     <div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">BL n°${esc(reference)} · ${esc(date)}</div>
@@ -1041,8 +1070,32 @@ function _renderImportDetailModal() {
            <thead><tr><th>Produit</th><th style="text-align:center">Qté</th><th style="text-align:right">Prix achat</th><th></th></tr></thead>
            <tbody id="bl-tbody">${rows}</tbody>
          </table></div>`
-      : '<div class="info-box">Aucun détail disponible pour cet import.</div>'}
+      : '<div class="info-box">Aucun produit importé.</div>'}
+    ${notFoundHtml}
   `);
+}
+
+async function adminResetStocks() {
+  if (!confirm("⚠️ Remettre TOUS les stocks à 0 ?\n\nCette action est irréversible.")) return;
+  try {
+    const res = await api("/api/admin/reset-stocks", { method: "POST" });
+    alert(`✓ ${res.products_reset} produit(s) remis à 0.`);
+    allProducts = await api("/api/produits");
+    updateAlertBadge();
+  } catch(e) {
+    alert("Erreur : " + e.message);
+  }
+}
+
+async function adminClearImports() {
+  if (!confirm("⚠️ Supprimer TOUS les bons de livraison ?\n\nLes stocks ne seront PAS modifiés. Cette action est irréversible.")) return;
+  try {
+    const res = await api("/api/admin/clear-imports", { method: "DELETE" });
+    alert(`✓ ${res.deleted} bon(s) de livraison supprimé(s).`);
+    loadRecentImports();
+  } catch(e) {
+    alert("Erreur : " + e.message);
+  }
 }
 
 async function deleteImportLine(importId, productId, productName, qty) {

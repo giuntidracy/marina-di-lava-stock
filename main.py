@@ -1708,7 +1708,7 @@ def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
             import_type="delivery",
             reference=body.numero_facture,
             supplier=body.fournisseur,
-            details_json=json.dumps(updated, ensure_ascii=False),
+            details_json=json.dumps({"items": updated, "not_found": not_found}, ensure_ascii=False),
         )
         db.add(import_log)
         log_event(
@@ -1730,22 +1730,30 @@ def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
     return {"ok": True, "updated": updated, "not_found": not_found, "is_avoir": is_avoir}
 
 
+def _parse_import_details(raw_json: str):
+    """Parse details_json → (is_annule, items, not_found).
+    Gère tous les formats : liste plate (ancien), dict avec items/not_found (nouveau),
+    dict avec annule (annulé)."""
+    try:
+        raw = json.loads(raw_json or '[]')
+    except Exception:
+        return False, [], []
+    if isinstance(raw, list):
+        return False, raw, []
+    if isinstance(raw, dict):
+        is_annule = bool(raw.get('annule'))
+        items = raw.get('items', raw.get('details', []))
+        not_found = raw.get('not_found', [])
+        return is_annule, items, not_found
+    return False, [], []
+
+
 @app.get("/api/imports/{import_id}/detail")
 def import_detail(import_id: int, db: Session = Depends(get_db)):
     imp = db.query(ImportLog).filter(ImportLog.id == import_id).first()
     if not imp:
         raise HTTPException(404, detail="Import introuvable")
-    try:
-        raw = json.loads(getattr(imp, "details_json", "[]") or "[]")
-    except Exception:
-        raw = []
-    # Normalise : les imports annulés ont la forme {"annule": True, "details": [...]}
-    if isinstance(raw, dict):
-        is_annule = bool(raw.get("annule"))
-        items = raw.get("details", [])
-    else:
-        is_annule = False
-        items = raw if isinstance(raw, list) else []
+    is_annule, items, not_found = _parse_import_details(getattr(imp, "details_json", "[]"))
     return {
         "id": imp.id,
         "reference": imp.reference,
@@ -1753,6 +1761,7 @@ def import_detail(import_id: int, db: Session = Depends(get_db)):
         "created_at": to_local(imp.created_at).strftime("%d/%m/%Y %H:%M"),
         "annule": is_annule,
         "details": items,
+        "not_found": not_found,
     }
 
 
@@ -1767,18 +1776,13 @@ def recent_imports(days: int = 7, db: Session = Depends(get_db)):
 
     result = []
     for imp in imports:
-        try:
-            details = json.loads(getattr(imp, 'details_json', '[]') or '[]')
-        except Exception:
-            details = []
-        annule = isinstance(details, dict) and details.get('annule', False)
-        items = details.get('details', []) if isinstance(details, dict) else details
+        is_annule, items, _ = _parse_import_details(getattr(imp, 'details_json', '[]'))
         result.append({
             "id": imp.id,
             "reference": imp.reference,
             "supplier": imp.supplier or "",
             "created_at": to_local(imp.created_at).strftime("%d/%m/%Y %H:%M"),
-            "annule": annule,
+            "annule": is_annule,
             "nb_produits": len(items),
             "details": items,
         })
@@ -1791,22 +1795,14 @@ def delete_import_line(import_id: int, product_id: int, db: Session = Depends(ge
     if not imp or imp.import_type != "delivery":
         raise HTTPException(404, "Import introuvable")
 
-    try:
-        details = json.loads(getattr(imp, 'details_json', '[]') or '[]')
-    except Exception:
-        details = []
-
-    if isinstance(details, dict) and details.get('annule'):
+    is_annule, items, not_found = _parse_import_details(getattr(imp, 'details_json', '[]'))
+    if is_annule:
         raise HTTPException(400, "Cet import a été annulé, modification impossible")
 
-    items = details if isinstance(details, list) else details.get('details', [])
-
-    # Find the line
     line = next((x for x in items if x.get('product_id') == product_id), None)
     if not line:
         raise HTTPException(404, "Ligne introuvable dans cet import")
 
-    # Reverse stock
     p = db.query(Product).get(product_id)
     if p:
         p.stock = round(p.stock - line['added'], 3)
@@ -1814,9 +1810,8 @@ def delete_import_line(import_id: int, product_id: int, db: Session = Depends(ge
         if old_price is not None:
             p.purchase_price = old_price
 
-    # Remove line from details
     new_items = [x for x in items if x.get('product_id') != product_id]
-    imp.details_json = json.dumps(new_items, ensure_ascii=False)
+    imp.details_json = json.dumps({"items": new_items, "not_found": not_found}, ensure_ascii=False)
 
     log_event(db, "modif_livraison",
               f"Suppression ligne BL n°{imp.reference} — {line.get('product', '')}",
@@ -1836,17 +1831,10 @@ def update_import_line(import_id: int, product_id: int, body: ImportLineIn, db: 
     if not imp or imp.import_type != "delivery":
         raise HTTPException(404, "Import introuvable")
 
-    try:
-        details = json.loads(getattr(imp, 'details_json', '[]') or '[]')
-    except Exception:
-        details = []
-
-    if isinstance(details, dict) and details.get('annule'):
+    is_annule, items, not_found = _parse_import_details(getattr(imp, 'details_json', '[]'))
+    if is_annule:
         raise HTTPException(400, "Cet import a été annulé, modification impossible")
 
-    items = details if isinstance(details, list) else details.get('details', [])
-
-    # Find the line
     line = next((x for x in items if x.get('product_id') == product_id), None)
     if not line:
         raise HTTPException(404, "Ligne introuvable dans cet import")
@@ -1854,14 +1842,12 @@ def update_import_line(import_id: int, product_id: int, body: ImportLineIn, db: 
     old_added = line['added']
     delta = body.new_qty - old_added
 
-    # Apply stock delta
     p = db.query(Product).get(product_id)
     if p:
         p.stock = round(p.stock + delta, 3)
         if body.new_price is not None:
             p.purchase_price = body.new_price
             p.is_estimated = False
-            # Update product_supplier price for this import's supplier
             if imp.supplier:
                 sup = db.query(Supplier).filter(
                     func.lower(Supplier.name) == imp.supplier.lower()
@@ -1873,11 +1859,10 @@ def update_import_line(import_id: int, product_id: int, body: ImportLineIn, db: 
                     if ps:
                         ps.purchase_price = body.new_price
 
-    # Update the line in details_json
     line['added'] = body.new_qty
     if body.new_price is not None:
         line['new_price'] = body.new_price
-    imp.details_json = json.dumps(items, ensure_ascii=False)
+    imp.details_json = json.dumps({"items": items, "not_found": not_found}, ensure_ascii=False)
 
     log_event(db, "modif_livraison",
               f"Modification ligne BL n°{imp.reference} — {line.get('product', '')}",
@@ -1899,15 +1884,14 @@ def annuler_import(import_id: int, db: Session = Depends(get_db)):
     except Exception:
         details = []
 
-    if isinstance(details, dict) and details.get('annule'):
+    is_annule, items, not_found = _parse_import_details(getattr(imp, 'details_json', '[]'))
+    if is_annule:
         raise HTTPException(400, "Cet import a déjà été annulé")
 
     if datetime.utcnow() - imp.created_at > timedelta(days=7):
         raise HTTPException(400, "Annulation impossible après 7 jours")
 
-    items = details if isinstance(details, list) else details.get('details', [])
     reversed_items = []
-
     for item in items:
         p = db.query(Product).get(item.get('product_id'))
         if not p:
@@ -1919,14 +1903,40 @@ def annuler_import(import_id: int, db: Session = Depends(get_db)):
             p.is_estimated = old_price is None
         reversed_items.append({"product": p.name, "removed": item['added']})
 
-    # Marquer comme annulé
-    imp.details_json = json.dumps({"annule": True, "details": items}, ensure_ascii=False)
+    # Marquer comme annulé en conservant not_found
+    imp.details_json = json.dumps({"annule": True, "items": items, "not_found": not_found}, ensure_ascii=False)
 
     log_event(db, "annulation_livraison",
               f"Annulation BL n°{imp.reference} ({imp.supplier})",
               {"numero_facture": imp.reference, "fournisseur": imp.supplier, "reversed": reversed_items})
     db.commit()
     return {"ok": True, "reversed": reversed_items}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ADMINISTRATION — RESET / PURGE
+# ══════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/admin/reset-stocks")
+def admin_reset_stocks(db: Session = Depends(get_db)):
+    """Remet tous les stocks à 0."""
+    count = db.query(Product).count()
+    db.query(Product).update({"stock": 0})
+    log_event(db, "admin_reset_stocks",
+              f"Remise à zéro de tous les stocks ({count} produits)", {})
+    db.commit()
+    return {"ok": True, "products_reset": count}
+
+
+@app.delete("/api/admin/clear-imports")
+def admin_clear_imports(db: Session = Depends(get_db)):
+    """Supprime tous les bons de livraison (sans toucher aux stocks)."""
+    count = db.query(ImportLog).filter(ImportLog.import_type == "delivery").count()
+    db.query(ImportLog).filter(ImportLog.import_type == "delivery").delete(synchronize_session=False)
+    log_event(db, "admin_clear_imports",
+              f"Suppression de {count} bon(s) de livraison", {})
+    db.commit()
+    return {"ok": True, "deleted": count}
 
 
 # ══════════════════════════════════════════════════════════════════════════
