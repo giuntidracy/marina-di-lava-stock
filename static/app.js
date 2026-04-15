@@ -965,8 +965,22 @@ async function confirmDelivery(count) {
       numero_facture:  document.getElementById(`dp-facture-${i}`)?.value || "",
     });
   }
-  const numero_facture = document.getElementById("delivery-facture")?.value || products[0]?.numero_facture || "INCONNU";
+  // Fallback unique si aucun numéro de facture saisi
+  const rawFacture = document.getElementById("delivery-facture")?.value.trim()
+    || products[0]?.numero_facture?.trim()
+    || "";
+  const numero_facture = rawFacture || `LIVRAISON-${new Date().toISOString().slice(0,16).replace("T","-")}`;
   const fournisseur    = document.getElementById("delivery-sup")?.value || "";
+
+  // Zone d'erreur séparée (ne pas écraser le formulaire avec innerHTML +=)
+  let errDiv = document.getElementById("delivery-error");
+  if (!errDiv) {
+    errDiv = document.createElement("div");
+    errDiv.id = "delivery-error";
+    errDiv.style.marginTop = "12px";
+    document.getElementById("delivery-result").after(errDiv);
+  }
+  errDiv.innerHTML = "";
 
   try {
     const res = await api("/api/import/livraison/confirm", {
@@ -974,15 +988,16 @@ async function confirmDelivery(count) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ products, numero_facture, fournisseur }),
     });
-    let html = `<div class="import-preview"><h4>✅ Livraison confirmée</h4>`;
+    let html = `<div class="import-preview"><h4>✅ Livraison confirmée — réf. ${esc(numero_facture)}</h4>`;
     res.updated.forEach(u => { html += `<div class="result-item"><span>${esc(u.product)}</span><span>+${u.added}</span></div>`; });
-    if (res.not_found?.length) html += `<div style="font-size:12px;color:var(--text-muted);margin-top:8px">Non trouvés : ${res.not_found.map(esc).join(", ")}</div>`;
+    if (res.not_found?.length) html += `<div style="font-size:12px;color:var(--text-muted);margin-top:8px">⚠️ Non trouvés : ${res.not_found.map(esc).join(", ")}</div>`;
     html += `</div>`;
     document.getElementById("delivery-result").innerHTML = html;
+    errDiv.remove();
     allProducts = await api("/api/produits");
     updateAlertBadge();
   } catch (e) {
-    document.getElementById("delivery-result").innerHTML += `<div class="alert-card alert-high" style="margin-top:8px"><span class="alert-icon">❌</span><span class="alert-msg">${esc(e.message)}</span></div>`;
+    errDiv.innerHTML = `<div class="alert-card alert-high"><span class="alert-icon">❌</span><span class="alert-msg"><strong>Erreur :</strong> ${esc(e.message)}</span></div>`;
   }
 }
 
