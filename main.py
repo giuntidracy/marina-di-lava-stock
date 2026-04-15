@@ -1238,7 +1238,7 @@ async def analyze_delivery(file: UploadFile = File(...)):
         try:
             products, invoice_num = _parse_socobo_pdf(content)
             if products:
-                return {"products": products}
+                return {"products": products, "fournisseur": "Socobo"}
         except Exception:
             pass
 
@@ -1246,7 +1246,7 @@ async def analyze_delivery(file: UploadFile = File(...)):
         try:
             products, invoice_num = _parse_pgv_vv_pdf(content)
             if products:
-                return {"products": products}
+                return {"products": products, "fournisseur": "PGV Distribution"}
         except Exception:
             pass
 
@@ -1254,15 +1254,15 @@ async def analyze_delivery(file: UploadFile = File(...)):
         try:
             products, invoice_num = _parse_esprit_du_vin_pdf(content)
             if products:
-                return {"products": products}
+                return {"products": products, "fournisseur": "Esprit du Vin"}
         except Exception:
             pass
 
-        # 3. Essayer Auchan (commandes Gmail/Auchan)
+        # 4. Essayer Auchan (commandes Gmail/Auchan)
         try:
             products, order_num = _parse_auchan_pdf(content)
             if products:
-                return {"products": products}
+                return {"products": products, "fournisseur": "Auchan"}
         except Exception:
             pass
 
@@ -1541,6 +1541,24 @@ def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
         db.rollback()
         raise HTTPException(500, detail=f"Erreur base de données : {str(e)}")
     return {"ok": True, "updated": updated, "not_found": not_found, "is_avoir": is_avoir}
+
+
+@app.get("/api/imports/{import_id}/detail")
+def import_detail(import_id: int, db: Session = Depends(get_db)):
+    imp = db.query(ImportLog).filter(ImportLog.id == import_id).first()
+    if not imp:
+        raise HTTPException(404, detail="Import introuvable")
+    try:
+        details = json.loads(getattr(imp, "details_json", "[]") or "[]")
+    except Exception:
+        details = []
+    return {
+        "id": imp.id,
+        "reference": imp.reference,
+        "supplier": imp.supplier,
+        "created_at": imp.created_at.strftime("%d/%m/%Y %H:%M"),
+        "details": details,
+    }
 
 
 @app.get("/api/imports/recent")

@@ -875,20 +875,26 @@ async function loadRecentImports() {
     let html = '';
     imports.forEach(imp => {
       const annule = imp.annule;
-      html += `<div class="import-preview" style="margin-bottom:10px;${annule ? 'opacity:0.5' : ''}">
+      const supplierLabel = esc(imp.supplier || 'Fournisseur inconnu');
+      const detailsJson = JSON.stringify(imp.details || []).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      html += `<div class="import-preview" style="margin-bottom:10px;${annule ? 'opacity:0.55' : ''}cursor:pointer"
+        onclick="showImportDetail(${imp.id}, '${esc(imp.reference)}', '${supplierLabel}', '${esc(imp.created_at)}', this)">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div>
-            <strong>${esc(imp.supplier || 'Fournisseur inconnu')}</strong>
+            <strong>${supplierLabel}</strong>
             <span style="color:var(--text-muted);font-size:12px;margin-left:8px">BL n°${esc(imp.reference)} — ${esc(imp.created_at)}</span>
-            <span style="font-size:12px;margin-left:8px;color:var(--text-muted)">${imp.nb_produits} produit(s)</span>
+            <span style="font-size:12px;margin-left:8px;color:var(--primary);font-weight:600">${imp.nb_produits} produit(s)</span>
             ${annule ? '<span style="background:#FEF2F2;color:#DC2626;font-size:11px;padding:2px 8px;border-radius:20px;margin-left:6px">Annulé</span>' : ''}
           </div>
-          ${!annule ? `<button class="btn btn-sm" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA"
-            onclick="annulerImport(${imp.id}, '${esc(imp.reference)}', '${esc(imp.supplier)}')">↩ Annuler cet import</button>` : ''}
+          <div style="display:flex;gap:6px" onclick="event.stopPropagation()">
+            <button class="btn btn-sm btn-outline" onclick="showImportDetail(${imp.id}, '${esc(imp.reference)}', '${supplierLabel}', '${esc(imp.created_at)}')">🔍 Détail</button>
+            ${!annule ? `<button class="btn btn-sm" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA"
+              onclick="annulerImport(${imp.id}, '${esc(imp.reference)}', '${esc(imp.supplier)}')">↩ Annuler</button>` : ''}
+          </div>
         </div>
         ${imp.details && imp.details.length > 0 ? `
         <div style="margin-top:8px;font-size:12px;color:var(--text-muted)">
-          ${imp.details.slice(0,5).map(d => `${esc(d.product)} +${d.added}`).join(' · ')}
+          ${imp.details.slice(0,5).map(d => `${esc(d.product)} ${d.added > 0 ? '+' : ''}${d.added}`).join(' · ')}
           ${imp.details.length > 5 ? ` · <em>+${imp.details.length - 5} autres</em>` : ''}
         </div>` : ''}
       </div>`;
@@ -896,6 +902,38 @@ async function loadRecentImports() {
     container.innerHTML = html;
   } catch(e) {
     container.innerHTML = `<div style="color:var(--text-muted);font-size:13px">Erreur : ${esc(e.message)}</div>`;
+  }
+}
+
+async function showImportDetail(importId, reference, supplier, date) {
+  try {
+    const data = await api(`/api/imports/${importId}/detail`);
+    const details = data.details || [];
+    let rows = details.map((d, i) => `
+      <tr>
+        <td style="font-weight:600">${esc(d.product)}</td>
+        <td style="color:${d.added < 0 ? '#DC2626' : 'var(--primary)'}; font-weight:700; text-align:center">
+          ${d.added > 0 ? '+' : ''}${d.added}
+        </td>
+        <td style="color:var(--text-muted); text-align:right">
+          ${d.old_price != null ? `${d.old_price.toFixed(2)} €` : '—'}
+          ${d.new_price != null && d.new_price !== d.old_price ? ` → <strong>${d.new_price.toFixed(2)} €</strong>` : ''}
+        </td>
+      </tr>`).join('');
+
+    openModal(`
+      <h3>📋 Détail — ${esc(supplier)}</h3>
+      <div style="color:var(--text-muted);font-size:12px;margin-bottom:16px">BL n°${esc(reference)} · ${esc(date)}</div>
+      ${rows.length ? `
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Produit</th><th style="text-align:center">Qté</th><th style="text-align:right">Prix achat</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>` : '<div class="info-box">Aucun détail disponible pour cet import.</div>'}
+    `);
+  } catch(e) {
+    openModal(`<h3>Détail import</h3><div class="info-box">Erreur : ${esc(e.message)}</div>`);
   }
 }
 
@@ -930,6 +968,12 @@ async function analyzeDelivery() {
   try {
     const res = await api("/api/import/livraison", { method: "POST", body: fd });
     window._deliveryProducts = res.products;
+
+    // Auto-remplir le fournisseur si détecté par le parser
+    if (res.fournisseur) {
+      const supField = document.getElementById("delivery-sup");
+      if (supField && !supField.value.trim()) supField.value = res.fournisseur;
+    }
 
     let html = `<div class="import-preview">
       <h4>📋 Produits détectés — vérifiez avant de valider</h4>
