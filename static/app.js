@@ -347,7 +347,10 @@ function exportStockCSV() {
 
   let rows = allProducts;
   if (cat)    rows = rows.filter(p => p.category === cat);
-  if (sup)    rows = rows.filter(p => p.supplier_name === sup);
+  if (sup)    rows = rows.filter(p =>
+    p.supplier_name === sup ||
+    (p.suppliers && p.suppliers.some(s => s.supplier_name === sup))
+  );
   if (marge)  rows = rows.filter(p => p.marge_color === marge);
   if (alert === "zero") rows = rows.filter(p => p.stock === 0);
   if (alert === "low")  rows = rows.filter(p => p.stock > 0 && p.stock <= p.alert_threshold);
@@ -382,7 +385,10 @@ function filterStock() {
 
   let rows = allProducts;
   if (cat)    rows = rows.filter(p => p.category === cat);
-  if (sup)    rows = rows.filter(p => p.supplier_name === sup);
+  if (sup)    rows = rows.filter(p =>
+    p.supplier_name === sup ||
+    (p.suppliers && p.suppliers.some(s => s.supplier_name === sup))
+  );
   if (marge)  rows = rows.filter(p => p.marge_color === marge);
   if (alert === "zero") rows = rows.filter(p => p.stock === 0);
   if (alert === "low")  rows = rows.filter(p => p.stock > 0 && p.stock <= p.alert_threshold);
@@ -416,7 +422,7 @@ function filterStock() {
       <td class="col-desktop">${p.sale_price_ttc !== null ? "€" + p.sale_price_ttc.toFixed(2) : "—"}</td>
       <td class="col-desktop">${margePill(p.marge, p.marge_color, p.is_estimated)}</td>
       <td class="col-desktop">${p.valeur_stock !== null ? "€" + p.valeur_stock.toFixed(2) : "—"}</td>
-      <td>${esc(p.supplier_name || "—")}</td>
+      <td>${renderSupplierCell(p)}</td>
       <td style="white-space:nowrap">
         <button class="btn btn-outline btn-sm" onclick="openProductForm(${p.id})">✏️</button>
         <button class="btn btn-outline btn-sm" onclick="openAdjustStock(${p.id})">±</button>
@@ -472,6 +478,22 @@ async function deleteProduct(id, name) {
   } catch (e) { alert(e.message); }
 }
 
+function renderSupplierCell(p) {
+  const list = p.suppliers || [];
+  if (list.length === 0) return esc(p.supplier_name || "—");
+  if (list.length === 1) {
+    const s = list[0];
+    return `${esc(s.supplier_name)}${s.purchase_price != null
+      ? `<br><span style="color:var(--text-muted);font-size:11px">€${s.purchase_price.toFixed(2)}</span>` : ""}`;
+  }
+  return list.map(s =>
+    `<div style="font-size:12px;line-height:1.4">
+      ${s.is_primary ? '<span style="color:var(--accent);font-size:10px">★</span> ' : ''}${esc(s.supplier_name)}
+      ${s.purchase_price != null ? `<span style="color:var(--text-muted)">€${s.purchase_price.toFixed(2)}</span>` : ""}
+    </div>`
+  ).join("");
+}
+
 function openProductForm(id) {
   const p = id ? allProducts.find(x => x.id === id) : null;
   const title = p ? `Modifier — ${esc(p.name)}` : "Nouveau produit";
@@ -494,17 +516,14 @@ function openProductForm(id) {
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label>Fournisseur</label>
-          <select name="supplier_id">
-            <option value="">—</option>
-            ${allSuppliers.map(s => `<option value="${s.id}" ${p && p.supplier_id===s.id?"selected":""}>${esc(s.name)}</option>`).join("")}
-          </select>
-        </div>
-        <div class="form-group">
           <label>Unité</label>
           <select name="unit">
             ${["Bouteille","Fût","Carton 6","Carton 12","Carton 24","Bidon"].map(u => `<option ${p && p.unit===u?"selected":""}>${u}</option>`).join("")}
           </select>
+        </div>
+        <div class="form-group">
+          <label>Prix vente TTC</label>
+          <input type="number" name="sale_price_ttc" step="0.01" value="${p && p.sale_price_ttc !== null ? p.sale_price_ttc : ''}"/>
         </div>
       </div>
       <div class="form-row-3">
@@ -527,19 +546,23 @@ function openProductForm(id) {
           <input type="number" name="alert_threshold" step="0.5" value="${p ? p.alert_threshold : 2}"/>
         </div>
         <div class="form-group">
-          <label>Prix achat HT (cond.)</label>
+          <label>Prix achat HT principal</label>
           <input type="number" name="purchase_price" step="0.001" value="${p && p.purchase_price !== null ? p.purchase_price : ''}"/>
         </div>
         <div class="form-group">
-          <label>Prix vente TTC</label>
-          <input type="number" name="sale_price_ttc" step="0.01" value="${p && p.sale_price_ttc !== null ? p.sale_price_ttc : ''}"/>
+          <label style="display:flex;align-items:center;gap:6px;text-transform:none;font-size:12px;padding-top:20px">
+            <input type="checkbox" name="is_estimated" ${p && p.is_estimated?"checked":""}/>
+            Prix estimé
+          </label>
         </div>
       </div>
-      <div class="form-group">
-        <label style="display:flex;align-items:center;gap:8px;text-transform:none;font-size:13px">
-          <input type="checkbox" name="is_estimated" ${p && p.is_estimated?"checked":""}/>
-          Prix estimé (provisoire)
-        </label>
+      <div class="form-group" style="margin-top:8px">
+        <label>Fournisseurs &amp; Prix par fournisseur</label>
+        <div id="suppliers-list" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+          ${buildSupplierRows(p ? (p.suppliers || []) : [])}
+        </div>
+        <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px;font-size:12px"
+          onclick="addSupplierRow()">+ Ajouter un fournisseur</button>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button type="button" class="btn btn-outline" onclick="closeModal()">Annuler</button>
@@ -548,27 +571,90 @@ function openProductForm(id) {
     </form>`);
 }
 
+// ── Helpers multi-fournisseurs ─────────────────────────────────────────────
+function buildSupplierRows(suppliers) {
+  if (suppliers.length === 0) return buildOneSupplierRow(0, null, true);
+  return suppliers.map((s, i) => buildOneSupplierRow(i, s, s.is_primary)).join('');
+}
+
+function buildOneSupplierRow(i, s, isPrimary) {
+  const opts = allSuppliers.map(sup =>
+    `<option value="${sup.id}" ${s && s.supplier_id === sup.id ? "selected" : ""}>${esc(sup.name)}</option>`
+  ).join('');
+  return `<div class="supplier-row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    <select class="sup-select" style="flex:2;min-width:120px">
+      <option value="">— Fournisseur —</option>${opts}
+    </select>
+    <input type="number" class="sup-price" step="0.001" placeholder="Prix HT €"
+      style="width:90px" value="${s && s.purchase_price != null ? s.purchase_price : ''}"/>
+    <label style="font-size:12px;white-space:nowrap;display:flex;align-items:center;gap:4px">
+      <input type="radio" name="sup_primary" class="sup-primary" value="${i}" ${isPrimary ? "checked" : ""}/>
+      Principal
+    </label>
+    <button type="button" class="btn btn-danger btn-sm" style="padding:4px 8px"
+      onclick="this.closest('.supplier-row').remove()">✕</button>
+  </div>`;
+}
+
+function addSupplierRow() {
+  const list = document.getElementById('suppliers-list');
+  const idx = list.querySelectorAll('.supplier-row').length;
+  list.insertAdjacentHTML('beforeend', buildOneSupplierRow(idx, null, false));
+}
+
+function collectSuppliers() {
+  const rows = document.querySelectorAll('#suppliers-list .supplier-row');
+  const primaryRadio = document.querySelector('input[name="sup_primary"]:checked');
+  const primaryIdx = primaryRadio ? parseInt(primaryRadio.value) : 0;
+  const result = [];
+  rows.forEach((row, i) => {
+    const sid = row.querySelector('.sup-select')?.value;
+    const price = row.querySelector('.sup-price')?.value;
+    if (sid) result.push({
+      supplier_id: parseInt(sid),
+      purchase_price: price ? parseFloat(price) : null,
+      is_primary: i === primaryIdx,
+    });
+  });
+  return result;
+}
+
 async function submitProductForm(e, id) {
   e.preventDefault();
   const fd = new FormData(e.target);
+
+  // Collecte les fournisseurs depuis le widget multi-lignes
+  const suppliers = collectSuppliers();
+  const primary = suppliers.find(s => s.is_primary) || suppliers[0];
+
   const body = {
     name:            fd.get("name"),
     category:        fd.get("category"),
-    supplier_id:     fd.get("supplier_id") ? parseInt(fd.get("supplier_id")) : null,
+    supplier_id:     primary?.supplier_id || null,
     stock:           parseFloat(fd.get("stock")) || 0,
     unit:            fd.get("unit"),
     qty_per_pack:    parseFloat(fd.get("qty_per_pack")) || 1,
     volume_cl:       parseFloat(fd.get("volume_cl")) || 70,
     alert_threshold: parseFloat(fd.get("alert_threshold")) || 2,
-    purchase_price:  fd.get("purchase_price") ? parseFloat(fd.get("purchase_price")) : null,
+    purchase_price:  fd.get("purchase_price") ? parseFloat(fd.get("purchase_price")) : (primary?.purchase_price || null),
     sale_price_ttc:  fd.get("sale_price_ttc")  ? parseFloat(fd.get("sale_price_ttc"))  : null,
     is_estimated:    fd.get("is_estimated") === "on",
   };
   try {
+    let pid = id;
     if (id) {
       await api(`/api/produits/${id}`, { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
     } else {
-      await api("/api/produits", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
+      const created = await api("/api/produits", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
+      pid = created.id;
+    }
+    // Sauvegarder les fournisseurs multi
+    if (pid && suppliers.length > 0) {
+      await api(`/api/products/${pid}/suppliers`, {
+        method: "PUT",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(suppliers),
+      });
     }
     closeModal();
     allProducts = await api("/api/produits");

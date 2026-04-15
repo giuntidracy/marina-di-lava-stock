@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -12,6 +12,7 @@ class Supplier(Base):
     phone = Column(String, default="")
     categories = Column(String, default="")
     products = relationship("Product", back_populates="supplier_rel")
+    product_suppliers = relationship("ProductSupplier", back_populates="supplier")
 
 
 class Product(Base):
@@ -34,6 +35,7 @@ class Product(Base):
     supplier_rel = relationship("Supplier", back_populates="products")
     cocktail_ingredients = relationship("CocktailIngredient", back_populates="product")
     cashpad_mappings = relationship("CashpadMapping", back_populates="product")
+    product_suppliers = relationship("ProductSupplier", back_populates="product", cascade="all, delete-orphan")
 
 
 class Cocktail(Base):
@@ -55,6 +57,22 @@ class CocktailIngredient(Base):
 
     cocktail = relationship("Cocktail", back_populates="ingredients")
     product = relationship("Product", back_populates="cocktail_ingredients")
+
+
+class ProductSupplier(Base):
+    """Lien many-to-many produit ↔ fournisseur avec prix d'achat par fournisseur."""
+    __tablename__ = "product_suppliers"
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False)
+    purchase_price = Column(Float, nullable=True)
+    is_primary = Column(Boolean, default=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("product_id", "supplier_id", name="uq_product_supplier"),)
+
+    product = relationship("Product", back_populates="product_suppliers")
+    supplier = relationship("Supplier", back_populates="product_suppliers")
 
 
 class CashpadMapping(Base):

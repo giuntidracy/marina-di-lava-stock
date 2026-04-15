@@ -32,19 +32,39 @@ _pin_failures: dict = {}   # ip → {count, locked_until}
 from database import get_db, engine
 from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
-    CashpadMapping, ImportLog, StockHistory, InventorySession
+    CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier
 )
 
 Base.metadata.create_all(bind=engine)
 
-# Migration : ajoute details_json à imports_log si absent
+# Migrations colonnes manquantes
 from sqlalchemy import text as _text
 with engine.connect() as _conn:
+    # details_json sur imports_log
     try:
         _conn.execute(_text("ALTER TABLE imports_log ADD COLUMN details_json TEXT DEFAULT '[]'"))
         _conn.commit()
     except Exception:
-        pass  # colonne déjà présente
+        pass
+
+    # Migration données : product_suppliers depuis supplier_id + purchase_price existants
+    try:
+        rows = _conn.execute(_text(
+            "SELECT id, supplier_id, purchase_price FROM products WHERE supplier_id IS NOT NULL"
+        )).mappings().all()
+        for row in rows:
+            exists = _conn.execute(_text(
+                "SELECT 1 FROM product_suppliers WHERE product_id=:pid AND supplier_id=:sid"
+            ), {"pid": row["id"], "sid": row["supplier_id"]}).first()
+            if not exists:
+                _conn.execute(_text(
+                    "INSERT INTO product_suppliers "
+                    "(product_id, supplier_id, purchase_price, is_primary, updated_at) "
+                    "VALUES (:pid, :sid, :price, 1, CURRENT_TIMESTAMP)"
+                ), {"pid": row["id"], "sid": row["supplier_id"], "price": row["purchase_price"]})
+        _conn.commit()
+    except Exception:
+        pass  # table pas encore créée au 1er démarrage → create_all s'en charge
 
 app = FastAPI(title="Marina di Lava — Gestion Stock")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -127,6 +147,15 @@ def calc_product(p: Product) -> dict:
         "marge": round(marge, 1) if marge is not None else None,
         "marge_color": marge_color,
         "valeur_stock": round(valeur_stock, 2) if valeur_stock is not None else None,
+        "suppliers": [
+            {
+                "supplier_id": ps.supplier_id,
+                "supplier_name": ps.supplier.name if ps.supplier else "",
+                "purchase_price": ps.purchase_price,
+                "is_primary": ps.is_primary,
+            }
+            for ps in sorted(p.product_suppliers or [], key=lambda x: (not x.is_primary, x.id))
+        ],
     }
 
 
@@ -360,6 +389,63 @@ def delete_product(pid: int, db: Session = Depends(get_db)):
     db.delete(p)
     db.commit()
     return {"ok": True}
+
+
+# ── Multi-fournisseurs par produit ─────────────────────────────────────────
+
+class ProductSupplierIn(BaseModel):
+    supplier_id: int
+    purchase_price: Optional[float] = None
+    is_primary: bool = False
+
+
+@app.get("/api/products/{pid}/suppliers")
+def get_product_suppliers(pid: int, db: Session = Depends(get_db)):
+    rows = db.query(ProductSupplier).filter(ProductSupplier.product_id == pid).all()
+    return [
+        {
+            "id": r.id,
+            "supplier_id": r.supplier_id,
+            "supplier_name": r.supplier.name if r.supplier else "",
+            "purchase_price": r.purchase_price,
+            "is_primary": r.is_primary,
+        }
+        for r in sorted(rows, key=lambda x: (not x.is_primary, x.id))
+    ]
+
+
+@app.put("/api/products/{pid}/suppliers")
+def update_product_suppliers(pid: int, body: List[ProductSupplierIn], db: Session = Depends(get_db)):
+    p = db.query(Product).get(pid)
+    if not p:
+        raise HTTPException(404)
+
+    # S'assurer qu'il y a exactement un is_primary
+    has_primary = any(s.is_primary for s in body)
+    if body and not has_primary:
+        body[0].is_primary = True
+
+    # Remplacer tous les liens fournisseurs
+    db.query(ProductSupplier).filter(ProductSupplier.product_id == pid).delete()
+    for s in body:
+        db.add(ProductSupplier(
+            product_id=pid,
+            supplier_id=s.supplier_id,
+            purchase_price=s.purchase_price,
+            is_primary=s.is_primary,
+        ))
+
+    # Synchroniser les champs legacy depuis le fournisseur principal
+    primary = next((s for s in body if s.is_primary), body[0] if body else None)
+    if primary:
+        p.supplier_id = primary.supplier_id
+        if primary.purchase_price is not None:
+            p.purchase_price = primary.purchase_price
+            p.is_estimated = False
+
+    db.commit()
+    db.refresh(p)
+    return calc_product(p)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1511,6 +1597,25 @@ def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
 
     all_products = db.query(Product).all()
 
+    # Résoudre le fournisseur (string → objet Supplier)
+    supplier_obj = None
+    if body.fournisseur:
+        supplier_obj = db.query(Supplier).filter(
+            func.lower(Supplier.name) == body.fournisseur.strip().lower()
+        ).first()
+        # Fallback : recherche partielle (ex: "Auchan Bastia" → "Auchan")
+        if not supplier_obj:
+            fnom = body.fournisseur.strip().lower()
+            supplier_obj = db.query(Supplier).filter(
+                func.lower(Supplier.name).contains(fnom)
+            ).first()
+        if not supplier_obj:
+            fnom = body.fournisseur.strip().lower()
+            for s in db.query(Supplier).all():
+                if fnom in s.name.lower() or s.name.lower() in fnom:
+                    supplier_obj = s
+                    break
+
     # 1. Résoudre les correspondances et agréger les quantités par produit trouvé
     matched_map = {}   # product_id → {product, total_qty, prix}
     not_found = []
@@ -1560,6 +1665,33 @@ def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
             if prix is not None and prix > 0 and actual_qty > 0:
                 p.purchase_price = prix
                 p.is_estimated = False
+                # Upsert dans product_suppliers pour ce fournisseur
+                if supplier_obj:
+                    ps = db.query(ProductSupplier).filter(
+                        ProductSupplier.product_id == p.id,
+                        ProductSupplier.supplier_id == supplier_obj.id,
+                    ).first()
+                    if ps:
+                        ps.purchase_price = prix
+                        ps.updated_at = datetime.utcnow()
+                    else:
+                        # Premier lien avec ce fournisseur : is_primary si aucun autre
+                        is_first = db.query(ProductSupplier).filter(
+                            ProductSupplier.product_id == p.id
+                        ).count() == 0
+                        db.add(ProductSupplier(
+                            product_id=p.id,
+                            supplier_id=supplier_obj.id,
+                            purchase_price=prix,
+                            is_primary=is_first,
+                        ))
+                    # Si c'est le fournisseur principal, sync supplier_id legacy
+                    primary_ps = db.query(ProductSupplier).filter(
+                        ProductSupplier.product_id == p.id,
+                        ProductSupplier.is_primary == True,
+                    ).first()
+                    if primary_ps and primary_ps.supplier_id == supplier_obj.id:
+                        p.supplier_id = supplier_obj.id
             updated.append({
                 "product_id": p.id,
                 "product": p.name,
