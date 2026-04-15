@@ -1435,6 +1435,15 @@ def _find_best_product(nom: str, all_products) -> object:
 @app.post("/api/import/delivery/confirm")
 def confirm_delivery(body: DeliveryConfirmIn, db: Session = Depends(get_db)):
     import traceback
+    try:
+        return _confirm_delivery_inner(body, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, detail=f"Bug: {type(e).__name__}: {str(e)} | {traceback.format_exc()[-300:]}")
+
+def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
     existing = db.query(ImportLog).filter(
         ImportLog.import_type == "delivery",
         ImportLog.reference == body.numero_facture,
