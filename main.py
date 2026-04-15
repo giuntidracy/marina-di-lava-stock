@@ -1355,17 +1355,22 @@ def _normalize_tokens(s: str) -> set:
     s = s.lower()
     # Normaliser décimales : "1,5" "1.5" → "15"
     s = re.sub(r'(\d)[,.](\d)', r'\1\2', s)
-    # Supprimer multiplicateurs : "33clx6" → "33cl", "x6" → ""
+    # Supprimer multiplicateurs de pack : "6x", "12x", "x6", "33clx6" → "33cl"
     s = re.sub(r'(\d+(?:cl|l))x\d+', r'\1', s)
-    s = re.sub(r'x\d+', ' ', s)
+    s = re.sub(r'\b\d+x\b', ' ', s)   # "6x", "12x"
+    s = re.sub(r'\bx\d+\b', ' ', s)   # "x6", "x12"
     # Supprimer "/24" après cl : "33cl/24" → "33cl"
     s = re.sub(r'(\d+cl)/\d+', r'\1', s)
     # Supprimer caractères non-alphanumériques
     s = re.sub(r'[^\w\s]', ' ', s)
-    # Mots parasites à ignorer
+    # Mots parasites à ignorer (descripteurs génériques + articles)
     STOP = {'vp','bte','pet','bt','pres','purjus','pur','abc','slim','nectar',
             'pack','carton','lot','de','le','la','les','du','des','et','en',
-            'un','une','fut','fût','lx6','lx4','lx12','lx24','bionda'}
+            'un','une','fut','fut','lx6','lx4','lx12','lx24','bionda',
+            # descripteurs eau generiques
+            'eau','source','gazeuse','plate','minerale','naturelle','drinking',
+            # suffixes pack/format
+            'bouteille','bouteilles','canette','canettes','boite','boites','brik'}
     return {t for t in s.split() if len(t) >= 2 and t not in STOP}
 
 
