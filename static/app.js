@@ -216,6 +216,196 @@ function closeModal() {
   document.getElementById("modal-overlay").classList.add("hidden");
 }
 
+// ── KPI Detail Modals ──────────────────────────────────────
+
+function showValeurDetail() {
+  const withVal = allProducts.filter(p => p.valeur_stock !== null && p.valeur_stock > 0)
+    .sort((a, b) => b.valeur_stock - a.valeur_stock);
+  const totalVal = withVal.reduce((s, p) => s + p.valeur_stock, 0);
+
+  // Par catégorie
+  const byCat = {};
+  withVal.forEach(p => {
+    if (!byCat[p.category]) byCat[p.category] = 0;
+    byCat[p.category] += p.valeur_stock;
+  });
+  const catSorted = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+
+  const catRows = catSorted.map(([cat, val]) => {
+    const pct = totalVal > 0 ? (val / totalVal * 100) : 0;
+    return `<div class="kpi-detail-catrow">
+      <div class="kpi-detail-catname">${cat}</div>
+      <div class="kpi-detail-bar-wrap"><div class="kpi-detail-bar" style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="kpi-detail-catval">€${val.toFixed(2)}</div>
+    </div>`;
+  }).join("");
+
+  const top10 = withVal.slice(0, 15);
+  const prodRows = top10.map(p => `
+    <tr>
+      <td>${p.name}</td>
+      <td style="color:var(--text-muted)">${p.category}</td>
+      <td style="text-align:right">${fmtStock(p)}</td>
+      <td style="text-align:right">€${p.cout_unitaire.toFixed(3)}</td>
+      <td style="text-align:right;font-weight:700;color:var(--accent)">€${p.valeur_stock.toFixed(2)}</td>
+    </tr>`).join("");
+
+  openModal(`
+    <div class="kpi-modal-header kpi-gold">💰 Valeur totale du stock</div>
+    <div class="kpi-modal-total">€${totalVal.toFixed(2)} <span>sur ${withVal.length} produits</span></div>
+    <div class="kpi-modal-section">Répartition par catégorie</div>
+    <div class="kpi-detail-cats">${catRows}</div>
+    <div class="kpi-modal-section" style="margin-top:20px">Top produits (valeur)</div>
+    <div class="kpi-table-wrap">
+      <table class="kpi-table">
+        <thead><tr><th>Produit</th><th>Catégorie</th><th style="text-align:right">Stock</th><th style="text-align:right">Coût unit.</th><th style="text-align:right">Valeur</th></tr></thead>
+        <tbody>${prodRows}</tbody>
+      </table>
+    </div>
+  `);
+}
+
+function showProduitsDetail() {
+  const total = allProducts.length;
+  const enStock = allProducts.filter(p => p.stock > 0).length;
+  const ruptures = allProducts.filter(p => p.stock === 0).length;
+  const stockBas = allProducts.filter(p => p.stock > 0 && p.stock <= p.alert_threshold).length;
+
+  // Par catégorie
+  const byCat = {};
+  allProducts.forEach(p => {
+    if (!byCat[p.category]) byCat[p.category] = { total: 0, enStock: 0 };
+    byCat[p.category].total++;
+    if (p.stock > 0) byCat[p.category].enStock++;
+  });
+  const catSorted = Object.entries(byCat).sort((a, b) => b[1].total - a[1].total);
+
+  const catRows = catSorted.map(([cat, d]) => {
+    const pct = d.total > 0 ? (d.enStock / d.total * 100) : 0;
+    return `<div class="kpi-detail-catrow">
+      <div class="kpi-detail-catname">${cat}</div>
+      <div class="kpi-detail-bar-wrap"><div class="kpi-detail-bar kpi-bar-blue" style="width:${pct.toFixed(0)}%"></div></div>
+      <div class="kpi-detail-catval">${d.enStock}/${d.total}</div>
+    </div>`;
+  }).join("");
+
+  // Par fournisseur
+  const byFour = {};
+  allProducts.forEach(p => {
+    const f = p.supplier_name || "Sans fournisseur";
+    if (!byFour[f]) byFour[f] = 0;
+    byFour[f]++;
+  });
+  const fourSorted = Object.entries(byFour).sort((a, b) => b[1] - a[1]);
+  const fourRows = fourSorted.map(([f, n]) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span style="font-size:13px">${f}</span>
+      <span class="badge" style="background:var(--primary-mid);color:white;padding:2px 10px;border-radius:20px;font-size:12px">${n}</span>
+    </div>`).join("");
+
+  openModal(`
+    <div class="kpi-modal-header kpi-blue">📦 Catalogue produits</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0">
+      <div class="kpi-mini-card"><div class="kpi-mini-val">${total}</div><div class="kpi-mini-label">Total</div></div>
+      <div class="kpi-mini-card kpi-mini-green"><div class="kpi-mini-val">${enStock}</div><div class="kpi-mini-label">En stock</div></div>
+      <div class="kpi-mini-card kpi-mini-red"><div class="kpi-mini-val">${ruptures}</div><div class="kpi-mini-label">Ruptures</div></div>
+    </div>
+    ${stockBas > 0 ? `<div class="kpi-alert-bar">⚠️ ${stockBas} produit${stockBas > 1 ? 's' : ''} en stock bas (sous le seuil d'alerte)</div>` : ''}
+    <div class="kpi-modal-section">En stock par catégorie</div>
+    <div class="kpi-detail-cats">${catRows}</div>
+    <div class="kpi-modal-section" style="margin-top:20px">Par fournisseur</div>
+    <div style="padding:0 4px">${fourRows}</div>
+  `);
+}
+
+function showRupturesDetail() {
+  const ruptures = allProducts.filter(p => p.stock === 0)
+    .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+  const stockBas = allProducts.filter(p => p.stock > 0 && p.stock <= p.alert_threshold)
+    .sort((a, b) => a.stock - b.stock);
+
+  const rupRows = ruptures.length === 0
+    ? `<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:20px">Aucune rupture 🎉</td></tr>`
+    : ruptures.map(p => `
+      <tr>
+        <td><span style="color:#DC2626;font-weight:600">⬤</span> ${p.name}</td>
+        <td style="color:var(--text-muted)">${p.category}</td>
+        <td style="color:var(--text-muted);font-size:12px">${p.supplier_name || '—'}</td>
+      </tr>`).join("");
+
+  const basRows = stockBas.length === 0
+    ? `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px">Aucun stock bas</td></tr>`
+    : stockBas.map(p => `
+      <tr>
+        <td><span style="color:#F59E0B;font-weight:600">⬤</span> ${p.name}</td>
+        <td style="color:var(--text-muted)">${p.category}</td>
+        <td style="text-align:right;color:#B45309;font-weight:600">${fmtStock(p)}</td>
+        <td style="text-align:right;color:var(--text-muted)">seuil: ${p.alert_threshold}</td>
+      </tr>`).join("");
+
+  openModal(`
+    <div class="kpi-modal-header kpi-red">🚨 Ruptures & stocks bas</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0">
+      <div class="kpi-mini-card kpi-mini-red"><div class="kpi-mini-val">${ruptures.length}</div><div class="kpi-mini-label">Ruptures (stock = 0)</div></div>
+      <div class="kpi-mini-card kpi-mini-orange"><div class="kpi-mini-val">${stockBas.length}</div><div class="kpi-mini-label">Stock bas</div></div>
+    </div>
+    <div class="kpi-modal-section">Ruptures de stock</div>
+    <div class="kpi-table-wrap">
+      <table class="kpi-table">
+        <thead><tr><th>Produit</th><th>Catégorie</th><th>Fournisseur</th></tr></thead>
+        <tbody>${rupRows}</tbody>
+      </table>
+    </div>
+    <div class="kpi-modal-section" style="margin-top:20px">Stock bas (sous le seuil)</div>
+    <div class="kpi-table-wrap">
+      <table class="kpi-table">
+        <thead><tr><th>Produit</th><th>Catégorie</th><th style="text-align:right">Stock</th><th style="text-align:right">Seuil</th></tr></thead>
+        <tbody>${basRows}</tbody>
+      </table>
+    </div>
+  `);
+}
+
+function showMargeDetail() {
+  const valorises = allProducts.filter(p => p.marge !== null && !p.is_estimated)
+    .sort((a, b) => b.marge - a.marge);
+  const nonVal = allProducts.filter(p => p.marge === null || p.is_estimated);
+
+  const green  = valorises.filter(p => p.marge_color === "green").length;
+  const orange = valorises.filter(p => p.marge_color === "orange").length;
+  const red    = valorises.filter(p => p.marge_color === "red").length;
+
+  const prodRows = valorises.map(p => {
+    const icon = p.marge_color === "green" ? "🟢" : p.marge_color === "orange" ? "🟠" : "🔴";
+    const cout = p.cout_unitaire !== null ? `€${p.cout_unitaire.toFixed(3)}` : "—";
+    const pv   = p.sale_price_ttc !== null ? `€${p.sale_price_ttc.toFixed(2)}` : "—";
+    return `<tr>
+      <td>${icon} ${p.name}</td>
+      <td style="color:var(--text-muted)">${p.category}</td>
+      <td style="text-align:right">${cout}</td>
+      <td style="text-align:right">${pv}</td>
+      <td style="text-align:right;font-weight:700" class="marge-${p.marge_color}">${p.marge.toFixed(1)}%</td>
+    </tr>`;
+  }).join("");
+
+  openModal(`
+    <div class="kpi-modal-header kpi-green">📈 Analyse des marges</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0">
+      <div class="kpi-mini-card kpi-mini-green"><div class="kpi-mini-val">${green}</div><div class="kpi-mini-label">≥ 70% 🟢</div></div>
+      <div class="kpi-mini-card kpi-mini-orange"><div class="kpi-mini-val">${orange}</div><div class="kpi-mini-label">50–70% 🟠</div></div>
+      <div class="kpi-mini-card kpi-mini-red"><div class="kpi-mini-val">${red}</div><div class="kpi-mini-label">< 50% 🔴</div></div>
+    </div>
+    ${nonVal.length > 0 ? `<div class="kpi-alert-bar" style="background:rgba(156,163,175,.15);color:var(--text-muted);border-color:var(--border)">ℹ️ ${nonVal.length} produit${nonVal.length > 1 ? 's' : ''} sans prix de vente renseigné</div>` : ''}
+    <div class="kpi-modal-section">Tous les produits valorisés</div>
+    <div class="kpi-table-wrap">
+      <table class="kpi-table">
+        <thead><tr><th>Produit</th><th>Catégorie</th><th style="text-align:right">Coût unit.</th><th style="text-align:right">PV TTC</th><th style="text-align:right">Marge HT</th></tr></thead>
+        <tbody>${prodRows}</tbody>
+      </table>
+    </div>
+  `);
+}
+
 // ── Marge pill ─────────────────────────────────────────────
 function margePill(marge, color, estimated) {
   if (estimated) return `<span class="marge-pill marge-gray">~ estimé</span>`;
@@ -252,25 +442,29 @@ function renderStock(el) {
       </div>
     </div>
     <div class="stock-summary">
-      <div class="summary-card card-gold" style="--card-icon:'💰'">
+      <div class="summary-card card-gold kpi-clickable" style="--card-icon:'💰'" onclick="showValeurDetail()">
         <div class="s-label">Valeur totale stock</div>
         <div class="s-value">€${totalVal.toFixed(0)}</div>
         <div class="s-sub">${withVal.length} produits valorisés</div>
+        <div class="kpi-hint">Voir détail →</div>
       </div>
-      <div class="summary-card" style="--card-icon:'📦'">
+      <div class="summary-card kpi-clickable" style="--card-icon:'📦'" onclick="showProduitsDetail()">
         <div class="s-label">Produits</div>
         <div class="s-value">${allProducts.length}</div>
         <div class="s-sub">${allProducts.filter(p => p.stock > 0).length} en stock</div>
+        <div class="kpi-hint">Voir détail →</div>
       </div>
-      <div class="summary-card ${ruptures > 0 ? 'card-danger' : 'card-success'}" style="--card-icon:'${ruptures > 0 ? '🚨' : '✅'}'">
+      <div class="summary-card ${ruptures > 0 ? 'card-danger' : 'card-success'} kpi-clickable" style="--card-icon:'${ruptures > 0 ? '🚨' : '✅'}'" onclick="showRupturesDetail()">
         <div class="s-label">Ruptures</div>
         <div class="s-value">${ruptures}</div>
         <div class="s-sub">${stockBas > 0 ? `⚠️ ${stockBas} stock bas` : 'Stock sain'}</div>
+        <div class="kpi-hint">Voir détail →</div>
       </div>
-      <div class="summary-card card-success" style="--card-icon:'📈'">
+      <div class="summary-card card-success kpi-clickable" style="--card-icon:'📈'" onclick="showMargeDetail()">
         <div class="s-label">Marge ≥ 70%</div>
         <div class="s-value">${margesOk}</div>
         <div class="s-sub">sur ${allProducts.filter(p => p.marge !== null).length} valorisés</div>
+        <div class="kpi-hint">Voir détail →</div>
       </div>
     </div>
     <div class="filters">
