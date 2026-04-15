@@ -837,7 +837,7 @@ async def import_cashpad(
             if cocktail:
                 for ing in cocktail.ingredients:
                     p = ing.product
-                    if p and p.volume_cl and p.qty_per_pack:
+                    if p and p.volume_cl and ing.dose_cl:
                         # Stock en unités individuelles : déduire dose/volume par unité vendue
                         total_vol = p.volume_cl
                         deduct = (ing.dose_cl / total_vol) * qty_sold
