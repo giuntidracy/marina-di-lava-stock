@@ -1596,6 +1596,16 @@ def _find_best_product(nom: str, all_products) -> object:
         if len(common) == 1 and common <= GENERIC_DESCRIPTORS:
             score *= 0.25
 
+        # Pénalité croisée sur les marqueurs de variante (zero, light, diet…)
+        # Si l'OCR a "zero" mais le produit DB n'a pas "zero" (ou vice-versa) → mauvais match
+        VARIANT_MARKERS = {'zero', 'light', 'diet', 'sans'}
+        ocr_variants = ocr_tokens & VARIANT_MARKERS
+        db_variants  = db_tokens  & VARIANT_MARKERS
+        if ocr_variants and not (ocr_variants & db_variants):
+            score *= 0.1   # OCR = variante, DB = produit normal → très mauvais
+        elif db_variants and not (ocr_variants & db_variants):
+            score *= 0.1   # DB = variante, OCR = produit normal → très mauvais
+
         if score > best_score:
             best_score = score
             best_p = p
