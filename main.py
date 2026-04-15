@@ -1228,7 +1228,7 @@ def _parse_auchan_pdf(content_bytes):
         nom = _re.sub(r'\s+\d+\.\d+[Ll]\b.*', '', nom)
         nom = _re.sub(r'\s+\d+[,\.]?\d*\s*[Ll]$', '', nom, flags=_re.I)
         nom = _re.sub(r'\s+\d+[,\.]\d+$', '', nom)
-        nom = _re.sub(r'\s+(DONT|OFFERTE?S?)\s.*$', '', nom, flags=_re.I)
+        nom = _re.sub(r'\s+(DONT|OFFERTE?S?).*$', '', nom, flags=_re.I)
         nom = _re.sub(r'\s*\d+%.*$', '', nom)
         nom = _re.sub(r'^AUCHAN\s+', '', nom, flags=_re.I)
         nom = _re.sub(r'€/?\s*[Ll]?\s*$', '', nom, flags=_re.I)
@@ -1261,8 +1261,12 @@ def _parse_auchan_pdf(content_bytes):
             if _re.match(r'^\d{2}/\d{2}', t): continue
             if t in ('€', '€/', 'l', '%', ':', 'À', '!', '-', '/'): continue
             if _re.match(r'^\d{4}_', t): continue
-            if not any(c.isalpha() for c in t): continue
             if _re.match(r'^(Bonjour|Votre|qu\'elle|Nous|SARROLA|Commande|Date|Récap|Prix|Libellé|Quantité|Montant|dont)', t, _re.I): continue
+            # Garde les chiffres purs seulement s'ils sont dans la zone gauche du nom
+            # (ex : "12" dans "SAINT GEORGES … 12 X33CL", "6" dans "S.PELLEGRINO 6 X 1L")
+            if not any(c.isalpha() for c in t):
+                if not (nw['x0'] < 235 and _re.match(r'^\d{1,3}$', t)):
+                    continue
             ly = round(nw['top'] / 2) * 2
             if ly not in nom_candidates:
                 nom_candidates[ly] = []
@@ -1276,11 +1280,21 @@ def _parse_auchan_pdf(content_bytes):
             if _re.match(r'^\d+[,\.]?\d*\s*cl\s+\d+[,\.]', joined, _re.I): continue
             if _re.match(r'^\d+\.\d+[Ll]', joined) and any(c.isdigit() for c in joined[3:]): continue
             word_list = joined.split()
-            is_cat = (len(word_list) <= 4 and
+            # Filtre les lignes de catégorie (ex: "BOISSONS AUX FRUITS GAZEUSES")
+            # SAUF si la ligne est sur la même rangée horizontale que la quantité
+            # (ex: "SCHWEPPES AGRUMES BOITE SLIM" est sur la même ligne que qty=3)
+            is_on_product_row = abs(ly - y_q) <= 3
+            is_cat = (not is_on_product_row and
+                      len(word_list) <= 4 and
                       not any(c.isdigit() for c in joined) and
                       '€' not in joined and '%' not in joined and
                       sum(1 for wt in word_list if wt.isupper() and len(wt) > 1) >= len(word_list) * 0.8)
-            if is_cat: continue
+            # Filtre aussi les en-têtes de catégorie Auchan avec volume
+            # ex : "EAUX PLATES 1 LITRE", "EAUX GAZEUSES - 1 LITRE"
+            is_vol_cat = (not is_on_product_row and len(word_list) <= 5 and
+                          _re.match(r'^(EAUX|BIERES?|COLAS?|BOISSONS?|SPIRITUEUX|VINS?)\b',
+                                    joined, _re.I))
+            if is_cat or is_vol_cat: continue
             if any(c.isalpha() for c in joined):
                 clean_lines[ly] = joined
 
@@ -1296,6 +1310,13 @@ def _parse_auchan_pdf(content_bytes):
         raw_nom = ' '.join(v for k, v in sorted_cl)
         nom = _clean_nom(raw_nom)
         if not nom or len(nom) < 3:
+            continue
+        # Ignore les entrées dont le nom n'est qu'un descripteur de volume/format
+        # ex : "4X33CL" issu d'une ligne "3 OFFERTES" parasite
+        _meaningful = [w for w in nom.split()
+                       if len(w) >= 3 and not _re.match(r'^\d+[Xx]?\d*[CLcl]*$', w)
+                       and w.upper() not in ('THE', 'LES', 'DES', 'SUR', 'AUX')]
+        if not _meaningful:
             continue
 
         # Calcul quantité individuelle — regex sur le nom BRUT
