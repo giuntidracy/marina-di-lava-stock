@@ -4,7 +4,17 @@ import base64
 import io
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+# Fuseau horaire local (Corse / métropole France)
+_LOCAL_TZ = ZoneInfo("Europe/Paris")
+
+def to_local(dt: datetime) -> datetime:
+    """Convertit un datetime UTC naïf en heure locale Europe/Paris."""
+    if dt is None:
+        return dt
+    return dt.replace(tzinfo=timezone.utc).astimezone(_LOCAL_TZ)
 from dotenv import load_dotenv
 load_dotenv(override=True)
 from typing import Optional, List
@@ -460,7 +470,7 @@ def get_alerts(db: Session = Depends(get_db)):
                 "product": data.get("product", ""),
                 "message": f"Écart inventaire : {data.get('product', '')} (écart {data.get('diff', 0):+.3f})",
                 "severity": "high",
-                "date": h.created_at.isoformat(),
+                "date": h.created_at.isoformat() + "Z",
             })
         except Exception:
             pass
@@ -481,7 +491,7 @@ def get_history(db: Session = Depends(get_db)):
             "event_type": e.event_type,
             "description": e.description,
             "data": json.loads(e.data_json),
-            "created_at": e.created_at.isoformat(),
+            "created_at": e.created_at.isoformat() + "Z",
         }
         for e in events
     ]
@@ -535,7 +545,7 @@ def sorties_today(staff: str = "", db: Session = Depends(get_db)):
             "product": d.get("product", "?"),
             "quantity": d.get("quantity", 0),
             "note": note,
-            "created_at": r.created_at.strftime("%H:%M"),
+            "created_at": to_local(r.created_at).strftime("%H:%M"),
         })
     return result
 
@@ -688,7 +698,7 @@ async def import_cashpad(
         if existing:
             raise HTTPException(
                 400,
-                detail=f"Clôture n°{numero_cloture} déjà importée le {existing.created_at.strftime('%d/%m/%Y %H:%M')}."
+                detail=f"Clôture n°{numero_cloture} déjà importée le {to_local(existing.created_at).strftime('%d/%m/%Y %H:%M')}."
             )
 
     import openpyxl
@@ -1456,7 +1466,7 @@ def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
     if existing:
         raise HTTPException(
             400,
-            detail=f"Facture n°{body.numero_facture} déjà importée le {existing.created_at.strftime('%d/%m/%Y %H:%M')}."
+            detail=f"Facture n°{body.numero_facture} déjà importée le {to_local(existing.created_at).strftime('%d/%m/%Y %H:%M')}."
         )
 
     all_products = db.query(Product).all()
@@ -1561,7 +1571,7 @@ def import_detail(import_id: int, db: Session = Depends(get_db)):
         "id": imp.id,
         "reference": imp.reference,
         "supplier": imp.supplier,
-        "created_at": imp.created_at.strftime("%d/%m/%Y %H:%M"),
+        "created_at": to_local(imp.created_at).strftime("%d/%m/%Y %H:%M"),
         "details": details,
     }
 
@@ -1587,7 +1597,7 @@ def recent_imports(days: int = 7, db: Session = Depends(get_db)):
             "id": imp.id,
             "reference": imp.reference,
             "supplier": imp.supplier or "",
-            "created_at": imp.created_at.strftime("%d/%m/%Y %H:%M"),
+            "created_at": to_local(imp.created_at).strftime("%d/%m/%Y %H:%M"),
             "annule": annule,
             "nb_produits": len(items),
             "details": items,
@@ -1665,7 +1675,7 @@ def stats_consommation(periode: int = 30, db: Session = Depends(get_db)):
         except Exception:
             continue
 
-        day = row.created_at.strftime("%Y-%m-%d")
+        day = to_local(row.created_at).strftime("%Y-%m-%d")
 
         if row.event_type == "mouvement_manuel":
             qty = d.get("quantity", 0)
