@@ -1462,35 +1462,37 @@ def confirm_delivery(body: DeliveryConfirmIn, db: Session = Depends(get_db)):
         if not p:
             p = _find_best_product(nom, all_products)
 
-        if p and qty > 0:
+        if p and qty != 0:
             if p.id not in matched_map:
                 matched_map[p.id] = {"product": p, "total_qty": 0.0, "prix": None}
             matched_map[p.id]["total_qty"] += qty
-            if prix is not None and prix != "" and float(prix) > 0:
+            # Ne met à jour le prix que pour les livraisons (qty > 0)
+            if qty > 0 and prix is not None and prix != "" and float(prix) > 0:
                 matched_map[p.id]["prix"] = float(prix)
-        elif qty > 0:
+        elif qty != 0:
             not_found.append(nom)
 
     # 2. Appliquer les quantités en tenant compte du conditionnement
     updated = []
+    is_avoir = False  # détecte si c'est un avoir (retour fournisseur)
+
     for pid, entry in matched_map.items():
         p = entry["product"]
         raw_qty = entry["total_qty"]
         prix = entry["prix"]
 
-        # Le parser extrait des unités individuelles (bouteilles, canettes...).
-        # Pour les produits en carton (unit contient "Carton", qty_per_pack > 1),
-        # on divise pour obtenir le nombre de cartons.
-        # Pour bouteilles et fûts (qty_per_pack=1), on utilise tel quel.
         if p.unit and "Carton" in p.unit and p.qty_per_pack and p.qty_per_pack > 1:
             actual_qty = round(raw_qty / p.qty_per_pack, 2)
         else:
             actual_qty = raw_qty
 
-        if actual_qty > 0:
+        if actual_qty != 0:
+            if actual_qty < 0:
+                is_avoir = True
             old_price = p.purchase_price
-            p.stock += actual_qty
-            if prix is not None and prix > 0:
+            p.stock = round(p.stock + actual_qty, 4)
+            # Ne met à jour le prix que pour les entrées de stock (livraisons)
+            if prix is not None and prix > 0 and actual_qty > 0:
                 p.purchase_price = prix
                 p.is_estimated = False
             updated.append({
@@ -1501,26 +1503,30 @@ def confirm_delivery(body: DeliveryConfirmIn, db: Session = Depends(get_db)):
                 "new_price": p.purchase_price,
             })
 
-    import_log = ImportLog(
-        import_type="delivery",
-        reference=body.numero_facture,
-        supplier=body.fournisseur,
-        details_json=json.dumps(updated, ensure_ascii=False),
-    )
-    db.add(import_log)
-    log_event(
-        db,
-        "livraison",
-        f"Bon de livraison n°{body.numero_facture} — {len(updated)} produits réceptionnés",
-        {
-            "numero_facture": body.numero_facture,
-            "fournisseur": body.fournisseur,
-            "updated": [{"product": u["product"], "added": u["added"]} for u in updated],
-            "not_found": not_found,
-        }
-    )
+    # Ne créer le log que si quelque chose a été traité
+    if updated:
+        event_type = "avoir_fournisseur" if is_avoir else "livraison"
+        label = "Avoir/retour fournisseur" if is_avoir else "Bon de livraison"
+        import_log = ImportLog(
+            import_type="delivery",
+            reference=body.numero_facture,
+            supplier=body.fournisseur,
+            details_json=json.dumps(updated, ensure_ascii=False),
+        )
+        db.add(import_log)
+        log_event(
+            db,
+            event_type,
+            f"{label} n°{body.numero_facture} — {len(updated)} produit(s)",
+            {
+                "numero_facture": body.numero_facture,
+                "fournisseur": body.fournisseur,
+                "updated": [{"product": u["product"], "added": u["added"]} for u in updated],
+                "not_found": not_found,
+            }
+        )
     db.commit()
-    return {"ok": True, "updated": updated, "not_found": not_found}
+    return {"ok": True, "updated": updated, "not_found": not_found, "is_avoir": is_avoir}
 
 
 @app.get("/api/imports/recent")

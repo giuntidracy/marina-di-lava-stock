@@ -988,8 +988,20 @@ async function confirmDelivery(count) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ products, numero_facture, fournisseur }),
     });
-    let html = `<div class="import-preview"><h4>✅ Livraison confirmée — réf. ${esc(numero_facture)}</h4>`;
-    res.updated.forEach(u => { html += `<div class="result-item"><span>${esc(u.product)}</span><span>+${u.added}</span></div>`; });
+    const isAvoir = res.is_avoir;
+    const titre = isAvoir
+      ? `↩️ Avoir / retour fournisseur enregistré — réf. ${esc(numero_facture)}`
+      : `✅ Livraison confirmée — réf. ${esc(numero_facture)}`;
+    let html = `<div class="import-preview" style="${isAvoir ? 'background:#FEF9EC;border-color:#F5C07A' : ''}">
+      <h4>${titre}</h4>`;
+    if (!res.updated?.length) {
+      html += `<div style="color:var(--text-muted);font-size:13px">Aucun produit mis à jour (vérifiez les quantités).</div>`;
+    } else {
+      res.updated.forEach(u => {
+        const sign = u.added > 0 ? "+" : "";
+        html += `<div class="result-item"><span>${esc(u.product)}</span><span style="color:${u.added<0?'#DC2626':'var(--primary)'}">${sign}${u.added}</span></div>`;
+      });
+    }
     if (res.not_found?.length) html += `<div style="font-size:12px;color:var(--text-muted);margin-top:8px">⚠️ Non trouvés : ${res.not_found.map(esc).join(", ")}</div>`;
     html += `</div>`;
     document.getElementById("delivery-result").innerHTML = html;
