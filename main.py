@@ -1336,6 +1336,21 @@ def _parse_auchan_pdf(content_bytes):
         else:
             quantite = qty
 
+        # ── Cas promos Auchan "DONT X OFFERTES" ──────────────────────────────
+        # Le BL affiche deux colonnes : "2  3  prix€" (2 commandés, 3 offerts).
+        # Le parseur prend le "3" (remise) comme qty_word car il est dans la
+        # bonne zone x. La vraie quantité commandée ("2") apparaît dans le
+        # libellé JUSTE AVANT le descripteur de pack, ex: "SLIM 2 4X33CL".
+        # Pattern : \b(N)\s+(M)X\d → N = qté réelle, M = taille du pack.
+        if m1 or m2:
+            pack_n = int(m2.group(1)) if m2 else int(m1.group(1))
+            m_promo = _re.search(r'\b(\d+)\s+(\d+)\s*[Xx]\s*\d', raw_nom)
+            if m_promo and pack_n > 1:
+                real_qty = int(m_promo.group(1))
+                # La vraie qté doit être inférieure au qty_word (sinon c'est autre chose)
+                if 0 < real_qty < qty:
+                    quantite = real_qty * pack_n
+
         products_out.append({
             'nom': nom,
             'quantite': quantite,
