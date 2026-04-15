@@ -2250,12 +2250,10 @@ function fmtStock(p) {
 
   if (isNaN(stock)) return "—";
 
-  // Produits en carton → stock en unités individuelles, afficher cartons en info secondaire
+  // Produits en carton → afficher uniquement les unités individuelles
   if (qty > 1) {
     const u = Math.abs(stock) % 1 < 0.05 ? Math.round(stock) : parseFloat(stock.toFixed(1));
-    const cartons = parseFloat((stock / qty).toFixed(2));
-    return `<span>${u < 0 ? '<span style="color:#DC2626">⚠ ' + u + '</span>' : u} unités</span>
-            <small style="color:var(--text-faint);display:block;font-size:11px">${cartons} Carton ${qty}</small>`;
+    return `<span>${u < 0 ? '<span style="color:#DC2626">⚠ ' + u + '</span>' : u} unités</span>`;
   }
 
   // Fûts → afficher en litres + fraction de fût
