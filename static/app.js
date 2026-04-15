@@ -1075,27 +1075,78 @@ function _renderImportDetailModal() {
   `);
 }
 
-async function adminResetStocks() {
-  if (!confirm("⚠️ Remettre TOUS les stocks à 0 ?\n\nCette action est irréversible.")) return;
+function showAdminPinModal({ title, warning, confirmLabel, onConfirm }) {
+  openModal(`
+    <h3 style="color:#DC2626">${title}</h3>
+    <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:12px 14px;margin:14px 0;font-size:13px;color:#991B1B;line-height:1.6">
+      ${warning}
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="font-size:13px;font-weight:600">Code PIN gérant</label>
+      <input id="admin-pin-input" type="password" inputmode="numeric" maxlength="8"
+        placeholder="••••" autocomplete="off"
+        style="margin-top:6px;width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+               background:var(--surface);color:var(--text);font-size:15px;letter-spacing:4px"
+        onkeydown="if(event.key==='Enter') _submitAdminPin()"/>
+    </div>
+    <div id="admin-pin-error" style="color:#DC2626;font-size:12px;margin-bottom:10px;display:none">Code incorrect</div>
+    <div style="display:flex;gap:10px">
+      <button class="btn" style="flex:1;background:#DC2626;color:#fff;font-weight:700;justify-content:center"
+        onclick="_submitAdminPin()">${confirmLabel}</button>
+      <button class="btn btn-outline" style="flex:1;justify-content:center" onclick="closeModal()">Annuler</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('admin-pin-input')?.focus(), 100);
+  window._adminPinCallback = onConfirm;
+}
+
+async function _submitAdminPin() {
+  const pin = document.getElementById('admin-pin-input')?.value || '';
+  const errEl = document.getElementById('admin-pin-error');
+  if (!pin) { if (errEl) { errEl.style.display='block'; errEl.textContent='Entrez le code PIN'; } return; }
   try {
-    const res = await api("/api/admin/reset-stocks", { method: "POST" });
-    alert(`✓ ${res.products_reset} produit(s) remis à 0.`);
-    allProducts = await api("/api/produits");
-    updateAlertBadge();
+    await window._adminPinCallback(pin);
+    closeModal();
   } catch(e) {
-    alert("Erreur : " + e.message);
+    if (errEl) { errEl.style.display = 'block'; errEl.textContent = e.message || 'Code incorrect'; }
+    const input = document.getElementById('admin-pin-input');
+    if (input) { input.value = ''; input.focus(); }
   }
 }
 
+async function adminResetStocks() {
+  showAdminPinModal({
+    title: '🔄 Remettre tous les stocks à 0',
+    warning: '⚠️ Cette action va mettre <strong>TOUS les stocks à zéro</strong>.<br>Les prix d\'achat et les bons de livraison ne seront pas modifiés.<br><strong>Action irréversible.</strong>',
+    confirmLabel: 'Confirmer la remise à 0',
+    onConfirm: async (pin) => {
+      const res = await api("/api/admin/reset-stocks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin })
+      });
+      allProducts = await api("/api/produits");
+      updateAlertBadge();
+      alert(`✓ ${res.products_reset} produit(s) remis à 0.`);
+    }
+  });
+}
+
 async function adminClearImports() {
-  if (!confirm("⚠️ Supprimer TOUS les bons de livraison ?\n\nLes stocks ne seront PAS modifiés. Cette action est irréversible.")) return;
-  try {
-    const res = await api("/api/admin/clear-imports", { method: "DELETE" });
-    alert(`✓ ${res.deleted} bon(s) de livraison supprimé(s).`);
-    loadRecentImports();
-  } catch(e) {
-    alert("Erreur : " + e.message);
-  }
+  showAdminPinModal({
+    title: '🗑 Supprimer tous les BL',
+    warning: '⚠️ Cette action va supprimer <strong>tous les bons de livraison</strong>.<br>Les stocks <strong>ne seront PAS modifiés</strong>.<br><strong>Action irréversible.</strong>',
+    confirmLabel: 'Confirmer la suppression',
+    onConfirm: async (pin) => {
+      const res = await api("/api/admin/clear-imports", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin })
+      });
+      loadRecentImports();
+      alert(`✓ ${res.deleted} bon(s) de livraison supprimé(s).`);
+    }
+  });
 }
 
 async function deleteImportLine(importId, productId, productName, qty) {

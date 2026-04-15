@@ -1917,9 +1917,21 @@ def annuler_import(import_id: int, db: Session = Depends(get_db)):
 # ADMINISTRATION — RESET / PURGE
 # ══════════════════════════════════════════════════════════════════════════
 
+class AdminActionIn(BaseModel):
+    pin: str
+
+
+def _verify_admin_pin(pin: str):
+    """Lève une HTTPException si le PIN est incorrect."""
+    manager_pin = os.environ.get("MANAGER_PIN", "1234")
+    if pin != manager_pin:
+        raise HTTPException(401, "Code PIN incorrect")
+
+
 @app.post("/api/admin/reset-stocks")
-def admin_reset_stocks(db: Session = Depends(get_db)):
-    """Remet tous les stocks à 0."""
+def admin_reset_stocks(body: AdminActionIn, db: Session = Depends(get_db)):
+    """Remet tous les stocks à 0 — nécessite le PIN gérant."""
+    _verify_admin_pin(body.pin)
     count = db.query(Product).count()
     db.query(Product).update({"stock": 0})
     log_event(db, "admin_reset_stocks",
@@ -1929,8 +1941,9 @@ def admin_reset_stocks(db: Session = Depends(get_db)):
 
 
 @app.delete("/api/admin/clear-imports")
-def admin_clear_imports(db: Session = Depends(get_db)):
-    """Supprime tous les bons de livraison (sans toucher aux stocks)."""
+def admin_clear_imports(body: AdminActionIn, db: Session = Depends(get_db)):
+    """Supprime tous les bons de livraison — nécessite le PIN gérant."""
+    _verify_admin_pin(body.pin)
     count = db.query(ImportLog).filter(ImportLog.import_type == "delivery").count()
     db.query(ImportLog).filter(ImportLog.import_type == "delivery").delete(synchronize_session=False)
     log_event(db, "admin_clear_imports",
