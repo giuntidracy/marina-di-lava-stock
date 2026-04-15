@@ -101,8 +101,8 @@ def calc_product(p: Product) -> dict:
     marge_color = "gray"
     valeur_stock = None
 
-    if p.purchase_price is not None and p.qty_per_pack:
-        cout_unitaire = p.purchase_price / p.qty_per_pack
+    if p.purchase_price is not None:
+        cout_unitaire = p.purchase_price  # déjà en prix/unité individuelle
         valeur_stock = p.stock * cout_unitaire
 
     if cout_unitaire is not None and p.sale_price_ttc:
@@ -164,8 +164,8 @@ def calc_cocktail(c: Cocktail) -> dict:
     ingredients_detail = []
     for ing in c.ingredients:
         p = ing.product
-        if p and p.purchase_price is not None and p.qty_per_pack and p.volume_cl:
-            cout_cl = (p.purchase_price / p.qty_per_pack) / p.volume_cl
+        if p and p.purchase_price is not None and p.volume_cl:
+            cout_cl = p.purchase_price / p.volume_cl  # purchase_price déjà en prix/unité
             cost = cout_cl * ing.dose_cl
             cout_matiere += cost
             ingredients_detail.append({
@@ -532,8 +532,8 @@ def get_alerts(db: Session = Depends(get_db)):
                 "message": f"Stock bas : {p.name} ({p.stock} {p.unit})",
                 "severity": "medium"
             })
-        if p.purchase_price and p.sale_price_ttc and p.qty_per_pack:
-            cout = p.purchase_price / p.qty_per_pack
+        if p.purchase_price and p.sale_price_ttc:
+            cout = p.purchase_price  # déjà en prix/unité individuelle
             ht = p.sale_price_ttc / 1.10
             if ht > 0:
                 marge = (ht - cout) / ht * 100
@@ -1325,11 +1325,15 @@ def _parse_auchan_pdf(content_bytes):
         # Format VolxN : "20CL X12", "20CLX12"
         m2 = _re.search(r'\d+[,\.]?\d*\s*[Cc][Ll]\s*[Xx]\s*(\d+)', raw_nom)
 
+        # Détermine pack_n pour calculer le prix par unité individuelle
+        pack_n = 1
         if m2:
-            quantite = qty * int(m2.group(1))
+            pack_n = int(m2.group(1))
+            quantite = qty * pack_n
         elif m1:
             n = int(m1.group(1))
             if n > 1:
+                pack_n = n
                 quantite = qty * n
             else:
                 quantite = qty
@@ -1342,19 +1346,22 @@ def _parse_auchan_pdf(content_bytes):
         # bonne zone x. La vraie quantité commandée ("2") apparaît dans le
         # libellé JUSTE AVANT le descripteur de pack, ex: "SLIM 2 4X33CL".
         # Pattern : \b(N)\s+(M)X\d → N = qté réelle, M = taille du pack.
-        if m1 or m2:
-            pack_n = int(m2.group(1)) if m2 else int(m1.group(1))
+        if pack_n > 1:
             m_promo = _re.search(r'\b(\d+)\s+(\d+)\s*[Xx]\s*\d', raw_nom)
-            if m_promo and pack_n > 1:
+            if m_promo:
                 real_qty = int(m_promo.group(1))
                 # La vraie qté doit être inférieure au qty_word (sinon c'est autre chose)
                 if 0 < real_qty < qty:
                     quantite = real_qty * pack_n
 
+        # Le BL Auchan affiche le prix du PACK (ex : 7,93€ pour 12 canettes).
+        # On stocke toujours le prix par UNITÉ INDIVIDUELLE dans la base.
+        prix_per_unit = round(prix_ht / pack_n, 6) if pack_n > 1 else prix_ht
+
         products_out.append({
             'nom': nom,
             'quantite': quantite,
-            'prix_unitaire_ht': prix_ht,
+            'prix_unitaire_ht': prix_per_unit,
             'numero_facture': order_num,
         })
 
