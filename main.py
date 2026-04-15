@@ -534,10 +534,12 @@ def update_order_status(order_id: int, body: OrderStatusIn, db: Session = Depend
 
 @app.post("/api/orders/{order_id}/send-email")
 def send_order_email(order_id: int, db: Session = Depends(get_db)):
-    """Envoie la commande par email au fournisseur via SMTP configuré dans les env vars."""
-    import smtplib
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.text import MIMEText
+    """Envoie la commande par email.
+    Priorité : 1) Resend API (HTTP, fonctionne sur Railway)
+               2) SMTP classique (fallback hors Railway)
+               3) Retourne no_smtp=True pour fallback mailto côté client.
+    """
+    import urllib.request as _urllib
 
     o = db.query(SupplierOrder).get(order_id)
     if not o:
@@ -545,15 +547,17 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
 
     supplier = o.supplier
     to_email = supplier.email if supplier else ""
+    reply_to = os.getenv("FROM_EMAIL", os.getenv("SMTP_USER", ""))
+    subject  = f"Bon de commande {o.reference} — Marina di Lava"
 
-    # Construction du corps email (HTML)
+    # ── Construction HTML ──────────────────────────────────────
     items_rows = ""
     total_ht = 0.0
     for it in o.items:
         line_total = (it.qty_ordered or 0) * (it.unit_price_ht or 0)
         total_ht += line_total
-        prix_str = f"{it.unit_price_ht:.4f} €" if it.unit_price_ht else "—"
-        total_str = f"{line_total:.2f} €" if it.unit_price_ht else "—"
+        prix_str  = f"{it.unit_price_ht:.4f} €" if it.unit_price_ht else "—"
+        total_str = f"{line_total:.2f} €"         if it.unit_price_ht else "—"
         items_rows += f"""
         <tr>
           <td style="padding:8px 12px;border-bottom:1px solid #eee">{it.product_name}</td>
@@ -577,64 +581,89 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
         <p><strong>Date :</strong> {to_local(datetime.utcnow()).strftime('%d/%m/%Y')}</p>
         {notes_block}
         <table style="width:100%;border-collapse:collapse;margin-top:20px">
-          <thead>
-            <tr style="background:#f9fafb">
-              <th style="padding:10px 12px;text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Produit</th>
-              <th style="padding:10px 12px;text-align:center;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Qté</th>
-              <th style="padding:10px 12px;text-align:right;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Prix unit. HT</th>
-              <th style="padding:10px 12px;text-align:right;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Total HT</th>
-            </tr>
-          </thead>
+          <thead><tr style="background:#f9fafb">
+            <th style="padding:10px 12px;text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Produit</th>
+            <th style="padding:10px 12px;text-align:center;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Qté</th>
+            <th style="padding:10px 12px;text-align:right;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Prix unit. HT</th>
+            <th style="padding:10px 12px;text-align:right;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Total HT</th>
+          </tr></thead>
           <tbody>{items_rows}</tbody>
         </table>
         {total_block}
         <p style="margin-top:28px;font-size:12px;color:#9ca3af">
-          Ce bon de commande a été généré automatiquement par le système de gestion de stock Marina di Lava.
+          Bon de commande généré automatiquement — Marina di Lava Gestion Stock.
+          {f'Répondre à : {reply_to}' if reply_to else ''}
         </p>
       </div>
     </div>"""
 
-    # SMTP config depuis env vars
-    smtp_host = os.getenv("SMTP_HOST", "")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user = os.getenv("SMTP_USER", "")
-    smtp_pass = os.getenv("SMTP_PASS", "")
-    from_email = os.getenv("FROM_EMAIL", smtp_user)
-
-    if not smtp_host or not smtp_user:
-        # Pas de config SMTP → retourner le contenu pour mailto fallback
-        return {
-            "ok": False,
-            "no_smtp": True,
-            "to": to_email,
-            "subject": f"Bon de commande {o.reference} — Marina di Lava",
+    # ── 1. Resend API (HTTP — fonctionne sur Railway) ──────────
+    resend_key = os.getenv("RESEND_API_KEY", "")
+    if resend_key:
+        if not to_email:
+            raise HTTPException(400, detail="Adresse email du fournisseur non renseignée")
+        payload = json.dumps({
+            "from": "Marina di Lava Commandes <onboarding@resend.dev>",
+            "reply_to": reply_to or None,
+            "to": [to_email],
+            "subject": subject,
             "html": html_body,
-        }
-
-    if not to_email:
-        raise HTTPException(400, detail="Adresse email du fournisseur non renseignée")
-
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"Bon de commande {o.reference} — Marina di Lava"
-        msg["From"] = from_email
-        msg["To"] = to_email
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
-
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(from_email, to_email, msg.as_string())
-
-        # Marquer comme envoyée
+        }).encode("utf-8")
+        req = _urllib.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with _urllib.urlopen(req, timeout=15) as resp:
+                resp_data = json.loads(resp.read())
+        except Exception as e:
+            raise HTTPException(500, detail=f"Erreur Resend : {str(e)}")
         o.status = "sent"
         if not o.sent_at:
             o.sent_at = datetime.utcnow()
         db.commit()
-        return {"ok": True, "to": to_email}
-    except Exception as e:
-        raise HTTPException(500, detail=f"Erreur envoi email : {str(e)}")
+        return {"ok": True, "to": to_email, "provider": "resend"}
+
+    # ── 2. SMTP classique (fallback) ───────────────────────────
+    import smtplib
+    from email.mime.multipart import MIMEMultipart as _MIME
+    from email.mime.text import MIMEText as _MIMEText
+
+    smtp_host = os.getenv("SMTP_HOST", "")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASS", "")
+    from_email_smtp = os.getenv("FROM_EMAIL", smtp_user)
+
+    if smtp_host and smtp_user:
+        if not to_email:
+            raise HTTPException(400, detail="Adresse email du fournisseur non renseignée")
+        try:
+            msg = _MIME("alternative")
+            msg["Subject"] = subject
+            msg["From"]    = from_email_smtp
+            msg["To"]      = to_email
+            msg.attach(_MIMEText(html_body, "html", "utf-8"))
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.ehlo(); server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(from_email_smtp, to_email, msg.as_string())
+            o.status = "sent"
+            if not o.sent_at:
+                o.sent_at = datetime.utcnow()
+            db.commit()
+            return {"ok": True, "to": to_email, "provider": "smtp"}
+        except Exception as e:
+            raise HTTPException(500, detail=f"Erreur envoi email : {str(e)}")
+
+    # ── 3. Pas de config → fallback mailto côté client ─────────
+    return {
+        "ok": False, "no_smtp": True,
+        "to": to_email,
+        "subject": subject,
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════
