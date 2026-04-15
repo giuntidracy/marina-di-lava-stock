@@ -76,6 +76,7 @@ class ImportLog(Base):
     import_type = Column(String, nullable=False)  # "cashpad" or "delivery"
     reference = Column(String, nullable=False)
     supplier = Column(String, default="")
+    details_json = Column(Text, default="[]")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
