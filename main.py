@@ -1689,10 +1689,11 @@ def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
         raw_qty = entry["total_qty"]
         prix = entry["prix"]
 
-        # Les parsers (Auchan, Socobo, PGV…) envoient déjà la quantité en unités
-        # individuelles (bouteilles/canettes). On n'applique PAS de division par
-        # qty_per_pack ici — ce serait une double opération.
-        actual_qty = raw_qty
+        # Les parsers envoient des unités individuelles (bouteilles/canettes).
+        # Le stock est stocké dans l'unité du produit (carton pour qty_per_pack > 1).
+        # On convertit donc : unités → cartons en divisant par qty_per_pack.
+        qpp = float(getattr(p, 'qty_per_pack', None) or 1)
+        actual_qty = round(raw_qty / qpp, 4) if qpp > 1 else raw_qty
 
         if actual_qty != 0:
             if actual_qty < 0:
@@ -1733,7 +1734,8 @@ def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
             updated.append({
                 "product_id": p.id,
                 "product": p.name,
-                "added": actual_qty,
+                "added": actual_qty,        # en unité stock (cartons si qpp>1)
+                "added_units": raw_qty,     # en unités individuelles (pour affichage)
                 "old_price": old_price,
                 "new_price": p.purchase_price,
             })
@@ -1878,9 +1880,20 @@ def update_import_line(import_id: int, product_id: int, body: ImportLineIn, db: 
         raise HTTPException(404, "Ligne introuvable dans cet import")
 
     old_added = line['added']
-    delta = body.new_qty - old_added
-
     p = db.query(Product).get(product_id)
+
+    # Déterminer l'unité de stockage : nouveau format → added est en cartons
+    # ancien format (pas de added_units) → added est en unités individuelles
+    qpp = float(getattr(p, 'qty_per_pack', None) or 1) if p else 1
+    is_new_format = 'added_units' in line and qpp > 1
+
+    if is_new_format:
+        new_qty_stock = round(body.new_qty / qpp, 4)
+        delta = new_qty_stock - old_added
+    else:
+        new_qty_stock = body.new_qty
+        delta = body.new_qty - old_added
+
     if p:
         p.stock = round(p.stock + delta, 3)
         if body.new_price is not None:
@@ -1897,7 +1910,9 @@ def update_import_line(import_id: int, product_id: int, body: ImportLineIn, db: 
                     if ps:
                         ps.purchase_price = body.new_price
 
-    line['added'] = body.new_qty
+    line['added'] = new_qty_stock
+    if is_new_format:
+        line['added_units'] = body.new_qty
     if body.new_price is not None:
         line['new_price'] = body.new_price
     imp.details_json = json.dumps({"items": items, "not_found": not_found}, ensure_ascii=False)

@@ -996,7 +996,7 @@ async function loadRecentImports() {
         </div>
         ${imp.details && imp.details.length > 0 ? `
         <div style="margin-top:8px;font-size:12px;color:var(--text-muted)">
-          ${imp.details.slice(0,5).map(d => `${esc(d.product)} ${d.added > 0 ? '+' : ''}${d.added}`).join(' · ')}
+          ${imp.details.slice(0,5).map(d => { const q = d.added_units ?? d.added; return `${esc(d.product)} ${q > 0 ? '+' : ''}${q}`; }).join(' · ')}
           ${imp.details.length > 5 ? ` · <em>+${imp.details.length - 5} autres</em>` : ''}
         </div>` : ''}
       </div>`;
@@ -1032,13 +1032,14 @@ function _renderImportDetailModal() {
     const priceDisplay = d.old_price != null
       ? `${Number(d.old_price).toFixed(2)} €${d.new_price != null && d.new_price !== d.old_price ? ` → <strong>${Number(d.new_price).toFixed(2)} €</strong>` : ''}`
       : (d.new_price != null ? `<strong>${Number(d.new_price).toFixed(2)} €</strong>` : '—');
+    const dispQty = d.added_units ?? d.added;
     const editBtns = canEdit && hasPid
-      ? `<button class="btn btn-sm btn-outline" style="padding:2px 7px;font-size:12px" title="Modifier" onclick="editImportLine(${importId},${d.product_id},${i},${d.added},${d.new_price != null ? d.new_price : 'null'})">✏️</button>
-         <button class="btn btn-sm" style="padding:2px 7px;font-size:12px;background:#FEF2F2;color:#DC2626;border:1px solid #FECACA" title="Supprimer" onclick="deleteImportLine(${importId},${d.product_id},'${esc(d.product)}',${d.added})">🗑</button>`
+      ? `<button class="btn btn-sm btn-outline" style="padding:2px 7px;font-size:12px" title="Modifier" onclick="editImportLine(${importId},${d.product_id},${i},${dispQty},${d.new_price != null ? d.new_price : 'null'})">✏️</button>
+         <button class="btn btn-sm" style="padding:2px 7px;font-size:12px;background:#FEF2F2;color:#DC2626;border:1px solid #FECACA" title="Supprimer" onclick="deleteImportLine(${importId},${d.product_id},'${esc(d.product)}',${dispQty})">🗑</button>`
       : '';
     return `<tr id="bl-row-${i}">
       <td style="font-weight:600">${esc(d.product)}</td>
-      <td style="color:${d.added < 0 ? '#DC2626' : 'var(--primary)'};font-weight:700;text-align:center">${d.added > 0 ? '+' : ''}${d.added}</td>
+      <td style="color:${dispQty < 0 ? '#DC2626' : 'var(--primary)'};font-weight:700;text-align:center">${dispQty > 0 ? '+' : ''}${dispQty}</td>
       <td style="color:var(--text-muted);text-align:right">${priceDisplay}</td>
       <td style="text-align:right;white-space:nowrap">${editBtns}</td>
     </tr>`;
@@ -1328,8 +1329,9 @@ async function confirmDelivery(count) {
       html += `<div style="color:var(--text-muted);font-size:13px">Aucun produit mis à jour (vérifiez les quantités).</div>`;
     } else {
       res.updated.forEach(u => {
-        const sign = u.added > 0 ? "+" : "";
-        html += `<div class="result-item"><span>${esc(u.product)}</span><span style="color:${u.added<0?'#DC2626':'var(--primary)'}">${sign}${u.added}</span></div>`;
+        const uq = u.added_units ?? u.added;
+        const sign = uq > 0 ? "+" : "";
+        html += `<div class="result-item"><span>${esc(u.product)}</span><span style="color:${uq<0?'#DC2626':'var(--primary)'}">${sign}${uq}</span></div>`;
       });
     }
     if (res.not_found?.length) html += `<div style="font-size:12px;color:var(--text-muted);margin-top:8px">⚠️ Non trouvés : ${res.not_found.map(esc).join(", ")}</div>`;
