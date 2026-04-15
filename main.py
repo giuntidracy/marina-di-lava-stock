@@ -1510,6 +1510,8 @@ def _normalize_tokens(s: str) -> set:
     s = s.lower()
     # Normaliser "saint" → "st" pour matcher "Saint Georges" ↔ "St Georges"
     s = re.sub(r'\bsaint\b', 'st', s)
+    # Synonymes marques : "lipton" → "ice tea" (BL Auchan vs catalogue)
+    s = re.sub(r'\blipton\b', 'ice tea', s)
     # Normaliser décimales : "1,5" "1.5" → "15"
     s = re.sub(r'(\d)[,.](\d)', r'\1\2', s)
     # Supprimer multiplicateurs de pack : "6x", "12x", "x6", "33clx6" → "33cl"
