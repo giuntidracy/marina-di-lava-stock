@@ -2873,8 +2873,25 @@ async def flash_analyze_photo(
     """Analyse une photo de frigo/étagère et détecte les bouteilles visibles.
     Utilise Claude vision pour identifier et compter les bouteilles."""
     content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(400, detail="Image trop volumineuse (max 10 Mo)")
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(400, detail="Image trop volumineuse (max 20 Mo)")
+
+    # Compresser l'image pour éviter les timeouts API (photos téléphone = 5-12 Mo)
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(content))
+        # Convertir RGBA/P → RGB si nécessaire
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        # Redimensionner si > 1600px de large (suffisant pour identifier des bouteilles)
+        max_dim = 1600
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85, optimize=True)
+        content = buf.getvalue()
+    except Exception:
+        pass  # si Pillow échoue, on envoie l'image originale
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -2939,13 +2956,8 @@ Réponds UNIQUEMENT en JSON valide avec ce format :
     import anthropic as _anthropic
     client = _anthropic.Anthropic(api_key=api_key)
 
-    ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "jpg"
-    media_map = {
-        "jpg": "image/jpeg", "jpeg": "image/jpeg",
-        "png": "image/png", "webp": "image/webp",
-        "gif": "image/gif", "heic": "image/jpeg",
-    }
-    media_type = media_map.get(ext, "image/jpeg")
+    # Après compression Pillow, c'est toujours du JPEG
+    media_type = "image/jpeg"
     b64 = base64.standard_b64encode(content).decode("utf-8")
 
     try:
