@@ -894,6 +894,79 @@ def delete_cocktail(cid: int, db: Session = Depends(get_db)):
 # ALERTES
 # ══════════════════════════════════════════════════════════════════════════
 
+@app.get("/api/predictions")
+def get_predictions(db: Session = Depends(get_db)):
+    """Prédit la date de rupture de chaque produit basé sur la consommation cashpad des 14 derniers jours."""
+    from collections import defaultdict
+
+    PERIODE = 14  # jours d'analyse
+    cutoff = datetime.utcnow() - timedelta(days=PERIODE)
+
+    # Récupère tous les imports cashpad des 14 derniers jours
+    rows = db.query(StockHistory).filter(
+        StockHistory.created_at >= cutoff,
+        StockHistory.event_type == "import_cashpad"
+    ).order_by(StockHistory.created_at).all()
+
+    # Calcule la consommation totale par product_id
+    consumption = defaultdict(float)   # product_id → total unités consommées
+    days_seen   = defaultdict(set)     # product_id → set de jours avec vente
+
+    for row in rows:
+        try:
+            d = json.loads(row.data_json)
+        except Exception:
+            continue
+        day = row.created_at.strftime("%Y-%m-%d")
+        for ded in d.get("deductions", []):
+            pid = ded.get("product_id")
+            qty = abs(float(ded.get("quantity", ded.get("qty", 0)) or 0))
+            if pid and qty > 0:
+                consumption[pid] += qty
+                days_seen[pid].add(day)
+
+    products = db.query(Product).all()
+    predictions = []
+
+    for p in products:
+        if p.id not in consumption:
+            continue
+        total_consumed = consumption[p.id]
+        n_days = max(len(days_seen[p.id]), 1)  # jours où ce produit a été vendu
+        # Moyenne journalière basée sur les jours actifs (plus réaliste)
+        avg_per_active_day = total_consumed / n_days
+        # Extrapolé sur la période complète (ex: vendu 3j/14 → vend ~3/14 /jour en moyenne)
+        avg_daily = total_consumed / PERIODE
+
+        if avg_daily <= 0 or p.stock <= 0:
+            continue
+
+        days_left = p.stock / avg_daily
+        # Date estimée de rupture
+        predicted_date = to_local(datetime.utcnow()) + timedelta(days=days_left)
+
+        # Urgence : critique < 3j, warning < 7j, info < 14j
+        urgency = "critique" if days_left < 3 else "warning" if days_left < 7 else "info" if days_left < 14 else None
+        if not urgency:
+            continue
+
+        predictions.append({
+            "product_id":    p.id,
+            "product_name":  p.name,
+            "category":      p.category,
+            "stock":         round(p.stock, 1),
+            "avg_daily":     round(avg_daily, 2),
+            "days_left":     round(days_left, 1),
+            "predicted_date": predicted_date.strftime("%d/%m/%Y"),
+            "urgency":       urgency,
+            "total_consumed_14j": round(total_consumed, 1),
+        })
+
+    # Tri : plus urgent en premier
+    predictions.sort(key=lambda x: x["days_left"])
+    return predictions
+
+
 @app.get("/api/alertes")
 @app.get("/api/alerts")
 def get_alerts(db: Session = Depends(get_db)):

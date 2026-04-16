@@ -1130,37 +1130,73 @@ async function deleteCocktail(id, name) {
 async function renderAlerts(el) {
   el.innerHTML = `<div class="section-header"><span class="section-title">Alertes actives</span></div><div id="alerts-body">Chargement…</div>`;
   try {
-    const alerts = await api("/api/alertes");
+    const [alerts, predictions] = await Promise.all([
+      api("/api/alertes"),
+      api("/api/predictions").catch(() => []),
+    ]);
     const body = document.getElementById("alerts-body");
-    if (alerts.length === 0) {
+    let html = "";
+
+    // ── Prédictions de rupture ──────────────────────────────
+    if (predictions.length > 0) {
+      const critiques = predictions.filter(p => p.urgency === "critique");
+      const warnings  = predictions.filter(p => p.urgency === "warning");
+      const infos     = predictions.filter(p => p.urgency === "info");
+
+      html += `<div class="pred-section">
+        <h3 class="pred-title">🔮 Prédictions de rupture <span class="pred-subtitle">basées sur les 14 derniers jours</span></h3>
+        <div class="pred-grid">`;
+
+      predictions.forEach(p => {
+        const daysInt = Math.floor(p.days_left);
+        const daysStr = daysInt === 0 ? "aujourd'hui" : daysInt === 1 ? "demain" : `dans ${daysInt} jours`;
+        const urgClass = p.urgency === "critique" ? "pred-card-critique" : p.urgency === "warning" ? "pred-card-warning" : "pred-card-info";
+        const icon = p.urgency === "critique" ? "🔴" : p.urgency === "warning" ? "🟠" : "🟡";
+        html += `
+        <div class="pred-card ${urgClass}">
+          <div class="pred-card-name">${icon} ${esc(p.product_name)}</div>
+          <div class="pred-card-msg">Rupture <strong>${daysStr}</strong></div>
+          <div class="pred-card-detail">
+            Stock : ${p.stock} u · ${p.avg_daily.toFixed(1)}/jour · ${p.total_consumed_14j} vendus en 14j
+          </div>
+          <div class="pred-card-date">📅 ${p.predicted_date}</div>
+        </div>`;
+      });
+
+      html += `</div></div>`;
+    }
+
+    // ── Alertes stock classiques ────────────────────────────
+    if (alerts.length === 0 && predictions.length === 0) {
       body.innerHTML = `<div class="info-box" style="color:#27AE60;font-weight:600">✅ Aucune alerte active — tout est en ordre.</div>`;
       return;
     }
 
-    const groups = {
-      rupture:          { label: "Rupture de stock",      icon: "🔴", alerts: [] },
-      stock_bas:        { label: "Stock bas",              icon: "⚠️", alerts: [] },
-      marge:            { label: "Marge insuffisante",     icon: "📉", alerts: [] },
-      ecart_inventaire: { label: "Écart inventaire",       icon: "🔍", alerts: [] },
-    };
-    alerts.forEach(a => {
-      const g = groups[a.type] || groups.rupture;
-      g.alerts.push(a);
-    });
+    if (alerts.length > 0) {
+      const groups = {
+        rupture:          { label: "Rupture de stock",      icon: "🔴", alerts: [] },
+        stock_bas:        { label: "Stock bas",              icon: "⚠️", alerts: [] },
+        marge:            { label: "Marge insuffisante",     icon: "📉", alerts: [] },
+        ecart_inventaire: { label: "Écart inventaire",       icon: "🔍", alerts: [] },
+      };
+      alerts.forEach(a => {
+        const g = groups[a.type] || groups.rupture;
+        g.alerts.push(a);
+      });
+      Object.values(groups).forEach(g => {
+        if (g.alerts.length === 0) return;
+        html += `<h3 style="margin:20px 0 8px;font-size:15px;font-weight:700">${g.icon} ${esc(g.label)} (${g.alerts.length})</h3>
+          <div class="alert-list" style="margin-bottom:8px">
+            ${g.alerts.map(a => `
+              <div class="alert-card alert-${a.severity || 'medium'}">
+                <span class="alert-msg">${esc(a.message)}</span>
+                ${a.date ? `<span style="font-size:11px;color:var(--text-muted);margin-left:auto">${formatDate(a.date)}</span>` : ''}
+              </div>`).join("")}
+          </div>`;
+      });
+    }
 
-    let html = "";
-    Object.values(groups).forEach(g => {
-      if (g.alerts.length === 0) return;
-      html += `<h3 style="margin:16px 0 8px;font-size:15px;font-weight:700">${g.icon} ${esc(g.label)} (${g.alerts.length})</h3>
-        <div class="alert-list" style="margin-bottom:8px">
-          ${g.alerts.map(a => `
-            <div class="alert-card alert-${a.severity || 'medium'}">
-              <span class="alert-msg">${esc(a.message)}</span>
-              ${a.date ? `<span style="font-size:11px;color:var(--text-muted);margin-left:auto">${formatDate(a.date)}</span>` : ''}
-            </div>`).join("")}
-        </div>`;
-    });
-    body.innerHTML = html;
+    body.innerHTML = html || `<div class="info-box" style="color:#27AE60;font-weight:600">✅ Aucune alerte active.</div>`;
   } catch (e) {
     document.getElementById("alerts-body").innerHTML = `<div class="info-box">Erreur : ${esc(e.message)}</div>`;
   }

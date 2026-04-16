@@ -1230,3 +1230,60 @@ details[open] .history-details summary::before { content: '▼'; }
   color: var(--primary); font-weight: 700;
 }
 .scan-btn { white-space: nowrap; flex-shrink: 0; }
+
+/* ══════════════════════════════════════════════
+   PRÉDICTIONS DE RUPTURE
+══════════════════════════════════════════════ */
+.pred-section { margin-bottom: 24px; }
+.pred-title {
+  font-size: 15px; font-weight: 800; color: var(--primary);
+  margin: 0 0 14px; display: flex; align-items: center; gap: 8px;
+}
+.pred-subtitle {
+  font-size: 11px; font-weight: 500; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: .07em;
+}
+.pred-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.pred-card {
+  border-radius: var(--radius); padding: 14px 16px;
+  border: 1.5px solid; position: relative; overflow: hidden;
+}
+.pred-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+}
+.pred-card-critique {
+  background: #FFF5F5; border-color: #FECACA;
+}
+.pred-card-critique::before { background: linear-gradient(90deg,#EF4444,#DC2626); }
+.pred-card-warning {
+  background: #FFFBEB; border-color: #FDE68A;
+}
+.pred-card-warning::before { background: linear-gradient(90deg,#F59E0B,#D97706); }
+.pred-card-info {
+  background: #FEFCE8; border-color: #FEF08A;
+}
+.pred-card-info::before { background: linear-gradient(90deg,#EAB308,#CA8A04); }
+
+.pred-card-name {
+  font-size: 14px; font-weight: 800; color: var(--primary);
+  margin-bottom: 4px;
+}
+.pred-card-msg {
+  font-size: 15px; color: var(--primary); margin-bottom: 6px;
+}
+.pred-card-msg strong { color: #DC2626; }
+.pred-card-warning .pred-card-msg strong { color: #B45309; }
+.pred-card-info .pred-card-msg strong { color: #854D0E; }
+
+.pred-card-detail {
+  font-size: 11px; color: var(--text-muted);
+  margin-bottom: 6px; line-height: 1.5;
+}
+.pred-card-date {
+  font-size: 12px; font-weight: 700;
+  color: var(--text-faint);
+}
