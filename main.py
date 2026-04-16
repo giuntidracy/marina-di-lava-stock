@@ -2873,8 +2873,25 @@ async def flash_analyze_photo(
     """Analyse une photo de frigo/étagère et détecte les bouteilles visibles.
     Utilise Claude vision pour identifier et compter les bouteilles."""
     content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(400, detail="Image trop volumineuse (max 10 Mo)")
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(400, detail="Image trop volumineuse (max 20 Mo)")
+
+    # Compresser l'image pour éviter les timeouts API (photos téléphone = 5-12 Mo)
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(content))
+        # Convertir RGBA/P → RGB si nécessaire
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        # Redimensionner si > 1600px de large (suffisant pour identifier des bouteilles)
+        max_dim = 1600
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85, optimize=True)
+        content = buf.getvalue()
+    except Exception:
+        pass  # si Pillow échoue, on envoie l'image originale
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -2937,15 +2954,14 @@ Réponds UNIQUEMENT en JSON valide avec ce format :
 }}"""
 
     import anthropic as _anthropic
-    client = _anthropic.Anthropic(api_key=api_key)
+    import httpx as _httpx
+    client = _anthropic.Anthropic(
+        api_key=api_key,
+        timeout=_httpx.Timeout(120.0, connect=30.0),
+    )
 
-    ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "jpg"
-    media_map = {
-        "jpg": "image/jpeg", "jpeg": "image/jpeg",
-        "png": "image/png", "webp": "image/webp",
-        "gif": "image/gif", "heic": "image/jpeg",
-    }
-    media_type = media_map.get(ext, "image/jpeg")
+    # Après compression (frontend Canvas + backend Pillow fallback), c'est du JPEG
+    media_type = "image/jpeg"
     b64 = base64.standard_b64encode(content).decode("utf-8")
 
     try:
@@ -2997,49 +3013,129 @@ Réponds UNIQUEMENT en JSON valide avec ce format :
     return result
 
 
-@app.post("/api/inventory/flash-submit")
-def flash_submit_counts(body: InventoryCountIn, db: Session = Depends(get_db)):
-    """Valide les comptages issus de l'inventaire flash (photo IA).
-    Même logique que l'inventaire classique mais avec event_type dédié."""
-    results = []
+class FlashControlIn(BaseModel):
+    counts: List[dict]    # [{product_id, product_name, actual, theoretical}]
+    staff_name: str = ""
+    zone: str = ""
+
+
+@app.post("/api/inventory/flash-save")
+def flash_save_control(body: FlashControlIn, db: Session = Depends(get_db)):
+    """Enregistre un rapport de contrôle Inventaire Flash SANS modifier le stock.
+    C'est un constat : on compare le comptage IA/corrigé avec le stock théorique."""
+    items = []
     alerts = []
     for item in body.counts:
-        pid = item.get("product_id") or item.get("produit_id")
+        pid = item.get("product_id")
         if not pid:
             continue
         p = db.query(Product).get(pid)
         if not p:
             continue
-        theoretical = p.stock
-        actual = float(item.get("actual", item.get("quantite_reelle", 0)))
-        diff = actual - theoretical
-        sess = InventorySession(
-            product_id=p.id,
-            theoretical_qty=theoretical,
-            actual_qty=actual,
-            difference=diff,
-            staff_name=body.staff_name,
-        )
-        db.add(sess)
-        p.stock = actual
-        result = {
-            "product": p.name,
-            "theoretical": round(theoretical, 3),
+        theoretical = round(p.stock, 3)
+        actual = float(item.get("actual", 0))
+        diff = round(actual - theoretical, 3)
+        items.append({
+            "product_id": p.id,
+            "product_name": p.name,
+            "category": p.category,
+            "theoretical": theoretical,
             "actual": actual,
-            "diff": round(diff, 3),
-        }
-        results.append(result)
+            "diff": diff,
+            "corrected": False,
+        })
         if diff < -0.5:
-            alerts.append(f"Écart anormal : {p.name} (écart {diff:+.3f})")
-            log_event(db, "alerte_inventaire_flash", f"Écart anormal (flash) : {p.name}", result)
+            alerts.append(f"Écart : {p.name} ({diff:+.3f})")
 
-    log_event(db, "inventaire_flash", f"Inventaire Flash photo — {len(results)} produits comptés", {
+    # Enregistrer le rapport complet dans stock_history
+    report = {
         "staff": body.staff_name,
-        "results": results,
+        "zone": body.zone,
+        "items": items,
         "alerts": alerts,
-    })
+        "date": datetime.now(_LOCAL_TZ).strftime("%d/%m/%Y %H:%M"),
+    }
+    h = log_event(db, "controle_flash",
+                  f"Contrôle Flash — {len(items)} produits, zone: {body.zone or 'non précisée'}",
+                  report)
     db.commit()
-    return {"ok": True, "results": results, "alerts": alerts}
+    return {"ok": True, "control_id": h.id, "items": items, "alerts": alerts}
+
+
+@app.post("/api/inventory/flash-correct/{control_id}/{product_id}")
+def flash_correct_product(control_id: int, product_id: int, db: Session = Depends(get_db)):
+    """Corrige le stock d'UN seul produit suite à un contrôle flash.
+    Met à jour le stock réel et marque le produit comme corrigé dans le rapport."""
+    # Récupérer le rapport de contrôle
+    h = db.query(StockHistory).get(control_id)
+    if not h or h.event_type != "controle_flash":
+        raise HTTPException(404, detail="Rapport de contrôle introuvable")
+
+    report = json.loads(h.data_json)
+    items = report.get("items", [])
+
+    # Trouver le produit dans le rapport
+    target = None
+    for item in items:
+        if item.get("product_id") == product_id:
+            target = item
+            break
+    if not target:
+        raise HTTPException(404, detail="Produit non trouvé dans ce contrôle")
+
+    if target.get("corrected"):
+        raise HTTPException(400, detail="Ce produit a déjà été corrigé")
+
+    # Mettre à jour le stock
+    p = db.query(Product).get(product_id)
+    if not p:
+        raise HTTPException(404, detail="Produit introuvable")
+
+    old_stock = p.stock
+    new_stock = target["actual"]
+    diff = round(new_stock - old_stock, 3)
+    p.stock = new_stock
+
+    # Marquer comme corrigé dans le rapport
+    target["corrected"] = True
+    target["corrected_at"] = datetime.now(_LOCAL_TZ).strftime("%d/%m/%Y %H:%M")
+    h.data_json = json.dumps(report, ensure_ascii=False)
+
+    # Enregistrer la correction dans l'historique aussi
+    log_event(db, "correction_flash",
+              f"Correction stock (flash) : {p.name} — {old_stock} → {new_stock} (écart {diff:+.3f})",
+              {"product_id": p.id, "product_name": p.name, "old_stock": old_stock,
+               "new_stock": new_stock, "diff": diff, "control_id": control_id})
+
+    db.commit()
+    return {"ok": True, "product_name": p.name, "old_stock": round(old_stock, 3),
+            "new_stock": new_stock, "diff": diff}
+
+
+@app.get("/api/inventory/flash-history")
+def flash_control_history(db: Session = Depends(get_db)):
+    """Historique des contrôles flash."""
+    controls = db.query(StockHistory).filter(
+        StockHistory.event_type == "controle_flash"
+    ).order_by(StockHistory.created_at.desc()).limit(50).all()
+
+    result = []
+    for c in controls:
+        data = json.loads(c.data_json) if c.data_json else {}
+        items = data.get("items", [])
+        nb_ecarts = sum(1 for it in items if abs(it.get("diff", 0)) > 0.1)
+        nb_corrected = sum(1 for it in items if it.get("corrected"))
+        result.append({
+            "id": c.id,
+            "date": to_local(c.created_at).strftime("%d/%m/%Y %H:%M") if c.created_at else "",
+            "staff": data.get("staff", ""),
+            "zone": data.get("zone", ""),
+            "nb_products": len(items),
+            "nb_ecarts": nb_ecarts,
+            "nb_corrected": nb_corrected,
+            "items": items,
+        })
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
