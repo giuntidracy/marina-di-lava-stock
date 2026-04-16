@@ -597,35 +597,40 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
       </div>
     </div>"""
 
-    # ── 1. Brevo API (HTTP — fonctionne sur Railway, pas de domaine requis) ──
-    brevo_key = os.getenv("BREVO_API_KEY", "")
-    if brevo_key:
+    # ── 1. Mailjet API (HTTP — gratuit 200/jour, pas de domaine requis) ──────
+    mailjet_key    = os.getenv("MAILJET_API_KEY", "")
+    mailjet_secret = os.getenv("MAILJET_SECRET_KEY", "")
+    if mailjet_key and mailjet_secret:
         if not to_email:
             raise HTTPException(400, detail="Adresse email du fournisseur non renseignée")
         from_addr = reply_to or "marinadilava.commandes@gmail.com"
+        import base64 as _b64
+        creds   = _b64.b64encode(f"{mailjet_key}:{mailjet_secret}".encode()).decode()
         payload = json.dumps({
-            "sender":      {"name": "Marina di Lava Commandes", "email": from_addr},
-            "to":          [{"email": to_email}],
-            "replyTo":     {"email": from_addr},
-            "subject":     subject,
-            "htmlContent": html_body,
+            "Messages": [{
+                "From":     {"Email": from_addr, "Name": "Marina di Lava Commandes"},
+                "To":       [{"Email": to_email}],
+                "ReplyTo":  {"Email": from_addr},
+                "Subject":  subject,
+                "HTMLPart": html_body,
+            }]
         }).encode("utf-8")
         req = _urllib.Request(
-            "https://api.brevo.com/v3/smtp/email",
+            "https://api.mailjet.com/v3.1/send",
             data=payload,
-            headers={"api-key": brevo_key, "Content-Type": "application/json"},
+            headers={"Authorization": f"Basic {creds}", "Content-Type": "application/json"},
             method="POST",
         )
         try:
             with _urllib.urlopen(req, timeout=15) as resp:
                 json.loads(resp.read())
         except Exception as e:
-            raise HTTPException(500, detail=f"Erreur Brevo : {str(e)}")
+            raise HTTPException(500, detail=f"Erreur Mailjet : {str(e)}")
         o.status = "sent"
         if not o.sent_at:
             o.sent_at = datetime.utcnow()
         db.commit()
-        return {"ok": True, "to": to_email, "provider": "brevo"}
+        return {"ok": True, "to": to_email, "provider": "mailjet"}
 
     # ── 2. Resend API (nécessite domaine vérifié) ──────────────
     resend_key = os.getenv("RESEND_API_KEY", "")
