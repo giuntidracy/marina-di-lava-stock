@@ -3102,11 +3102,14 @@ def flash_save_control(body: FlashControlIn, db: Session = Depends(get_db)):
     return {"ok": True, "control_id": h.id, "items": items, "alerts": alerts}
 
 
+class FlashCorrectIn(BaseModel):
+    qty: Optional[float] = None
+
+
 @app.post("/api/inventory/flash-correct/{control_id}/{product_id}")
-def flash_correct_product(control_id: int, product_id: int, db: Session = Depends(get_db)):
+def flash_correct_product(control_id: int, product_id: int, body: FlashCorrectIn = FlashCorrectIn(), db: Session = Depends(get_db)):
     """Corrige le stock d'UN seul produit suite à un contrôle flash.
-    Met à jour le stock réel et marque le produit comme corrigé dans le rapport."""
-    # Récupérer le rapport de contrôle
+    Accepte un body JSON optionnel {"qty": X} pour corriger la quantité avant envoi."""
     h = db.query(StockHistory).get(control_id)
     if not h or h.event_type != "controle_flash":
         raise HTTPException(404, detail="Rapport de contrôle introuvable")
@@ -3114,7 +3117,6 @@ def flash_correct_product(control_id: int, product_id: int, db: Session = Depend
     report = json.loads(h.data_json)
     items = report.get("items", [])
 
-    # Trouver le produit dans le rapport
     target = None
     for item in items:
         if item.get("product_id") == product_id:
@@ -3126,13 +3128,17 @@ def flash_correct_product(control_id: int, product_id: int, db: Session = Depend
     if target.get("corrected"):
         raise HTTPException(400, detail="Ce produit a déjà été corrigé")
 
-    # Mettre à jour le stock
     p = db.query(Product).get(product_id)
     if not p:
         raise HTTPException(404, detail="Produit introuvable")
 
     old_stock = p.stock
     new_stock = target["actual"]
+
+    if body.qty is not None:
+        new_stock = body.qty
+        target["actual"] = new_stock
+        target["diff"] = round(new_stock - target["theoretical"], 3)
     diff = round(new_stock - old_stock, 3)
     p.stock = new_stock
 
