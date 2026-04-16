@@ -1816,3 +1816,63 @@ details[open] .history-details summary::before { content: '▼'; }
 }
 .cp-manual-toggle:hover { color: var(--text); }
 #cp-manual-body { padding: 16px 0 0; }
+
+/* ═══════════════════════════════════════════════════════════════
+   WIDGET MÉTÉO — Alerte Pic de Chaleur
+═══════════════════════════════════════════════════════════════ */
+.wx-card {
+  border-radius: 14px; border: 1px solid var(--border);
+  margin-bottom: 20px; overflow: hidden;
+  background: var(--surface); box-shadow: var(--shadow-sm);
+}
+.wx-main {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 16px; padding: 16px 20px; position: relative;
+}
+.wx-today { display: flex; align-items: center; gap: 10px; }
+.wx-icon   { width: 48px; height: 48px; }
+.wx-icon-sm { width: 32px; height: 32px; }
+.wx-temp-big { font-size: 26px; font-weight: 800; color: var(--text); line-height: 1; }
+.wx-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.wx-divider { width: 1px; height: 44px; background: var(--border); flex-shrink: 0; align-self: center; }
+.wx-tomorrow { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.wx-tomorrow-label { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+.wx-tomorrow-temps { font-size: 15px; font-weight: 700; color: var(--text); }
+.wx-tomorrow-temps span { font-weight: 400; color: var(--text-muted); font-size: 13px; margin-left: 4px; }
+.wx-alert-pill { border-radius: 30px; padding: 7px 16px; font-size: 13px; font-weight: 700; margin-left: auto; }
+.wx-canicule-pill { background: rgba(239,68,68,.1);  color: #dc2626; border: 1px solid rgba(239,68,68,.25); }
+.wx-chaud-pill    { background: rgba(245,158,11,.1); color: #b45309; border: 1px solid rgba(245,158,11,.25); }
+.wx-tiede-pill    { background: rgba(251,191,36,.1); color: #92400e; border: 1px solid rgba(251,191,36,.2); }
+.wx-canicule { border-color: rgba(239,68,68,.3);  border-top: 3px solid #ef4444; }
+.wx-chaud    { border-color: rgba(245,158,11,.3); border-top: 3px solid #f59e0b; }
+.wx-tiede    { border-color: rgba(251,191,36,.3); border-top: 3px solid #fbbf24; }
+.wx-normal   { border-top: 3px solid var(--border); }
+.wx-refresh {
+  background: none; border: 1px solid var(--border); border-radius: 7px;
+  padding: 4px 9px; font-size: 14px; cursor: pointer; color: var(--text-muted);
+  margin-left: auto; transition: all .15s; line-height: 1;
+}
+.wx-refresh:hover { border-color: var(--accent); color: var(--accent); }
+.wx-suggest { border-top: 1px solid var(--border); padding: 14px 20px; background: rgba(0,0,0,.015); }
+.wx-suggest-title { font-size: 13px; font-weight: 700; color: var(--text-secondary); margin-bottom: 10px; }
+.wx-prod-list { display: flex; flex-direction: column; gap: 6px; }
+.wx-prod-row {
+  display: grid; grid-template-columns: 1fr auto auto auto;
+  align-items: center; gap: 12px;
+  padding: 7px 10px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border); font-size: 13px;
+}
+@media (max-width: 600px) { .wx-prod-row { grid-template-columns: 1fr auto auto; } .wx-prod-extra { display: none; } }
+.wx-prod-name  { font-weight: 600; color: var(--text); }
+.wx-prod-stock { color: var(--text-muted); font-size: 12px; }
+.wx-prod-boost { font-weight: 800; font-size: 13px; color: #dc2626; background: rgba(239,68,68,.08); border-radius: 20px; padding: 2px 10px; }
+.wx-prod-extra { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.wx-setup {
+  display: flex; align-items: flex-start; gap: 14px;
+  background: var(--surface); border: 1px dashed var(--border);
+  border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;
+  font-size: 13px; color: var(--text-muted); line-height: 1.6;
+}
+.wx-setup code { background: var(--surface-alt); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 12px; }
+.wx-setup-icon { font-size: 26px; flex-shrink: 0; }
+.wx-error { border-color: rgba(239,68,68,.3); color: #dc2626; }

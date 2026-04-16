@@ -3535,3 +3535,156 @@ try:
 
 except Exception as _sched_err:
     print(f"[Cashpad] ⚠️ Scheduler non démarré : {_sched_err}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  MODULE MÉTÉO — Alerte Pic de Chaleur
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Sensibilité à la chaleur par mot-clé (catégorie ou nom produit)
+# Valeur = % de hausse consommation à 30°C
+_HEAT_SENSITIVITY: dict = {
+    "eau":        0.35, "water":     0.35, "minérale":  0.35,
+    "bière":      0.28, "biere":     0.28, "beer":      0.28,
+    "pils":       0.25, "lager":     0.25, "blonde":    0.22,
+    "rosé":       0.22, "rose":      0.22,
+    "soda":       0.20, "cola":      0.20, "limonade":  0.20,
+    "tonic":      0.18, "schweppes": 0.18, "agrume":    0.18,
+    "jus":        0.15, "juice":     0.15, "nectar":    0.15,
+    "cidre":      0.15,
+    "champagne":  0.12, "prosecco":  0.12, "crémant":   0.12,
+    "ice tea":    0.20, "ice-tea":   0.20,
+    "mojito":     0.18, "spritz":    0.15,
+}
+
+# Multiplicateur par niveau de chaleur (appliqué sur la sensibilité de base)
+_HEAT_MULTIPLIERS = {
+    "canicule":  1.50,   # ≥35°C  → ×1.5 sur la sensibilité
+    "chaud":     1.00,   # 30–34°C → base
+    "tiede":     0.45,   # 25–29°C → ×0.45
+}
+
+
+def _fetch_openweather(lat: str, lon: str, api_key: str) -> dict:
+    """Appelle OpenWeather Forecast 5 jours et retourne les données brutes."""
+    qs = urllib.parse.urlencode({
+        "lat": lat, "lon": lon, "appid": api_key,
+        "units": "metric", "lang": "fr", "cnt": 16,   # 16×3h = 2 jours
+    })
+    url = f"https://api.openweathermap.org/data/2.5/forecast?{qs}"
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+@app.get("/api/weather")
+def get_weather(refresh: bool = False, db: Session = Depends(get_db)):
+    api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
+    lat     = os.getenv("WEATHER_LAT", "41.6734").strip()   # Propriano, Corse (défaut)
+    lon     = os.getenv("WEATHER_LON", "8.9100").strip()
+
+    if not api_key:
+        return {"configured": False}
+
+    # ── Cache 1h ────────────────────────────────────────────────────────
+    if not refresh:
+        cached    = _get_setting(db, "weather_cache", "")
+        cache_ts  = _get_setting(db, "weather_cache_ts", "")
+        if cached and cache_ts:
+            try:
+                age = (datetime.utcnow() - datetime.fromisoformat(cache_ts)).total_seconds()
+                if age < 3600:
+                    return json.loads(cached)
+            except Exception:
+                pass
+
+    # ── Appel API ────────────────────────────────────────────────────────
+    try:
+        raw = _fetch_openweather(lat, lon, api_key)
+    except _urllib_err.HTTPError as e:
+        return {"configured": True, "error": f"OpenWeather HTTP {e.code} : {e.reason}"}
+    except Exception as e:
+        return {"configured": True, "error": str(e)}
+
+    city      = raw.get("city", {}).get("name", "")
+    country   = raw.get("city", {}).get("country", "")
+    forecasts = raw.get("list", [])
+    if not forecasts:
+        return {"configured": True, "error": "Aucune donnée météo disponible"}
+
+    # ── Températures ─────────────────────────────────────────────────────
+    current     = forecasts[0]
+    current_t   = round(current["main"]["temp"], 1)
+    current_desc= (current["weather"][0]["description"] if current.get("weather") else "").capitalize()
+    current_icon= current["weather"][0]["icon"] if current.get("weather") else "01d"
+
+    # Demain : créneaux 8→15 (24h→48h après maintenant, 3h chacun)
+    tomorrow    = forecasts[8:16] if len(forecasts) >= 16 else forecasts[4:8]
+    if not tomorrow:
+        tomorrow = forecasts[1:]
+
+    t_max  = round(max(s["main"].get("temp_max", s["main"]["temp"]) for s in tomorrow), 1)
+    t_min  = round(min(s["main"].get("temp_min", s["main"]["temp"]) for s in tomorrow), 1)
+    mid    = tomorrow[len(tomorrow)//2]
+    t_desc = (mid["weather"][0]["description"] if mid.get("weather") else "").capitalize()
+    t_icon = mid["weather"][0]["icon"] if mid.get("weather") else "01d"
+
+    # ── Niveau d'alerte ──────────────────────────────────────────────────
+    if t_max >= 35:
+        level, emoji, label, mult = "canicule", "🔥", f"Canicule prévue demain ({t_max:.0f}°C) — préparez-vous !", _HEAT_MULTIPLIERS["canicule"]
+    elif t_max >= 30:
+        level, emoji, label, mult = "chaud",    "☀️", f"Forte chaleur prévue demain ({t_max:.0f}°C)", _HEAT_MULTIPLIERS["chaud"]
+    elif t_max >= 25:
+        level, emoji, label, mult = "tiede",    "🌤️", f"Belle journée prévue demain ({t_max:.0f}°C)", _HEAT_MULTIPLIERS["tiede"]
+    else:
+        level, emoji, label, mult = "normal",   "⛅", f"Temps normal prévu demain ({t_max:.0f}°C)", 0.0
+
+    # ── Suggestions produits ──────────────────────────────────────────────
+    suggestions = []
+    if mult > 0:
+        products = db.query(Product).filter(Product.stock > 0).all()
+        for p in products:
+            haystack = f"{(p.category or '').lower()} {(p.name or '').lower()}"
+            base_boost = max(
+                (pct for kw, pct in _HEAT_SENSITIVITY.items() if kw in haystack),
+                default=0.0,
+            )
+            if base_boost <= 0:
+                continue
+            effective = round(base_boost * mult * 100)   # en %
+            if effective < 8:
+                continue
+            extra = max(1, round(p.stock * base_boost * mult))
+            suggestions.append({
+                "product_id":   p.id,
+                "product_name": p.name,
+                "category":     p.category or "",
+                "current_stock": round(p.stock, 1),
+                "unit":          p.unit or "u",
+                "boost_pct":     effective,
+                "extra_units":   extra,
+            })
+        suggestions.sort(key=lambda x: -x["boost_pct"])
+        suggestions = suggestions[:10]
+
+    result = {
+        "configured":    True,
+        "city":          f"{city}, {country}" if city else "Corse",
+        "current_temp":  current_t,
+        "current_desc":  current_desc,
+        "current_icon":  current_icon,
+        "tomorrow_max":  t_max,
+        "tomorrow_min":  t_min,
+        "tomorrow_desc": t_desc,
+        "tomorrow_icon": t_icon,
+        "alert_level":   level,
+        "alert_emoji":   emoji,
+        "alert_label":   label,
+        "suggestions":   suggestions,
+    }
+
+    # Mise en cache
+    _set_setting(db, "weather_cache",    json.dumps(result))
+    _set_setting(db, "weather_cache_ts", datetime.utcnow().isoformat())
+    db.commit()
+    return result

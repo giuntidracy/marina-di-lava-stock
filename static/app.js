@@ -1158,7 +1158,14 @@ async function deleteCocktail(id, name) {
 // VIEW: ALERTS
 // ══════════════════════════════════════════════════════════
 async function renderAlerts(el) {
-  el.innerHTML = `<div class="section-header"><span class="section-title">Alertes actives</span></div><div id="alerts-body">Chargement…</div>`;
+  el.innerHTML = `
+    <div class="section-header"><span class="section-title">Alertes actives</span></div>
+    <div id="weather-widget-area"></div>
+    <div id="alerts-body">Chargement…</div>`;
+
+  // Charge météo en parallèle (non bloquant)
+  loadWeatherWidget();
+
   try {
     const [alerts, predictions] = await Promise.all([
       api("/api/alertes"),
@@ -1229,6 +1236,88 @@ async function renderAlerts(el) {
     body.innerHTML = html || `<div class="info-box" style="color:#27AE60;font-weight:600">✅ Aucune alerte active.</div>`;
   } catch (e) {
     document.getElementById("alerts-body").innerHTML = `<div class="info-box">Erreur : ${esc(e.message)}</div>`;
+  }
+}
+
+// ── Widget Météo ────────────────────────────────────────────────────────
+async function loadWeatherWidget(refresh = false) {
+  const el = document.getElementById("weather-widget-area");
+  if (!el) return;
+
+  try {
+    const w = await api(`/api/weather${refresh ? "?refresh=true" : ""}`);
+
+    if (!w.configured) {
+      el.innerHTML = `<div class="wx-setup">
+        <span class="wx-setup-icon">🌡️</span>
+        <div>
+          <strong>Alerte Pic de Chaleur non configurée</strong><br>
+          <span>Ajoutez <code>OPENWEATHER_API_KEY</code> dans Railway pour recevoir des alertes météo automatiques.
+          Clé gratuite sur <a href="https://openweathermap.org/api" target="_blank" style="color:var(--accent)">openweathermap.org</a> (1 000 appels/jour offerts).</span>
+        </div>
+      </div>`;
+      return;
+    }
+
+    if (w.error) {
+      el.innerHTML = `<div class="wx-setup wx-error">⚠️ Météo : ${esc(w.error)}</div>`;
+      return;
+    }
+
+    // Niveau de couleur
+    const levelCls = {
+      canicule: "wx-canicule", chaud: "wx-chaud",
+      tiede: "wx-tiede", normal: "wx-normal"
+    }[w.alert_level] || "wx-normal";
+
+    const showAlert = ["canicule","chaud","tiede"].includes(w.alert_level);
+
+    // Suggestions produits
+    let suggestHtml = "";
+    if (showAlert && w.suggestions.length) {
+      const rows = w.suggestions.map(s => `
+        <div class="wx-prod-row">
+          <span class="wx-prod-name">${esc(s.product_name)}</span>
+          <span class="wx-prod-stock">Stock : ${s.current_stock} ${s.unit}</span>
+          <span class="wx-prod-boost">+${s.boost_pct}%</span>
+          <span class="wx-prod-extra">≈ +${s.extra_units} ${s.unit}</span>
+        </div>`).join("");
+      const intro = w.alert_level === "canicule"
+        ? `🔥 Canicule : prévoyez significativement plus sur ces produits`
+        : `☀️ Forte chaleur : légère hausse attendue`;
+      suggestHtml = `
+        <div class="wx-suggest">
+          <div class="wx-suggest-title">${intro}</div>
+          <div class="wx-prod-list">${rows}</div>
+        </div>`;
+    }
+
+    el.innerHTML = `
+      <div class="wx-card ${levelCls}">
+        <div class="wx-main">
+          <div class="wx-today">
+            <img src="https://openweathermap.org/img/wn/${w.current_icon}.png" class="wx-icon" alt=""/>
+            <div>
+              <div class="wx-temp-big">${w.current_temp}°C</div>
+              <div class="wx-desc">${esc(w.current_desc)} · ${esc(w.city)}</div>
+            </div>
+          </div>
+          <div class="wx-divider"></div>
+          <div class="wx-tomorrow">
+            <div class="wx-tomorrow-label">Demain</div>
+            <img src="https://openweathermap.org/img/wn/${w.tomorrow_icon}.png" class="wx-icon-sm" alt=""/>
+            <div class="wx-tomorrow-temps"><strong>${w.tomorrow_max}°C</strong> <span>${w.tomorrow_min}°C</span></div>
+            <div class="wx-desc">${esc(w.tomorrow_desc)}</div>
+          </div>
+          ${showAlert ? `<div class="wx-alert-pill ${levelCls}-pill">${w.alert_emoji} ${esc(w.alert_label)}</div>` : ""}
+          <button class="wx-refresh" onclick="loadWeatherWidget(true)" title="Actualiser">↺</button>
+        </div>
+        ${suggestHtml}
+      </div>`;
+
+  } catch(e) {
+    const el2 = document.getElementById("weather-widget-area");
+    if (el2) el2.innerHTML = "";
   }
 }
 
