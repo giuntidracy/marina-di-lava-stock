@@ -305,7 +305,7 @@ def auth_service():
 
 @app.post("/api/auth")
 def auth_pin(body: PinIn, request: Request):
-    """Connexion gérant — vérifie PIN avec anti-brute-force."""
+    """Connexion direction — vérifie PIN avec anti-brute-force. Supporte plusieurs utilisateurs."""
     ip = request.client.host if request.client else "unknown"
     failure = _pin_failures.get(ip, {})
     locked_until = failure.get("locked_until")
@@ -313,12 +313,28 @@ def auth_pin(body: PinIn, request: Request):
         secs = int((locked_until - datetime.utcnow()).total_seconds())
         raise HTTPException(429, f"Trop de tentatives. Réessayez dans {secs}s")
 
-    manager_pin = os.environ.get("MANAGER_PIN", "1234")
-    if body.pin == manager_pin:
+    # Utilisateurs direction : PIN → profil
+    direction_users = {
+        "0034": {"name": "J-Marc", "photo": "/static/avatars/jmarc.svg"},
+        "1143": {"name": "Lisandru", "photo": "/static/avatars/lisandru.svg"},
+    }
+    # Fallback : ancien MANAGER_PIN (rétrocompatible)
+    legacy_pin = os.environ.get("MANAGER_PIN", "")
+    if legacy_pin and legacy_pin not in direction_users:
+        direction_users[legacy_pin] = {"name": "Direction", "photo": ""}
+
+    user = direction_users.get(body.pin)
+    if user:
         _pin_failures.pop(ip, None)
         token = secrets.token_urlsafe(32)
-        _sessions[token] = {"role": "manager", "expires": datetime.utcnow() + timedelta(minutes=30)}
-        return {"ok": True, "role": "manager", "token": token}
+        _sessions[token] = {
+            "role": "manager",
+            "user_name": user["name"],
+            "user_photo": user["photo"],
+            "expires": datetime.utcnow() + timedelta(minutes=30),
+        }
+        return {"ok": True, "role": "manager", "token": token,
+                "user_name": user["name"], "user_photo": user["photo"]}
 
     count = failure.get("count", 0) + 1
     if count >= 3:
@@ -328,6 +344,21 @@ def auth_pin(body: PinIn, request: Request):
         _pin_failures[ip] = {"count": count}
         remaining = 3 - count
         raise HTTPException(401, f"Code PIN incorrect — {remaining} tentative(s) restante(s)")
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    """Retourne le profil de l'utilisateur connecté."""
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    session = _sessions.get(token)
+    if not session:
+        raise HTTPException(401, detail="Non authentifié")
+    return {
+        "role": session.get("role", "service"),
+        "user_name": session.get("user_name", ""),
+        "user_photo": session.get("user_photo", ""),
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════

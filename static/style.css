@@ -288,9 +288,14 @@ body {
   flex-shrink: 0;
 }
 .sidebar-role-badge {
-  padding: 6px 12px 4px; font-size: 11px;
+  padding: 6px 12px 4px; font-size: 12px;
   color: rgba(201,168,76,.95); font-weight: 700;
   white-space: nowrap; transition: opacity .15s;
+  display: flex; align-items: center; gap: 8px;
+}
+.sidebar-avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 2px solid rgba(201,168,76,.6); object-fit: cover;
 }
 .sidebar.collapsed .sidebar-role-badge { opacity: 0; height: 0; overflow: hidden; padding: 0; }
 .sidebar-logout {
@@ -2308,6 +2313,7 @@ details[open] .history-details summary::before { content: '▼'; }
 }
 .flash-hist-header:hover { background: var(--surface-hover); }
 
+.flash-hist-user { color: var(--accent); font-weight: 600; }
 .flash-hist-badges { display: flex; gap: 5px; flex-wrap: wrap; }
 .flash-hist-badge {
   font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px;
