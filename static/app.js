@@ -4239,11 +4239,17 @@ function flashShowResults(data) {
     const diffColor = diff == null ? "" : diff < 0 ? "color:#e74c3c;font-weight:700" : diff > 0 ? "color:#f39c12;font-weight:700" : "color:#27ae60";
     const confDot = `<span class="flash-conf-dot" style="background:${confColors[item.confidence||'medium']};display:inline-block;vertical-align:middle;margin-left:6px" title="Confiance: ${confLabels[item.confidence||'medium']}"></span>`;
 
-    html += `<tr>
+    html += `<tr id="flash-row-${i}">
       <td>
         <strong>${esc(item.product_name)}</strong>${confDot}
         ${item.category ? `<br><small style="color:var(--text-muted)">${esc(item.category)}</small>` : ""}
-        ${!matched ? `<br><small style="color:#f39c12">⚠ Non reconnu</small>` : ""}
+        ${!matched ? `<div class="flash-unmatched-actions" id="flash-unmatched-${i}">
+          <small style="color:#f39c12">⚠ Non reconnu</small>
+          <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-outline" onclick="flashOpenAssociate(${i})">🔗 Associer</button>
+            <button class="btn btn-sm btn-primary" onclick="flashOpenCreate(${i})">➕ Créer</button>
+          </div>
+        </div>` : ""}
         ${item.notes ? `<br><small style="color:var(--text-muted);font-style:italic">📝 ${esc(item.notes)}</small>` : ""}
       </td>
       <td>${theo}</td>
@@ -4460,6 +4466,207 @@ async function flashRenderHistory() {
 function flashToggleDetail(id) {
   const el = document.getElementById(`flash-hist-detail-${id}`);
   if (el) el.classList.toggle("hidden");
+}
+
+// ── Associer un produit non reconnu à un produit existant ─────────────
+async function flashOpenAssociate(index) {
+  const item = flashResults.items[index];
+  if (!item) return;
+
+  // Charger la liste des produits si pas déjà fait
+  if (!allProducts.length) {
+    try { allProducts = await api("/api/products"); } catch(e) { showToast("Erreur chargement produits"); return; }
+  }
+
+  const searchName = esc(item.product_name);
+  let optionsHtml = allProducts.map(p =>
+    `<div class="flash-assoc-option" onclick="flashDoAssociate(${index}, ${p.id}, '${esc(p.name).replace(/'/g,"\\'")}', ${p.stock || 0}, '${esc(p.category).replace(/'/g,"\\'")}')">
+      <strong>${esc(p.name)}</strong>
+      <small style="color:var(--text-muted)">${esc(p.category)} — stock: ${p.stock || 0}</small>
+    </div>`
+  ).join("");
+
+  openModal(`
+    <h3 style="margin-bottom:12px">🔗 Associer "${searchName}"</h3>
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">Sélectionnez le produit correspondant dans votre base :</p>
+    <input type="text" id="flash-assoc-search" placeholder="Rechercher…" oninput="flashFilterAssoc()" style="margin-bottom:12px;width:100%"/>
+    <div id="flash-assoc-list" class="flash-assoc-list">
+      ${optionsHtml}
+    </div>
+  `);
+}
+
+function flashFilterAssoc() {
+  const q = (document.getElementById("flash-assoc-search")?.value || "").toLowerCase();
+  document.querySelectorAll(".flash-assoc-option").forEach(el => {
+    const name = el.textContent.toLowerCase();
+    el.style.display = name.includes(q) ? "" : "none";
+  });
+}
+
+function flashDoAssociate(index, productId, productName, stock, category) {
+  if (!flashResults || !flashResults.items[index]) return;
+  const item = flashResults.items[index];
+  item.product_id = productId;
+  item.current_stock = stock;
+  item.category = category;
+
+  // Mettre à jour la ligne dans le tableau
+  const actionsDiv = document.getElementById(`flash-unmatched-${index}`);
+  if (actionsDiv) {
+    actionsDiv.innerHTML = `<small style="color:#27ae60">✓ Associé à <strong>${productName}</strong></small>`;
+  }
+
+  // Recalculer l'écart
+  const diff = item.quantity - stock;
+  const diffCell = document.getElementById(`flash-diff-${index}`);
+  if (diffCell) {
+    diffCell.textContent = diff > 0 ? `+${diff}` : `${diff}`;
+    diffCell.style.color = diff < 0 ? "#e74c3c" : diff > 0 ? "#f39c12" : "#27ae60";
+    diffCell.style.fontWeight = diff !== 0 ? "700" : "";
+  }
+
+  // Mettre à jour le stock théorique affiché
+  const row = document.getElementById(`flash-row-${index}`);
+  if (row) {
+    const cells = row.querySelectorAll("td");
+    if (cells[1]) cells[1].textContent = stock;
+  }
+
+  closeModal();
+  showToast(`${item.product_name} → ${productName}`);
+}
+
+// ── Créer un nouveau produit depuis la détection IA ───────────────────
+function flashOpenCreate(index) {
+  const item = flashResults.items[index];
+  if (!item) return;
+
+  const categories = ["Bières","Vins Blancs","Vins Rosés","Vins Rouges","Champagnes","Anisés","Apéritifs","Rhums","Gins","Whiskies","Vodkas","Cachaça","Tequilas","Digestifs","Eaux","Sodas","Cocktails SA","Autres"];
+
+  // Essayer de deviner la catégorie depuis la détection IA
+  const aiCat = (item.category || item.product_name || "").toLowerCase();
+  let guessedCat = "Autres";
+  if (aiCat.includes("eau") || aiCat.includes("water") || aiCat.includes("mineral")) guessedCat = "Eaux";
+  else if (aiCat.includes("bière") || aiCat.includes("beer") || aiCat.includes("pietra") || aiCat.includes("ipa")) guessedCat = "Bières";
+  else if (aiCat.includes("vin") || aiCat.includes("wine")) guessedCat = "Vins Rouges";
+  else if (aiCat.includes("coca") || aiCat.includes("soda") || aiCat.includes("schweppes") || aiCat.includes("orangina") || aiCat.includes("pago")) guessedCat = "Sodas";
+  else if (aiCat.includes("ricard") || aiCat.includes("pastis") || aiCat.includes("anis")) guessedCat = "Anisés";
+  else if (aiCat.includes("rhum") || aiCat.includes("rum")) guessedCat = "Rhums";
+  else if (aiCat.includes("gin")) guessedCat = "Gins";
+  else if (aiCat.includes("whisk") || aiCat.includes("bourbon")) guessedCat = "Whiskies";
+  else if (aiCat.includes("vodka")) guessedCat = "Vodkas";
+  else if (aiCat.includes("champagne") || aiCat.includes("prosecco")) guessedCat = "Champagnes";
+
+  openModal(`
+    <h3 style="margin-bottom:12px">➕ Créer un produit</h3>
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px">Pré-rempli par l'IA. Ajustez si besoin puis validez.</p>
+    <form id="flash-create-form" onsubmit="flashDoCreate(event, ${index})">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Nom *</label>
+          <input type="text" name="name" required value="${esc(item.product_name)}"/>
+        </div>
+        <div class="form-group">
+          <label>Catégorie *</label>
+          <select name="category" required>
+            ${categories.map(c => `<option ${c===guessedCat?"selected":""}>${c}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Unité</label>
+          <select name="unit">
+            ${["Bouteille","Fût","Carton 6","Carton 12","Carton 24","Bidon"].map(u => `<option>${u}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Volume (cl)</label>
+          <input type="number" name="volume_cl" value="75" step="1"/>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Stock initial</label>
+          <input type="number" name="stock" value="${item.quantity}" step="1" min="0"/>
+        </div>
+        <div class="form-group">
+          <label>Seuil d'alerte</label>
+          <input type="number" name="alert_threshold" value="2" step="1" min="0"/>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Prix achat HT (€)</label>
+          <input type="number" name="purchase_price" step="0.01" placeholder="optionnel"/>
+        </div>
+        <div class="form-group">
+          <label>Prix vente TTC (€)</label>
+          <input type="number" name="sale_price_ttc" step="0.01" placeholder="optionnel"/>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary" style="margin-top:12px;width:100%">✅ Créer le produit</button>
+    </form>
+  `);
+}
+
+async function flashDoCreate(event, index) {
+  event.preventDefault();
+  const form = document.getElementById("flash-create-form");
+  const fd = new FormData(form);
+
+  const body = {
+    name: fd.get("name"),
+    category: fd.get("category"),
+    unit: fd.get("unit"),
+    volume_cl: parseFloat(fd.get("volume_cl")) || 75,
+    stock: parseFloat(fd.get("stock")) || 0,
+    alert_threshold: parseFloat(fd.get("alert_threshold")) || 2,
+    purchase_price: fd.get("purchase_price") ? parseFloat(fd.get("purchase_price")) : null,
+    sale_price_ttc: fd.get("sale_price_ttc") ? parseFloat(fd.get("sale_price_ttc")) : null,
+  };
+
+  try {
+    const product = await api("/api/products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    // Mettre à jour le flash result avec le nouveau produit
+    const item = flashResults.items[index];
+    item.product_id = product.id;
+    item.current_stock = product.stock;
+    item.category = product.category;
+
+    const actionsDiv = document.getElementById(`flash-unmatched-${index}`);
+    if (actionsDiv) {
+      actionsDiv.innerHTML = `<small style="color:#27ae60">✓ Produit créé : <strong>${esc(product.name)}</strong></small>`;
+    }
+
+    const row = document.getElementById(`flash-row-${index}`);
+    if (row) {
+      const cells = row.querySelectorAll("td");
+      if (cells[1]) cells[1].textContent = product.stock;
+    }
+
+    // Recalculer l'écart
+    const diff = item.quantity - product.stock;
+    const diffCell = document.getElementById(`flash-diff-${index}`);
+    if (diffCell) {
+      diffCell.textContent = diff > 0 ? `+${diff}` : `${diff}`;
+      diffCell.style.color = diff < 0 ? "#e74c3c" : diff > 0 ? "#f39c12" : "#27ae60";
+    }
+
+    closeModal();
+    showToast(`Produit "${product.name}" créé !`);
+
+    // Rafraîchir allProducts
+    allProducts = await api("/api/products");
+  } catch(e) {
+    showToast("Erreur : " + e.message);
+  }
 }
 
 
