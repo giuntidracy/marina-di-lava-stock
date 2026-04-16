@@ -551,49 +551,40 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
     reply_to = os.getenv("FROM_EMAIL", os.getenv("SMTP_USER", ""))
     subject  = f"Bon de commande {o.reference} — Marina di Lava"
 
-    # ── Construction HTML ──────────────────────────────────────
+    # ── Construction HTML (sans prix — le fournisseur n'en a pas besoin) ──────
     items_rows = ""
-    total_ht = 0.0
     for it in o.items:
-        line_total = (it.qty_ordered or 0) * (it.unit_price_ht or 0)
-        total_ht += line_total
-        prix_str  = f"{it.unit_price_ht:.4f} €" if it.unit_price_ht else "—"
-        total_str = f"{line_total:.2f} €"         if it.unit_price_ht else "—"
         items_rows += f"""
         <tr>
-          <td style="padding:8px 12px;border-bottom:1px solid #eee">{it.product_name}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">{int(it.qty_ordered)}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">{prix_str}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">{total_str}</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #eee;font-size:14px">{it.product_name}</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:center;font-size:16px;font-weight:700;color:#1a1a2e">{int(it.qty_ordered)}</td>
         </tr>"""
 
-    notes_block = f'<p style="margin-top:16px;font-style:italic;color:#666">{o.notes}</p>' if o.notes else ""
-    total_block = f'<p style="text-align:right;font-weight:bold;font-size:15px;margin-top:8px">Total estimé HT : {total_ht:.2f} €</p>' if total_ht > 0 else ""
+    notes_block = f'<p style="margin-top:16px;padding:12px 14px;background:#fffbeb;border-left:3px solid #C9A84C;font-style:italic;color:#666">{o.notes}</p>' if o.notes else ""
 
     html_body = f"""
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#333">
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#333">
       <div style="background:linear-gradient(135deg,#1a1a2e,#2d1f0e);padding:24px 28px;border-radius:10px 10px 0 0">
         <h1 style="color:#C9A84C;margin:0;font-size:22px;letter-spacing:.05em">Marina di Lava</h1>
         <p style="color:rgba(201,168,76,.7);margin:4px 0 0;font-size:13px">Bon de Commande</p>
       </div>
-      <div style="background:#fff;padding:24px 28px;border:1px solid #e5e7eb;border-top:none">
-        <p><strong>Référence :</strong> {o.reference}</p>
-        <p><strong>Fournisseur :</strong> {supplier.name if supplier else ''}</p>
-        <p><strong>Date :</strong> {to_local(datetime.utcnow()).strftime('%d/%m/%Y')}</p>
+      <div style="background:#fff;padding:24px 28px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 10px 10px">
+        <table style="width:100%;margin-bottom:20px">
+          <tr><td style="color:#6b7280;font-size:12px;padding-bottom:2px">Référence</td><td style="font-weight:700;text-align:right">{o.reference}</td></tr>
+          <tr><td style="color:#6b7280;font-size:12px;padding-bottom:2px">Fournisseur</td><td style="font-weight:700;text-align:right">{supplier.name if supplier else ''}</td></tr>
+          <tr><td style="color:#6b7280;font-size:12px">Date</td><td style="font-weight:700;text-align:right">{to_local(datetime.utcnow()).strftime('%d/%m/%Y')}</td></tr>
+        </table>
         {notes_block}
-        <table style="width:100%;border-collapse:collapse;margin-top:20px">
+        <table style="width:100%;border-collapse:collapse;margin-top:16px">
           <thead><tr style="background:#f9fafb">
-            <th style="padding:10px 12px;text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Produit</th>
-            <th style="padding:10px 12px;text-align:center;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Qté</th>
-            <th style="padding:10px 12px;text-align:right;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Prix unit. HT</th>
-            <th style="padding:10px 12px;text-align:right;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;border-bottom:2px solid #e5e7eb">Total HT</th>
+            <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;border-bottom:2px solid #e5e7eb">Produit</th>
+            <th style="padding:10px 12px;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;border-bottom:2px solid #e5e7eb">Quantité</th>
           </tr></thead>
           <tbody>{items_rows}</tbody>
         </table>
-        {total_block}
-        <p style="margin-top:28px;font-size:12px;color:#9ca3af">
-          Bon de commande généré automatiquement — Marina di Lava Gestion Stock.
-          {f'Répondre à : {reply_to}' if reply_to else ''}
+        <p style="margin-top:24px;font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px">
+          Bon de commande généré par le système de gestion Marina di Lava.
+          {f'<br>Répondre à : <a href="mailto:{reply_to}" style="color:#C9A84C">{reply_to}</a>' if reply_to else ''}
         </p>
       </div>
     </div>"""
