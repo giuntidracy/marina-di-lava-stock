@@ -4444,17 +4444,24 @@ async function flashRenderHistory() {
           </div>
           <div class="flash-hist-detail hidden" id="flash-hist-detail-${ctrl.id}">
             <table class="data-table" style="margin:8px 0;font-size:13px">
-              <thead><tr><th>Produit</th><th>Théo.</th><th>Compté</th><th>Écart</th><th>Corrigé</th></tr></thead>
+              <thead><tr><th>Produit</th><th>Théo.</th><th>Compté</th><th>Écart</th><th>Action</th></tr></thead>
               <tbody>
                 ${ctrl.items.map(it => {
                   const dc = it.diff < 0 ? "color:#e74c3c;font-weight:700" : it.diff > 0 ? "color:#f39c12;font-weight:700" : "color:#27ae60";
                   const ds = it.diff > 0 ? `+${it.diff}` : `${it.diff}`;
+                  const hasEcart = Math.abs(it.diff) > 0.1 && it.product_id;
                   return `<tr>
                     <td>${esc(it.product_name)}</td>
                     <td>${it.theoretical}</td>
                     <td>${it.actual}</td>
                     <td style="${dc}">${ds}</td>
-                    <td>${it.corrected ? `<span style="color:#27ae60">✓ ${it.corrected_at||""}</span>` : "—"}</td>
+                    <td id="flash-hist-action-${ctrl.id}-${it.product_id}">
+                      ${it.corrected
+                        ? `<span style="color:#27ae60;font-size:12px">✓ Corrigé ${it.corrected_at||""}</span>`
+                        : hasEcart
+                          ? `<button class="btn btn-sm btn-primary" style="font-size:11px" onclick="flashCorrectFromHistory(${ctrl.id}, ${it.product_id})">Corriger</button>`
+                          : `<span style="color:#27ae60;font-size:12px">✓ OK</span>`}
+                    </td>
                   </tr>`;
                 }).join("")}
               </tbody>
@@ -4472,6 +4479,20 @@ async function flashRenderHistory() {
 function flashToggleDetail(id) {
   const el = document.getElementById(`flash-hist-detail-${id}`);
   if (el) el.classList.toggle("hidden");
+}
+
+async function flashCorrectFromHistory(controlId, productId) {
+  const cell = document.getElementById(`flash-hist-action-${controlId}-${productId}`);
+  if (!cell) return;
+  cell.innerHTML = `<span style="color:var(--text-muted)">…</span>`;
+
+  try {
+    const res = await api(`/api/inventory/flash-correct/${controlId}/${productId}`, { method: "POST" });
+    cell.innerHTML = `<span style="color:#27ae60;font-size:12px">✓ Corrigé (${res.old_stock} → ${res.new_stock})</span>`;
+    showToast(`${res.product_name} : stock corrigé`);
+  } catch(e) {
+    cell.innerHTML = `<span style="color:#e74c3c;font-size:12px">${esc(e.message)}</span>`;
+  }
 }
 
 // ── Associer un produit non reconnu à un produit existant ─────────────
