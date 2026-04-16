@@ -4243,13 +4243,19 @@ function flashShowResults(data) {
       <td>
         <strong>${esc(item.product_name)}</strong>${confDot}
         ${item.category ? `<br><small style="color:var(--text-muted)">${esc(item.category)}</small>` : ""}
-        ${!matched ? `<div class="flash-unmatched-actions" id="flash-unmatched-${i}">
+        <div id="flash-unmatched-${i}">
+        ${!matched ? `
           <small style="color:#f39c12">⚠ Non reconnu</small>
           <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
             <button class="btn btn-sm btn-outline" onclick="flashOpenAssociate(${i})">🔗 Associer</button>
             <button class="btn btn-sm btn-primary" onclick="flashOpenCreate(${i})">➕ Créer</button>
           </div>
-        </div>` : ""}
+        ` : `
+          <div style="margin-top:4px">
+            <button class="btn btn-sm btn-outline" style="font-size:11px;padding:2px 8px" onclick="flashOpenAssociate(${i})">✏️ Modifier</button>
+          </div>
+        `}
+        </div>
         ${item.notes ? `<br><small style="color:var(--text-muted);font-style:italic">📝 ${esc(item.notes)}</small>` : ""}
       </td>
       <td>${theo}</td>
