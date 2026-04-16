@@ -4475,39 +4475,74 @@ function flashToggleDetail(id) {
 }
 
 // ── Associer un produit non reconnu à un produit existant ─────────────
+let _flashAssocIndex = null;
+let _flashAssocCat = "all";
+
 async function flashOpenAssociate(index) {
   const item = flashResults.items[index];
   if (!item) return;
+  _flashAssocIndex = index;
+  _flashAssocCat = "all";
 
-  // Charger la liste des produits si pas déjà fait
   if (!allProducts.length) {
     try { allProducts = await api("/api/products"); } catch(e) { showToast("Erreur chargement produits"); return; }
   }
 
-  const searchName = esc(item.product_name);
-  let optionsHtml = allProducts.map(p =>
-    `<div class="flash-assoc-option" onclick="flashDoAssociate(${index}, ${p.id}, '${esc(p.name).replace(/'/g,"\\'")}', ${p.stock || 0}, '${esc(p.category).replace(/'/g,"\\'")}')">
-      <strong>${esc(p.name)}</strong>
-      <small style="color:var(--text-muted)">${esc(p.category)} — stock: ${p.stock || 0}</small>
-    </div>`
-  ).join("");
+  // Extraire les catégories uniques
+  const cats = [...new Set(allProducts.map(p => p.category || "Autres"))].sort();
 
+  const searchName = esc(item.product_name);
   openModal(`
     <h3 style="margin-bottom:12px">🔗 Associer "${searchName}"</h3>
-    <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">Sélectionnez le produit correspondant dans votre base :</p>
-    <input type="text" id="flash-assoc-search" placeholder="Rechercher…" oninput="flashFilterAssoc()" style="margin-bottom:12px;width:100%"/>
-    <div id="flash-assoc-list" class="flash-assoc-list">
-      ${optionsHtml}
+    <input type="text" id="flash-assoc-search" placeholder="🔍 Tapez pour rechercher…"
+           oninput="flashFilterAssoc()" autofocus
+           style="margin-bottom:10px;width:100%;font-size:16px;padding:10px 12px"/>
+    <div class="flash-assoc-cats" id="flash-assoc-cats">
+      <button class="flash-cat-btn active" onclick="flashSetAssocCat('all')">Tous</button>
+      ${cats.map(c => `<button class="flash-cat-btn" onclick="flashSetAssocCat('${esc(c).replace(/'/g,"\\'")}')">${esc(c)}</button>`).join("")}
     </div>
+    <div id="flash-assoc-list" class="flash-assoc-list"></div>
   `);
+  flashFilterAssoc();
+}
+
+function flashSetAssocCat(cat) {
+  _flashAssocCat = cat;
+  document.querySelectorAll(".flash-cat-btn").forEach(b => b.classList.toggle("active", b.textContent === (cat === "all" ? "Tous" : cat)));
+  flashFilterAssoc();
+}
+
+function _flashNormalize(s) {
+  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/saint/g, "st");
 }
 
 function flashFilterAssoc() {
-  const q = (document.getElementById("flash-assoc-search")?.value || "").toLowerCase();
-  document.querySelectorAll(".flash-assoc-option").forEach(el => {
-    const name = el.textContent.toLowerCase();
-    el.style.display = name.includes(q) ? "" : "none";
+  const q = _flashNormalize(document.getElementById("flash-assoc-search")?.value || "");
+  const container = document.getElementById("flash-assoc-list");
+  if (!container) return;
+
+  const filtered = allProducts.filter(p => {
+    if (_flashAssocCat !== "all" && p.category !== _flashAssocCat) return false;
+    if (!q) return true;
+    const name = _flashNormalize(p.name + " " + (p.category || ""));
+    return name.includes(q);
   });
+
+  if (filtered.length === 0) {
+    container.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted)">Aucun produit trouvé</div>`;
+    return;
+  }
+
+  const idx = _flashAssocIndex;
+  container.innerHTML = filtered.map(p =>
+    `<div class="flash-assoc-option" onclick="flashDoAssociate(${idx}, ${p.id}, '${esc(p.name).replace(/'/g,"\\'")}', ${p.stock || 0}, '${esc(p.category).replace(/'/g,"\\'")}')">
+      <div>
+        <strong>${esc(p.name)}</strong><br>
+        <small style="color:var(--text-muted)">${esc(p.category)}</small>
+      </div>
+      <span style="color:var(--text-muted);font-size:13px">stock: ${p.stock || 0}</span>
+    </div>`
+  ).join("");
 }
 
 function flashDoAssociate(index, productId, productName, stock, category) {

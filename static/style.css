@@ -2489,8 +2489,34 @@ details[open] .history-details summary::before { content: '▼'; }
 }
 
 /* Associate modal */
+.flash-assoc-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.flash-cat-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+}
+.flash-cat-btn.active {
+  background: var(--accent);
+  color: var(--primary);
+  border-color: var(--accent);
+}
+.flash-cat-btn:hover:not(.active) {
+  background: var(--surface-alt);
+}
+
 .flash-assoc-list {
-  max-height: 350px;
+  max-height: 300px;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
