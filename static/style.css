@@ -1887,27 +1887,27 @@ details[open] .history-details summary::before { content: '▼'; }
    TABLEAU DE BORD
 ══════════════════════════════════════════════════════════════ */
 .db-wrap {
-  padding: 20px 24px 40px;
-  max-width: 960px;
-  margin: 0 auto;
+  padding: 16px 20px 24px;
 }
 
 .db-greeting {
   background: linear-gradient(135deg, var(--primary) 0%, #1a4a2e 100%);
-  border-radius: 16px;
-  padding: 28px 32px;
-  margin-bottom: 24px;
+  border-radius: 14px;
+  padding: 18px 28px;
+  margin-bottom: 14px;
   box-shadow: 0 4px 24px rgba(0,0,0,.18);
+  display: flex;
+  align-items: center;
+  gap: 20px;
 }
 .db-greeting-hello {
-  font-size: 26px;
+  font-size: 22px;
   font-weight: 700;
   color: var(--accent);
-  margin-bottom: 4px;
 }
 .db-greeting-date {
-  font-size: 14px;
-  color: rgba(255,255,255,.7);
+  font-size: 13px;
+  color: rgba(255,255,255,.65);
   text-transform: capitalize;
 }
 
@@ -1917,7 +1917,7 @@ details[open] .history-details summary::before { content: '▼'; }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
   overflow: hidden;
   cursor: pointer;
   transition: box-shadow .15s;
@@ -1925,15 +1925,15 @@ details[open] .history-details summary::before { content: '▼'; }
 .db-kpi-row:hover { box-shadow: 0 4px 18px rgba(0,0,0,.08); }
 .db-kpi {
   flex: 1;
-  padding: 18px 20px;
+  padding: 14px 18px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
-.db-kpi-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--text-muted); }
-.db-kpi-val   { font-size: 28px; font-weight: 800; color: var(--text); line-height: 1.1; }
-.db-kpi-sub   { font-size: 12px; color: var(--text-muted); }
-.db-kpi-sep   { width: 1px; background: var(--border); margin: 14px 0; flex-shrink: 0; }
+.db-kpi-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--text-muted); }
+.db-kpi-val   { font-size: 24px; font-weight: 800; color: var(--text); line-height: 1.15; }
+.db-kpi-sub   { font-size: 11px; color: var(--text-muted); }
+.db-kpi-sep   { width: 1px; background: var(--border); margin: 10px 0; flex-shrink: 0; }
 @media (max-width: 680px) {
   .db-kpi-row { flex-wrap: wrap; }
   .db-kpi { flex: 1 1 45%; }
@@ -1942,24 +1942,27 @@ details[open] .history-details summary::before { content: '▼'; }
 
 .db-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 18px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+@media (max-width: 1100px) {
+  .db-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 680px) {
   .db-grid { grid-template-columns: 1fr; }
-  .db-wrap { padding: 14px 14px 32px; }
-  .db-greeting { padding: 20px 20px; }
-  .db-greeting-hello { font-size: 20px; }
+  .db-wrap { padding: 12px 12px 20px; }
+  .db-greeting { padding: 16px 18px; flex-direction: column; align-items: flex-start; gap: 4px; }
+  .db-greeting-hello { font-size: 18px; }
 }
 
 .db-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 20px;
+  padding: 16px 18px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 .db-card-full {
   grid-column: 1 / -1;
