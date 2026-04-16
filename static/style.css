@@ -2106,3 +2106,17 @@ details[open] .history-details summary::before { content: '▼'; }
   margin: 0;
   padding: 8px 0;
 }
+.db-shortcut-btn {
+  margin-top: 6px;
+  display: inline-block;
+  background: var(--accent);
+  color: #1a1208;
+  border: none;
+  border-radius: 20px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.db-shortcut-btn:hover { opacity: .85; }

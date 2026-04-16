@@ -4105,7 +4105,9 @@ async function renderDashboard(el) {
   const events = data.events_upcoming || [];
   let eventsHtml;
   if (events.length === 0) {
-    eventsHtml = `<p class="db-empty">Aucun événement à venir</p>`;
+    eventsHtml = `
+      <p class="db-empty">Aucun événement planifié</p>
+      <button class="db-shortcut-btn" onclick="switchView('events')">＋ Ajouter un événement</button>`;
   } else {
     eventsHtml = events.map(ev => {
       const d = new Date(ev.date);
@@ -4122,7 +4124,9 @@ async function renderDashboard(el) {
   const tops = data.top_products || [];
   let topsHtml;
   if (tops.length === 0) {
-    topsHtml = `<p class="db-empty">Aucune vente enregistrée cette semaine</p>`;
+    topsHtml = `
+      <p class="db-empty">Aucune vente Cashpad importée cette semaine</p>
+      <button class="db-shortcut-btn" onclick="switchView('cashpad')">→ Importer depuis Cashpad</button>`;
   } else {
     const medals = ["🥇", "🥈", "🥉"];
     topsHtml = tops.map((t, i) =>
