@@ -2954,15 +2954,13 @@ Réponds UNIQUEMENT en JSON valide avec ce format :
 }}"""
 
     import anthropic as _anthropic
-    import httpx as _httpx
-    client = _anthropic.Anthropic(
-        api_key=api_key,
-        timeout=_httpx.Timeout(120.0, connect=30.0),
-    )
+    client = _anthropic.Anthropic(api_key=api_key)
 
     # Après compression (frontend Canvas + backend Pillow fallback), c'est du JPEG
     media_type = "image/jpeg"
     b64 = base64.standard_b64encode(content).decode("utf-8")
+    img_size_kb = len(content) // 1024
+    b64_size_kb = len(b64) // 1024
 
     try:
         message = client.messages.create(
@@ -2978,8 +2976,12 @@ Réponds UNIQUEMENT en JSON valide avec ce format :
         raise HTTPException(400, detail=f"Image non lisible par l'IA : {str(e)}")
     except _anthropic.AuthenticationError:
         raise HTTPException(401, detail="Clé API Anthropic invalide")
+    except _anthropic.APIConnectionError as e:
+        raise HTTPException(502, detail=f"Connexion API impossible (image: {img_size_kb}Ko, b64: {b64_size_kb}Ko). Détail: {type(e).__name__}: {str(e)}")
+    except _anthropic.APITimeoutError as e:
+        raise HTTPException(504, detail=f"Timeout API (image: {img_size_kb}Ko). L'analyse a pris trop de temps.")
     except Exception as e:
-        raise HTTPException(500, detail=f"Erreur lors de l'analyse : {str(e)}")
+        raise HTTPException(500, detail=f"Erreur ({type(e).__name__}): {str(e)} — image: {img_size_kb}Ko")
 
     raw = message.content[0].text.strip()
 
