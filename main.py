@@ -624,6 +624,9 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
         try:
             with _urllib.urlopen(req, timeout=15) as resp:
                 json.loads(resp.read())
+        except _urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="ignore")
+            raise HTTPException(500, detail=f"Erreur Mailjet {e.code}: {body[:300]}")
         except Exception as e:
             raise HTTPException(500, detail=f"Erreur Mailjet : {str(e)}")
         o.status = "sent"
