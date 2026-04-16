@@ -160,3 +160,18 @@ class Event(Base):
     date = Column(DateTime, nullable=False)
     notes = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ManualLoss(Base):
+    """Perte déclarée manuellement : casse, offert maison, vol, etc."""
+    __tablename__ = "manual_losses"
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    quantity = Column(Float, nullable=False)
+    reason = Column(String, default="Autre")   # Casse | Offert maison | Vol suspecté | Périmé | Dégustation | Autre
+    notes = Column(Text, default="")
+    date = Column(DateTime, default=datetime.utcnow)
+    staff_name = Column(String, default="")
+    stock_updated = Column(Boolean, default=True)  # stock déjà déduit
+
+    product = relationship("Product")

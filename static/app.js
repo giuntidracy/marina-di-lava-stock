@@ -14,7 +14,7 @@ let inactivityTimer = null;
 
 // Onglets accessibles par rôle
 const SERVICE_VIEWS = ["inventory"];
-const MANAGER_VIEWS = ["stock","cocktails","alerts","cashpad","delivery","inventory","stats","history","suppliers","orders","mapping","events"];
+const MANAGER_VIEWS = ["stock","cocktails","alerts","cashpad","delivery","inventory","stats","history","suppliers","orders","mapping","events","shrinkage"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
@@ -152,6 +152,7 @@ function renderView(view) {
     case "orders":    renderOrders(app); break;
     case "mapping":   renderMapping(app); break;
     case "events":    renderEvents(app); break;
+    case "shrinkage": renderShrinkage(app); break;
   }
 }
 
@@ -3447,4 +3448,304 @@ function renderEventAnalysis(analysis) {
   el.innerHTML = `<div class="ev-analysis-title">📊 Analyse de l'impact événementiel</div>
     <div class="ev-analysis-info">Comparaison entre la consommation lors des événements et les jours normaux (baseline).</div>
     <div class="ev-analysis-grid">${blocks}</div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  MODULE DÉMARQUE INCONNUE
+// ═══════════════════════════════════════════════════════════════════════════
+
+const LOSS_REASONS = ["Casse","Offert maison","Dégustation","Vol suspecté","Périmé","Autre"];
+const LOSS_REASON_ICON = {
+  "Casse":"💥","Offert maison":"🍺","Dégustation":"👅",
+  "Vol suspecté":"🕵️","Périmé":"🗑️","Autre":"❓"
+};
+
+async function renderShrinkage(app) {
+  app.innerHTML = `<div class="sh-wrap">
+    <div class="sh-header">
+      <div>
+        <h2 class="sh-title">📉 Démarque Inconnue</h2>
+        <p class="sh-subtitle">Pertes déclarées · Écarts d'inventaire · Vraie démarque</p>
+      </div>
+      <button class="sh-loss-btn" onclick="openLossForm()">⚠️ Saisir une perte</button>
+    </div>
+
+    <div id="sh-form-area"></div>
+    <div id="sh-kpi-area"><div class="sh-loading">Chargement…</div></div>
+    <div id="sh-table-area"></div>
+    <div id="sh-history-area"></div>
+    <div id="sh-losses-area"></div>
+  </div>`;
+
+  loadShrinkage();
+}
+
+async function loadShrinkage() {
+  const [summary, history, losses, products] = await Promise.all([
+    api("/api/shrinkage/summary"),
+    api("/api/shrinkage/history"),
+    api("/api/losses"),
+    api("/api/produits"),
+  ]);
+  renderShrinkageKpis(summary);
+  renderShrinkageTable(summary);
+  renderShrinkageHistory(history);
+  renderLossesList(losses, products);
+}
+
+function renderShrinkageKpis(summary) {
+  const el = document.getElementById("sh-kpi-area");
+  if (!el) return;
+
+  const totalUnexplained = summary.reduce((s, r) => s + r.unexplained, 0);
+  const totalValue = summary.reduce((s, r) => s + r.value_eur, 0);
+  const totalDeclared = summary.reduce((s, r) => s + r.declared_losses, 0);
+  const nbAffected = summary.filter(r => r.unexplained > 0).length;
+  const totalInvLoss = summary.reduce((s, r) => s + r.inventory_loss, 0);
+
+  el.innerHTML = `<div class="sh-kpis">
+    <div class="sh-kpi sh-kpi-red">
+      <div class="sh-kpi-icon">💸</div>
+      <div class="sh-kpi-val">${fmtEur(totalValue)}</div>
+      <div class="sh-kpi-lbl">Valeur démarque inconnue</div>
+    </div>
+    <div class="sh-kpi sh-kpi-orange">
+      <div class="sh-kpi-icon">🔍</div>
+      <div class="sh-kpi-val">${totalUnexplained.toFixed(1)}</div>
+      <div class="sh-kpi-lbl">Unités inexpliquées</div>
+    </div>
+    <div class="sh-kpi sh-kpi-yellow">
+      <div class="sh-kpi-icon">📋</div>
+      <div class="sh-kpi-val">${totalDeclared.toFixed(1)}</div>
+      <div class="sh-kpi-lbl">Pertes déclarées</div>
+    </div>
+    <div class="sh-kpi sh-kpi-blue">
+      <div class="sh-kpi-icon">📦</div>
+      <div class="sh-kpi-val">${nbAffected}</div>
+      <div class="sh-kpi-lbl">Produits affectés</div>
+    </div>
+  </div>
+  ${totalValue === 0 && totalDeclared === 0 ? `<div class="sh-empty-state">
+    <div style="font-size:52px;margin-bottom:12px">✅</div>
+    <div style="font-size:16px;font-weight:700;color:var(--primary)">Aucune démarque détectée</div>
+    <p style="color:var(--text-muted);margin-top:8px">Faites un inventaire ou saisissez vos premières pertes pour commencer l'analyse.</p>
+  </div>` : ""}`;
+}
+
+function renderShrinkageTable(summary) {
+  const el = document.getElementById("sh-table-area");
+  if (!el) return;
+  const rows = summary.filter(r => r.unexplained > 0 || r.declared_losses > 0 || r.inventory_loss > 0);
+  if (!rows.length) { el.innerHTML = ""; return; }
+
+  const trs = rows.map(r => {
+    const valClass = r.value_eur > 50 ? "sh-val-high" : r.value_eur > 20 ? "sh-val-mid" : "sh-val-low";
+    const unexplClass = r.unexplained > 0 ? "sh-unex-bad" : "sh-unex-ok";
+    return `<tr>
+      <td><strong>${r.product_name}</strong><br><small class="sh-cat">${r.category}</small></td>
+      <td class="sh-num">${r.inventory_loss > 0 ? `<span class="sh-inv-loss">−${r.inventory_loss.toFixed(1)} ${r.unit}</span>` : "<span class='sh-zero'>—</span>"}</td>
+      <td class="sh-num">${r.declared_losses > 0 ? `<span class="sh-decl">${r.declared_losses.toFixed(1)} ${r.unit}</span>` : "<span class='sh-zero'>—</span>"}</td>
+      <td class="sh-num ${unexplClass}">${r.unexplained > 0 ? `<strong>${r.unexplained.toFixed(1)} ${r.unit}</strong>` : "✅ 0"}</td>
+      <td class="sh-num ${valClass}">${r.value_eur > 0 ? fmtEur(r.value_eur) : "—"}</td>
+      <td class="sh-num sh-stock-col">${r.stock_actuel} ${r.unit}</td>
+    </tr>`;
+  }).join("");
+
+  el.innerHTML = `<div class="sh-section-title">📊 Détail par produit</div>
+  <div class="sh-table-wrap">
+    <table class="sh-table">
+      <thead><tr>
+        <th>Produit</th>
+        <th>Écart inventaire</th>
+        <th>Pertes déclarées</th>
+        <th>Démarque inconnue</th>
+        <th>Valeur perdue</th>
+        <th>Stock actuel</th>
+      </tr></thead>
+      <tbody>${trs}</tbody>
+    </table>
+  </div>
+  <div class="sh-table-legend">
+    <span>📦 <em>Écart inventaire</em> = différence constatée lors des inventaires physiques</span>
+    <span>📋 <em>Pertes déclarées</em> = casse, offerts maison, vols signalés</span>
+    <span>🔍 <em>Démarque inconnue</em> = écart qui reste inexpliqué</span>
+  </div>`;
+}
+
+function renderShrinkageHistory(history) {
+  const el = document.getElementById("sh-history-area");
+  if (!el || !history.length) { if(el) el.innerHTML=""; return; }
+
+  const labels = history.map(h => h.label);
+  const declData = history.map(h => parseFloat(h.declared_eur.toFixed(2)));
+  const invData  = history.map(h => parseFloat(h.inventory_eur.toFixed(2)));
+
+  el.innerHTML = `<div class="sh-section-title">📅 Historique mensuel (valeur €)</div>
+    <div class="sh-chart-wrap"><canvas id="sh-chart" height="200"></canvas></div>`;
+
+  setTimeout(() => {
+    const ctx = document.getElementById("sh-chart");
+    if (!ctx) return;
+    if (ctx._chartInstance) ctx._chartInstance.destroy();
+    ctx._chartInstance = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [
+          { label: "Pertes déclarées (€)", data: declData, backgroundColor: "rgba(251,146,60,.7)", borderRadius: 6 },
+          { label: "Écart inventaire (€)",  data: invData,  backgroundColor: "rgba(239,68,68,.7)",  borderRadius: 6 },
+        ]
+      },
+      options: {
+        responsive: true, plugins: { legend: { labels: { color: "#ccc" } } },
+        scales: {
+          x: { stacked: true, ticks: { color: "#999" }, grid: { color: "rgba(255,255,255,.05)" } },
+          y: { stacked: true, ticks: { color: "#999", callback: v => `${v}€` }, grid: { color: "rgba(255,255,255,.05)" } }
+        }
+      }
+    });
+  }, 100);
+}
+
+function renderLossesList(losses, products) {
+  const el = document.getElementById("sh-losses-area");
+  if (!el) return;
+
+  const productList = (products || []).filter(p => !p.unit || !p.unit.includes("Carton"));
+  const opts = productList.map(p => `<option value="${p.id}">${p.name} (${p.category})</option>`).join("");
+  window._shrinkageProductOpts = opts;
+
+  if (!losses.length) {
+    el.innerHTML = `<div class="sh-section-title">📋 Pertes déclarées</div>
+      <div class="sh-empty-losses">Aucune perte déclarée. Utilisez le bouton "Saisir une perte" en haut.</div>`;
+    return;
+  }
+
+  const rows = losses.map(l => {
+    const icon = LOSS_REASON_ICON[l.reason] || "❓";
+    const valStr = l.value_eur > 0 ? `<span class="sh-loss-val">${fmtEur(l.value_eur)}</span>` : "";
+    return `<div class="sh-loss-row">
+      <span class="sh-loss-icon">${icon}</span>
+      <div class="sh-loss-info">
+        <div class="sh-loss-name">${l.product_name} <span class="sh-loss-qty">−${l.quantity} ${l.unit}</span>${valStr}</div>
+        <div class="sh-loss-meta">
+          <span class="sh-loss-badge sh-reason-${l.reason.replace(/\s+/g,"-").toLowerCase()}">${l.reason}</span>
+          <span class="sh-loss-date">${l.date}</span>
+          ${l.staff_name ? `<span class="sh-loss-staff">👤 ${l.staff_name}</span>` : ""}
+          ${l.notes ? `<span class="sh-loss-notes">· ${l.notes}</span>` : ""}
+        </div>
+      </div>
+      <button class="sh-loss-del" onclick="deleteLoss(${l.id})" title="Supprimer">🗑</button>
+    </div>`;
+  }).join("");
+
+  el.innerHTML = `<div class="sh-section-title">📋 Pertes déclarées (${losses.length})</div>
+    <div class="sh-losses-list">${rows}</div>`;
+}
+
+function openLossForm() {
+  const area = document.getElementById("sh-form-area");
+  if (!area) return;
+  const opts = window._shrinkageProductOpts || "";
+  const reasonOpts = LOSS_REASONS.map(r =>
+    `<option value="${r}">${LOSS_REASON_ICON[r]||"❓"} ${r}</option>`
+  ).join("");
+  const today = new Date().toISOString().slice(0,10);
+
+  area.innerHTML = `<div class="sh-form">
+    <div class="sh-form-title">⚠️ Saisir une perte</div>
+    <div class="sh-form-grid">
+      <div class="sh-field sh-field-wide">
+        <label>Produit</label>
+        <select id="shf-product">${opts ? `<option value="">— Choisir —</option>${opts}` : "<option>Aucun produit</option>"}</select>
+      </div>
+      <div class="sh-field">
+        <label>Quantité perdue</label>
+        <input id="shf-qty" type="number" step="0.5" min="0.5" value="1" placeholder="Ex: 2"/>
+      </div>
+      <div class="sh-field">
+        <label>Motif</label>
+        <select id="shf-reason">${reasonOpts}</select>
+      </div>
+      <div class="sh-field">
+        <label>Date</label>
+        <input id="shf-date" type="date" value="${today}"/>
+      </div>
+      <div class="sh-field">
+        <label>Responsable (optionnel)</label>
+        <input id="shf-staff" type="text" placeholder="Nom du staff"/>
+      </div>
+      <div class="sh-field sh-field-wide">
+        <label>Détails (optionnel)</label>
+        <input id="shf-notes" type="text" placeholder="Ex: bouteille tombée derrière le bar…"/>
+      </div>
+      <div class="sh-field sh-field-wide sh-check-field">
+        <label>
+          <input id="shf-update" type="checkbox" checked/>
+          Déduire immédiatement du stock
+        </label>
+        <small>Décochez si la perte a déjà été comptabilisée lors d'un inventaire.</small>
+      </div>
+    </div>
+    <div class="sh-form-footer">
+      <button class="sh-save-btn" onclick="saveLoss()">💾 Enregistrer la perte</button>
+      <button class="sh-cancel-btn" onclick="cancelLossForm()">Annuler</button>
+    </div>
+  </div>`;
+  area.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function cancelLossForm() {
+  const area = document.getElementById("sh-form-area");
+  if (area) area.innerHTML = "";
+}
+
+async function saveLoss() {
+  const pid   = parseInt(document.getElementById("shf-product").value);
+  const qty   = parseFloat(document.getElementById("shf-qty").value);
+  const reason = document.getElementById("shf-reason").value;
+  const date  = document.getElementById("shf-date").value;
+  const staff = document.getElementById("shf-staff").value.trim();
+  const notes = document.getElementById("shf-notes").value.trim();
+  const update = document.getElementById("shf-update").checked;
+
+  if (!pid || isNaN(pid)) { alert("Sélectionnez un produit"); return; }
+  if (!qty || qty <= 0)   { alert("Quantité invalide"); return; }
+
+  try {
+    const res = await api("/api/losses", "POST", {
+      product_id: pid, quantity: qty, reason, date, staff_name: staff,
+      notes, update_stock: update
+    });
+    cancelLossForm();
+    loadShrinkage();
+    if (update) {
+      showToast(`✅ Perte enregistrée · Nouveau stock : ${res.new_stock}`);
+    }
+  } catch(e) {
+    alert("Erreur : " + e.message);
+  }
+}
+
+async function deleteLoss(id) {
+  if (!confirm("Supprimer cette perte déclarée ?\n(Le stock sera restitué si la déduction avait été faite.)")) return;
+  await api(`/api/losses/${id}`, "DELETE");
+  loadShrinkage();
+}
+
+function showToast(msg) {
+  let t = document.getElementById("sh-toast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "sh-toast";
+    t.className = "sh-toast";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.add("sh-toast-show");
+  setTimeout(() => t.classList.remove("sh-toast-show"), 3500);
+}
+
+function fmtEur(v) {
+  return (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", minimumFractionDigits:2 });
 }

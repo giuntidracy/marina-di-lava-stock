@@ -33,7 +33,7 @@ from database import get_db, engine
 from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
     CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
-    SupplierOrder, SupplierOrderItem, Event
+    SupplierOrder, SupplierOrderItem, Event, ManualLoss
 )
 
 Base.metadata.create_all(bind=engine)
@@ -60,7 +60,7 @@ with engine.connect() as _conn:
     except Exception:
         pass
 
-    # events table (créée par create_all mais migration si ancienne DB)
+    # events table
     try:
         _conn.execute(_text("SELECT 1 FROM events LIMIT 1"))
     except Exception:
@@ -72,6 +72,23 @@ with engine.connect() as _conn:
             "date DATETIME NOT NULL, "
             "notes TEXT DEFAULT '', "
             "created_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+        ))
+        _conn.commit()
+
+    # manual_losses table
+    try:
+        _conn.execute(_text("SELECT 1 FROM manual_losses LIMIT 1"))
+    except Exception:
+        _conn.execute(_text(
+            "CREATE TABLE IF NOT EXISTS manual_losses ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "product_id INTEGER NOT NULL, "
+            "quantity REAL NOT NULL, "
+            "reason TEXT DEFAULT 'Autre', "
+            "notes TEXT DEFAULT '', "
+            "date DATETIME DEFAULT CURRENT_TIMESTAMP, "
+            "staff_name TEXT DEFAULT '', "
+            "stock_updated INTEGER DEFAULT 1)"
         ))
         _conn.commit()
 
@@ -2997,3 +3014,215 @@ def get_events_analysis(db: Session = Depends(get_db)):
     # Tri résultats : plus d'événements d'abord
     results.sort(key=lambda x: -x["count"])
     return results
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  MODULE DÉMARQUE INCONNUE
+# ═══════════════════════════════════════════════════════════════════════════
+
+LOSS_REASONS = ["Casse", "Offert maison", "Dégustation", "Vol suspecté", "Périmé", "Autre"]
+
+
+class ManualLossIn(BaseModel):
+    product_id: int
+    quantity: float
+    reason: str = "Autre"
+    notes: str = ""
+    date: Optional[str] = None   # "YYYY-MM-DD", défaut = aujourd'hui
+    staff_name: str = ""
+    update_stock: bool = True    # déduire du stock immédiatement
+
+
+@app.get("/api/losses")
+def list_losses(limit: int = 200, db: Session = Depends(get_db)):
+    rows = (
+        db.query(ManualLoss)
+        .order_by(ManualLoss.date.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "product_id": r.product_id,
+            "product_name": r.product.name if r.product else f"#{r.product_id}",
+            "category": r.product.category if r.product else "",
+            "quantity": r.quantity,
+            "unit": r.product.unit if r.product else "",
+            "reason": r.reason,
+            "notes": r.notes,
+            "date": r.date.strftime("%d/%m/%Y") if r.date else "",
+            "staff_name": r.staff_name,
+            "stock_updated": r.stock_updated,
+            "value_eur": round(r.quantity * (r.product.purchase_price or 0), 2) if r.product else 0,
+        }
+        for r in rows
+    ]
+
+
+@app.post("/api/losses")
+def create_loss(body: ManualLossIn, db: Session = Depends(get_db)):
+    p = db.query(Product).get(body.product_id)
+    if not p:
+        raise HTTPException(404, "Produit introuvable")
+
+    loss_date = (
+        datetime.strptime(body.date, "%Y-%m-%d")
+        if body.date else datetime.utcnow()
+    )
+
+    loss = ManualLoss(
+        product_id=body.product_id,
+        quantity=body.quantity,
+        reason=body.reason,
+        notes=body.notes,
+        date=loss_date,
+        staff_name=body.staff_name,
+        stock_updated=body.update_stock,
+    )
+    db.add(loss)
+
+    if body.update_stock:
+        p.stock = max(0, p.stock - body.quantity)
+        log_event(db, "perte_declaree",
+                  f"Perte déclarée : {p.name} — {body.quantity} {p.unit} ({body.reason})",
+                  {"product_id": p.id, "quantity": body.quantity,
+                   "reason": body.reason, "staff": body.staff_name})
+
+    db.commit()
+    db.refresh(loss)
+    return {"id": loss.id, "new_stock": round(p.stock, 3)}
+
+
+@app.delete("/api/losses/{lid}")
+def delete_loss(lid: int, db: Session = Depends(get_db)):
+    loss = db.query(ManualLoss).get(lid)
+    if not loss:
+        raise HTTPException(404)
+    # Restituer le stock si la perte avait été déduite
+    if loss.stock_updated and loss.product:
+        loss.product.stock = loss.product.stock + loss.quantity
+    db.delete(loss)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/shrinkage/summary")
+def get_shrinkage_summary(db: Session = Depends(get_db)):
+    """
+    Par produit :
+      - inventory_loss  : somme des écarts NÉGATIFS d'inventaire (ce qu'on n'arrive pas à expliquer)
+      - declared_losses : pertes déclarées manuellement (casse, offert, etc.)
+      - unexplained     : inventory_loss − declared_losses (vraie démarque inconnue)
+      - value_eur       : unexplained × prix d'achat
+    """
+    from sqlalchemy import func
+
+    # ── Écarts d'inventaire ──────────────────────────────────────────────
+    inv_rows = (
+        db.query(
+            InventorySession.product_id,
+            func.sum(InventorySession.difference).label("total_diff"),
+            func.count(InventorySession.id).label("nb"),
+        )
+        .group_by(InventorySession.product_id)
+        .all()
+    )
+    inv_map = {r.product_id: (float(r.total_diff or 0), int(r.nb)) for r in inv_rows}
+
+    # ── Pertes déclarées ────────────────────────────────────────────────
+    loss_rows = (
+        db.query(
+            ManualLoss.product_id,
+            func.sum(ManualLoss.quantity).label("total_qty"),
+        )
+        .group_by(ManualLoss.product_id)
+        .all()
+    )
+    loss_map = {r.product_id: float(r.total_qty or 0) for r in loss_rows}
+
+    products_map = {p.id: p for p in db.query(Product).all()}
+    all_pids = set(inv_map) | set(loss_map)
+
+    result = []
+    for pid in all_pids:
+        p = products_map.get(pid)
+        if not p:
+            continue
+
+        total_diff, nb_inv = inv_map.get(pid, (0.0, 0))
+        declared = loss_map.get(pid, 0.0)
+
+        # Perte d'inventaire = somme des écarts négatifs uniquement
+        inv_loss = abs(min(0.0, total_diff))
+
+        # Les pertes déclarées AVEC update_stock ne créent pas d'écart inventaire
+        # (stock déjà déduit). Les pertes sans update_stock apparaissent dans inv_loss.
+        # On montre les deux colonnes séparément pour que le gérant comprenne.
+        unexplained = max(0.0, inv_loss - declared)
+
+        price = p.purchase_price or 0
+        value_eur = round(unexplained * price, 2)
+
+        result.append({
+            "product_id": pid,
+            "product_name": p.name,
+            "category": p.category or "",
+            "unit": p.unit or "Bouteille",
+            "stock_actuel": round(p.stock, 2),
+            "purchase_price": price,
+            "inventory_loss": round(inv_loss, 2),
+            "inventory_gain": round(max(0.0, total_diff), 2),
+            "declared_losses": round(declared, 2),
+            "unexplained": round(unexplained, 2),
+            "value_eur": value_eur,
+            "nb_inventaires": nb_inv,
+        })
+
+    result.sort(key=lambda x: -x["value_eur"])
+    return result
+
+
+@app.get("/api/shrinkage/history")
+def get_shrinkage_history(db: Session = Depends(get_db)):
+    """Historique mensuel des pertes déclarées + écarts inventaire."""
+    from sqlalchemy import func
+
+    # Pertes déclarées par mois
+    losses = db.query(ManualLoss).order_by(ManualLoss.date).all()
+    inv_sessions = db.query(InventorySession).order_by(InventorySession.created_at).all()
+    products_map = {p.id: p for p in db.query(Product).all()}
+
+    monthly: dict = {}
+
+    for loss in losses:
+        month = loss.date.strftime("%Y-%m") if loss.date else "??-??"
+        if month not in monthly:
+            monthly[month] = {"declared": 0.0, "declared_eur": 0.0,
+                               "inventory": 0.0, "inventory_eur": 0.0}
+        p = products_map.get(loss.product_id)
+        price = (p.purchase_price or 0) if p else 0
+        monthly[month]["declared"] += loss.quantity
+        monthly[month]["declared_eur"] += loss.quantity * price
+
+    for sess in inv_sessions:
+        if sess.difference >= 0:
+            continue   # gain → on ne compte pas
+        month = sess.created_at.strftime("%Y-%m") if sess.created_at else "??-??"
+        if month not in monthly:
+            monthly[month] = {"declared": 0.0, "declared_eur": 0.0,
+                               "inventory": 0.0, "inventory_eur": 0.0}
+        p = products_map.get(sess.product_id)
+        price = (p.purchase_price or 0) if p else 0
+        monthly[month]["inventory"] += abs(sess.difference)
+        monthly[month]["inventory_eur"] += abs(sess.difference) * price
+
+    rows = [
+        {
+            "month": m,
+            "label": datetime.strptime(m, "%Y-%m").strftime("%b %Y") if m != "??-??" else m,
+            **v
+        }
+        for m, v in sorted(monthly.items())
+    ]
+    return rows
