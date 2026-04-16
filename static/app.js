@@ -1207,40 +1207,196 @@ async function renderAlerts(el) {
 // ══════════════════════════════════════════════════════════
 // VIEW: IMPORT CASHPAD
 // ══════════════════════════════════════════════════════════
-function renderCashpad(el) {
+async function renderCashpad(el) {
   el.innerHTML = `
-    <div class="section-header">
-      <span class="section-title">Import rapport Cashpad</span>
+    <!-- ── CONNEXION API CASHPAD ─────────────────────────── -->
+    <div class="cp-api-panel" id="cp-api-panel">
+      <div class="cp-api-header">
+        <div class="cp-api-logo">
+          <span style="font-size:28px">🔗</span>
+          <div>
+            <div class="cp-api-title">Connexion Cashpad API</div>
+            <div class="cp-api-sub">Synchronisation automatique toutes les 30 minutes</div>
+          </div>
+        </div>
+        <div id="cp-status-dot" class="cp-dot cp-dot-loading">●</div>
+      </div>
+      <div id="cp-status-body">
+        <div class="cp-loading-msg">Vérification de la connexion…</div>
+      </div>
     </div>
-    <div class="info-box">
-      Uploadez le fichier Excel exporté depuis Cashpad (feuille "Ventes-par-produit-2").
-      Le numéro de clôture sert à éviter les imports en double.
-    </div>
-    <div style="max-width:500px">
-      <div class="form-group">
-        <label>Numéro de clôture *</label>
-        <input type="text" id="cashpad-cloture" placeholder="ex: 1042"/>
+
+    <!-- ── IMPORT MANUEL (fallback) ─────────────────────── -->
+    <div class="cp-manual-section">
+      <div class="cp-manual-toggle" onclick="toggleManualImport()">
+        <span>📥 Import manuel (fichier Excel)</span>
+        <span id="cp-manual-arrow">▼</span>
       </div>
-      <div class="upload-zone" id="cashpad-zone" onclick="document.getElementById('cashpad-file').click()">
-        <div class="upload-icon">📊</div>
-        <div>Cliquez ou glissez le fichier .xlsx ici</div>
-        <input type="file" id="cashpad-file" accept=".xlsx,.xls" onchange="setCashpadFile(this)"/>
+      <div id="cp-manual-body" class="hidden">
+        <div class="info-box" style="margin:0 0 14px">
+          Uploadez le fichier Excel exporté depuis Cashpad (feuille "Ventes-par-produit-2").
+          Le numéro de clôture sert à éviter les imports en double.
+        </div>
+        <div style="max-width:500px">
+          <div class="form-group">
+            <label>Numéro de clôture *</label>
+            <input type="text" id="cashpad-cloture" placeholder="ex: 1042"/>
+          </div>
+          <div class="upload-zone" id="cashpad-zone" onclick="document.getElementById('cashpad-file').click()">
+            <div class="upload-icon">📊</div>
+            <div>Cliquez ou glissez le fichier .xlsx ici</div>
+            <input type="file" id="cashpad-file" accept=".xlsx,.xls" onchange="setCashpadFile(this)"/>
+          </div>
+          <div id="cashpad-filename" style="font-size:12px;color:var(--text-muted);margin-top:6px"></div>
+          <div style="margin-top:14px">
+            <button class="btn btn-primary" onclick="submitCashpad()">📥 Importer</button>
+          </div>
+          <div id="cashpad-result" style="margin-top:16px"></div>
+        </div>
       </div>
-      <div id="cashpad-filename" style="font-size:12px;color:var(--text-muted);margin-top:6px"></div>
-      <div style="margin-top:14px">
-        <button class="btn btn-primary" onclick="submitCashpad()">📥 Importer</button>
-      </div>
-      <div id="cashpad-result" style="margin-top:16px"></div>
     </div>`;
 
-  // drag & drop
-  const zone = document.getElementById("cashpad-zone");
-  zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("drag-over"); });
-  zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
-  zone.addEventListener("drop", e => {
-    e.preventDefault(); zone.classList.remove("drag-over");
-    const f = e.dataTransfer.files[0];
-    if (f) { document.getElementById("cashpad-file").files = e.dataTransfer.files; setCashpadFile({ files: [f] }); }
+  // drag & drop (si le manuel est ouvert)
+  document.addEventListener("dragover", e => {
+    const zone = document.getElementById("cashpad-zone");
+    if (zone) { e.preventDefault(); zone.classList.add("drag-over"); }
+  }, { once: false });
+
+  // Load API status
+  loadCashpadStatus();
+}
+
+function toggleManualImport() {
+  const body  = document.getElementById("cp-manual-body");
+  const arrow = document.getElementById("cp-manual-arrow");
+  if (!body) return;
+  const open = body.classList.toggle("hidden");
+  if (arrow) arrow.textContent = open ? "▼" : "▲";
+}
+
+async function loadCashpadStatus() {
+  const dot  = document.getElementById("cp-status-dot");
+  const body = document.getElementById("cp-status-body");
+  if (!body) return;
+
+  try {
+    const s = await api("/api/cashpad/sync-status");
+
+    if (!s.configured) {
+      if (dot) { dot.className = "cp-dot cp-dot-off"; dot.textContent = "●"; }
+      body.innerHTML = `
+        <div class="cp-unconfigured">
+          <div class="cp-unconf-icon">🔑</div>
+          <div class="cp-unconf-msg">
+            <strong>Connexion API non configurée</strong><br>
+            Pour activer la sync automatique, vous devez demander vos identifiants API à Cashpad.
+          </div>
+        </div>
+        <div class="cp-setup-steps">
+          <div class="cp-step">
+            <span class="cp-step-num">1</span>
+            <div>Envoyez un email à <strong>support@cashpad.fr</strong> en demandant vos identifiants API :<br>
+            <em>email API, token API, et votre installation_id</em></div>
+          </div>
+          <div class="cp-step">
+            <span class="cp-step-num">2</span>
+            <div>Dans Railway → votre service → <strong>Variables</strong>, ajoutez :<br>
+            <code>CASHPAD_EMAIL</code> · <code>CASHPAD_TOKEN</code> · <code>CASHPAD_INSTALLATION_ID</code></div>
+          </div>
+          <div class="cp-step">
+            <span class="cp-step-num">3</span>
+            <div>Railway redéploie automatiquement. La sync démarre toute seule. ✅</div>
+          </div>
+        </div>
+        <div class="cp-copy-block">
+          <div class="cp-copy-label">Modèle d'email à envoyer :</div>
+          <div class="cp-copy-text" id="cp-email-draft">Bonjour,
+
+Je suis client Cashpad (établissement : Marina di Lava). Je souhaite accéder à votre API REST pour une intégration avec mon logiciel de gestion de stock.
+
+Pourriez-vous m'envoyer :
+- L'adresse email à utiliser comme apiuser_email
+- Le token d'authentification (apiuser_token)
+- Mon installation_id
+
+Merci</div>
+          <button class="cp-copy-btn" onclick="copyEmailDraft()">📋 Copier</button>
+        </div>`;
+      return;
+    }
+
+    // Configuré
+    if (dot) { dot.className = "cp-dot cp-dot-on"; dot.textContent = "●"; }
+    const lastSync = s.last_sync || "Jamais";
+    const seqId    = s.last_sequential_id || "0";
+    body.innerHTML = `
+      <div class="cp-info-row">
+        <div class="cp-info-item">
+          <span class="cp-info-label">Compte</span>
+          <span class="cp-info-val">${esc(s.email)}</span>
+        </div>
+        <div class="cp-info-item">
+          <span class="cp-info-label">Installation</span>
+          <span class="cp-info-val">${esc(s.installation_id)}</span>
+        </div>
+        <div class="cp-info-item">
+          <span class="cp-info-label">Dernière sync</span>
+          <span class="cp-info-val ${seqId === "0" ? "cp-never" : ""}">${lastSync === "Jamais" ? "⚠️ Jamais effectuée" : "✅ " + lastSync}</span>
+        </div>
+        <div class="cp-info-item">
+          <span class="cp-info-label">Archive n°</span>
+          <span class="cp-info-val">${seqId === "0" ? "—" : "#" + seqId}</span>
+        </div>
+      </div>
+      <div class="cp-actions">
+        <button class="cp-sync-btn" id="cp-sync-btn" onclick="triggerCashpadSync()">🔄 Synchroniser maintenant</button>
+        <button class="cp-reset-btn" onclick="resetCashpadCursor()" title="Repartir depuis la 1ère archive">↺ Réinitialiser le curseur</button>
+      </div>
+      <div id="cp-sync-result"></div>`;
+  } catch(e) {
+    if (dot) { dot.className = "cp-dot cp-dot-err"; dot.textContent = "●"; }
+    body.innerHTML = `<div class="cp-error">Impossible de vérifier le statut : ${esc(e.message)}</div>`;
+  }
+}
+
+async function triggerCashpadSync() {
+  const btn = document.getElementById("cp-sync-btn");
+  const res = document.getElementById("cp-sync-result");
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ Synchronisation…"; }
+
+  try {
+    const r = await api("/api/cashpad/sync", "POST");
+    const msg = r.archives === 0
+      ? `<div class="cp-sync-ok">✅ Stock déjà à jour — aucune nouvelle archive.</div>`
+      : `<div class="cp-sync-ok">
+          ✅ ${r.archives} archive${r.archives > 1 ? "s" : ""} traitée${r.archives > 1 ? "s" : ""} —
+          <strong>${r.total_synced} déductions</strong> appliquées.
+          ${r.total_skipped > 0 ? `<br><small>${r.total_skipped} ligne${r.total_skipped > 1 ? "s" : ""} sans mapping (pensez à compléter le Mapping Cashpad).</small>` : ""}
+        </div>`;
+    if (res) res.innerHTML = msg;
+    // Rafraîchit le statut
+    loadCashpadStatus();
+    // Rafraîchit le stock global
+    allProducts = await api("/api/produits");
+    updateAlertBadge();
+  } catch(e) {
+    if (res) res.innerHTML = `<div class="cp-sync-err">❌ ${esc(e.message)}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "🔄 Synchroniser maintenant"; }
+  }
+}
+
+async function resetCashpadCursor() {
+  if (!confirm("Réinitialiser le curseur ?\n\nLe prochain sync re-téléchargera TOUTES les archives depuis le début.\nCela peut créer des doublons si les données ont déjà été importées.")) return;
+  await api("/api/cashpad/reset-cursor", "POST");
+  loadCashpadStatus();
+}
+
+function copyEmailDraft() {
+  const txt = document.getElementById("cp-email-draft");
+  if (!txt) return;
+  navigator.clipboard.writeText(txt.textContent).then(() => {
+    showToast("📋 Email copié dans le presse-papier !");
   });
 }
 

@@ -7,3 +7,4 @@ anthropic
 sqlalchemy
 python-dotenv
 pdfplumber
+apscheduler

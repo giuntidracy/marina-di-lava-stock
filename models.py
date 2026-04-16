@@ -162,6 +162,14 @@ class Event(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class AppSetting(Base):
+    """Paires clé-valeur pour stocker l'état de l'app (dernière sync Cashpad, etc.)."""
+    __tablename__ = "app_settings"
+    key = Column(String, primary_key=True)
+    value = Column(Text, default="")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class ManualLoss(Base):
     """Perte déclarée manuellement : casse, offert maison, vol, etc."""
     __tablename__ = "manual_losses"

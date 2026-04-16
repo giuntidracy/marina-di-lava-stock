@@ -4,6 +4,9 @@ import base64
 import io
 import os
 import secrets
+import urllib.request
+import urllib.parse
+import urllib.error as _urllib_err
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -33,7 +36,7 @@ from database import get_db, engine
 from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
     CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
-    SupplierOrder, SupplierOrderItem, Event, ManualLoss
+    SupplierOrder, SupplierOrderItem, Event, ManualLoss, AppSetting
 )
 
 Base.metadata.create_all(bind=engine)
@@ -59,6 +62,18 @@ with engine.connect() as _conn:
         _conn.commit()
     except Exception:
         pass
+
+    # app_settings table
+    try:
+        _conn.execute(_text("SELECT 1 FROM app_settings LIMIT 1"))
+    except Exception:
+        _conn.execute(_text(
+            "CREATE TABLE IF NOT EXISTS app_settings ("
+            "key TEXT PRIMARY KEY, "
+            "value TEXT DEFAULT '', "
+            "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+        ))
+        _conn.commit()
 
     # events table
     try:
@@ -3226,3 +3241,297 @@ def get_shrinkage_history(db: Session = Depends(get_db)):
         for m, v in sorted(monthly.items())
     ]
     return rows
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  CONNEXION CASHPAD API — Sync automatique
+# ═══════════════════════════════════════════════════════════════════════════
+
+_CASHPAD_BASE = os.getenv("CASHPAD_BASE_URL", "https://www3.cashpad.net")
+
+
+def _get_setting(db: Session, key: str, default: str = "") -> str:
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    return row.value if row else default
+
+
+def _set_setting(db: Session, key: str, value: str) -> None:
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    if row:
+        row.value = value
+        row.updated_at = datetime.utcnow()
+    else:
+        db.add(AppSetting(key=key, value=value))
+
+
+def _cashpad_get(path: str, params: dict) -> dict:
+    """Requête GET vers l'API Cashpad avec gestion d'erreurs."""
+    qs = urllib.parse.urlencode(params)
+    url = f"{_CASHPAD_BASE}{path}?{qs}"
+    req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "MarinadiLava/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except _urllib_err.HTTPError as e:
+        raise HTTPException(502, f"Cashpad HTTP {e.code} — {e.reason}")
+    except Exception as e:
+        raise HTTPException(502, f"Impossible de joindre Cashpad : {e}")
+
+    if body.get("error"):
+        raise HTTPException(502, f"Cashpad API error : {body['error']}")
+    return body.get("data", body)
+
+
+def _process_cashpad_archive(archive_data: dict, db: Session) -> dict:
+    """
+    Traite une archive Cashpad (équivalent d'un import CSV).
+    Retourne les stats de la sync.
+    """
+    seq_id = archive_data.get("sequential_id", "?")
+    start_date = archive_data.get("start_date", "")[:10]
+    end_date   = archive_data.get("end_date",   "")[:10]
+
+    # Les lignes de ventes peuvent arriver sous plusieurs noms selon la version API
+    lines = (
+        archive_data.get("order_lines") or
+        archive_data.get("lines")       or
+        archive_data.get("sales")       or
+        archive_data.get("products")    or
+        archive_data.get("items")       or
+        []
+    )
+
+    if not lines:
+        return {"seq_id": seq_id, "synced": 0, "skipped": 0, "skipped_names": []}
+
+    # Charge les mappings Cashpad (nom_cashpad → mapping)
+    mappings = {m.nom_cashpad.lower(): m for m in db.query(CashpadMapping).all()}
+
+    deductions = []
+    skipped    = []
+
+    for line in lines:
+        # Normalise les noms de champs (l'API peut varier)
+        name = (
+            line.get("name") or line.get("nom") or
+            line.get("product_name") or line.get("label") or
+            line.get("item_name") or ""
+        ).strip()
+
+        qty = float(
+            line.get("qty") or line.get("quantity") or
+            line.get("quantite") or line.get("sold_qty") or 0
+        )
+
+        if not name or qty <= 0:
+            continue
+
+        mapping = mappings.get(name.lower())
+        if not mapping or mapping.ignored:
+            skipped.append(name)
+            continue
+
+        if mapping.mapping_type == "cocktail" and mapping.cocktail_id:
+            cocktail = db.query(Cocktail).get(mapping.cocktail_id)
+            if cocktail:
+                for ing in cocktail.ingredients:
+                    if ing.product:
+                        dose_cl = ing.dose_cl * qty
+                        bottles = dose_cl / (ing.product.volume_cl or 70)
+                        ing.product.stock = max(0.0, ing.product.stock - bottles)
+                        deductions.append({
+                            "product_id":   ing.product.id,
+                            "product_name": ing.product.name,
+                            "quantity":     round(bottles, 4),
+                        })
+
+        elif mapping.product_id:
+            p = db.query(Product).get(mapping.product_id)
+            if p:
+                dose_cl = (mapping.dose_cl or 0) * qty
+                if dose_cl > 0 and p.volume_cl:
+                    bottles = dose_cl / p.volume_cl
+                else:
+                    bottles = qty   # déduction unitaire directe
+                p.stock = max(0.0, p.stock - bottles)
+                deductions.append({
+                    "product_id":   p.id,
+                    "product_name": p.name,
+                    "quantity":     round(bottles, 4),
+                })
+
+    if deductions:
+        log_event(
+            db, "import_cashpad",
+            f"Sync Cashpad API — archive #{seq_id} ({start_date} → {end_date})",
+            {"deductions": deductions, "source": "api_sync", "sequential_id": seq_id},
+        )
+        db.commit()
+
+    return {
+        "seq_id":        seq_id,
+        "period":        f"{start_date} → {end_date}",
+        "synced":        len(deductions),
+        "skipped":       len(skipped),
+        "skipped_names": list(set(skipped)),
+    }
+
+
+def _run_cashpad_sync(db: Session) -> dict:
+    """
+    Logique centrale de sync : récupère les nouvelles archives et les traite.
+    Utilisée par le endpoint ET le scheduler.
+    """
+    email      = os.getenv("CASHPAD_EMAIL", "").strip()
+    token      = os.getenv("CASHPAD_TOKEN", "").strip()
+    install_id = os.getenv("CASHPAD_INSTALLATION_ID", "").strip()
+
+    if not all([email, token, install_id]):
+        return {
+            "ok": False,
+            "error": (
+                "Cashpad non configuré. Ajoutez CASHPAD_EMAIL, CASHPAD_TOKEN "
+                "et CASHPAD_INSTALLATION_ID dans vos variables Railway."
+            ),
+        }
+
+    auth = {"apiuser_email": email, "apiuser_token": token}
+    last_id = int(_get_setting(db, "cashpad_last_sequential_id", "0") or 0)
+
+    # 1. Récupère la liste des archives depuis la dernière sync
+    params = {**auth}
+    if last_id:
+        params["start_sequential_id"] = last_id + 1
+
+    try:
+        archives_payload = _cashpad_get(
+            f"/api/salesdata/v2/{install_id}/archives", params
+        )
+    except HTTPException as e:
+        return {"ok": False, "error": e.detail}
+
+    # Normalise la liste (peut être une list ou {"archives": [...]})
+    archives = (
+        archives_payload
+        if isinstance(archives_payload, list)
+        else archives_payload.get("archives", [])
+    )
+
+    if not archives:
+        _set_setting(db, "cashpad_last_sync", datetime.utcnow().isoformat())
+        db.commit()
+        return {"ok": True, "message": "Stock à jour — aucune nouvelle archive", "archives": 0}
+
+    results   = []
+    max_seq   = last_id
+
+    for archive in archives:
+        seq_id = archive.get("sequential_id") or archive.get("id")
+        if seq_id is None:
+            continue
+        seq_id = int(seq_id)
+
+        try:
+            content = _cashpad_get(
+                f"/api/salesdata/v2/{install_id}/archive_content",
+                {**auth, "sequential_id": seq_id},
+            )
+            result = _process_cashpad_archive(content, db)
+            results.append(result)
+            max_seq = max(max_seq, seq_id)
+        except HTTPException as e:
+            results.append({"seq_id": seq_id, "error": e.detail})
+        except Exception as e:
+            results.append({"seq_id": seq_id, "error": str(e)})
+
+    # Sauvegarde le curseur et l'heure de sync
+    if max_seq > last_id:
+        _set_setting(db, "cashpad_last_sequential_id", str(max_seq))
+    _set_setting(db, "cashpad_last_sync", datetime.utcnow().isoformat())
+    db.commit()
+
+    total_synced  = sum(r.get("synced",  0) for r in results)
+    total_skipped = sum(r.get("skipped", 0) for r in results)
+
+    return {
+        "ok":               True,
+        "archives":         len(results),
+        "total_synced":     total_synced,
+        "total_skipped":    total_skipped,
+        "last_seq_id":      max_seq,
+        "results":          results,
+    }
+
+
+# ── Endpoints ────────────────────────────────────────────────────────────
+
+@app.get("/api/cashpad/sync-status")
+def cashpad_sync_status(db: Session = Depends(get_db)):
+    email      = os.getenv("CASHPAD_EMAIL", "").strip()
+    token      = os.getenv("CASHPAD_TOKEN", "").strip()
+    install_id = os.getenv("CASHPAD_INSTALLATION_ID", "").strip()
+    configured = bool(email and token and install_id)
+
+    last_sync  = _get_setting(db, "cashpad_last_sync", "")
+    last_seq   = _get_setting(db, "cashpad_last_sequential_id", "0")
+
+    # Formate la date de dernière sync
+    last_sync_label = ""
+    if last_sync:
+        try:
+            dt = datetime.fromisoformat(last_sync)
+            local = to_local(dt)
+            last_sync_label = local.strftime("%-d %b %Y à %H:%M")
+        except Exception:
+            last_sync_label = last_sync[:16]
+
+    return {
+        "configured":       configured,
+        "email":            email[:3] + "***" if email else "",
+        "installation_id":  install_id,
+        "last_sync":        last_sync_label,
+        "last_sequential_id": last_seq,
+    }
+
+
+@app.post("/api/cashpad/sync")
+def cashpad_sync_now(db: Session = Depends(get_db)):
+    """Déclenche une sync manuelle immédiate."""
+    result = _run_cashpad_sync(db)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Erreur inconnue"))
+    return result
+
+
+@app.post("/api/cashpad/reset-cursor")
+def cashpad_reset_cursor(db: Session = Depends(get_db)):
+    """Remet le curseur à zéro pour re-syncer depuis le début."""
+    _set_setting(db, "cashpad_last_sequential_id", "0")
+    db.commit()
+    return {"ok": True}
+
+
+# ── Scheduler APScheduler — sync automatique toutes les 30 min ───────────
+
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from database import SessionLocal as _SessionLocal
+
+    def _auto_sync_job():
+        db = _SessionLocal()
+        try:
+            r = _run_cashpad_sync(db)
+            if r.get("archives", 0) > 0:
+                print(f"[Cashpad auto-sync] ✅ {r['archives']} archives, {r['total_synced']} déductions")
+        except Exception as e:
+            print(f"[Cashpad auto-sync] ❌ {e}")
+        finally:
+            db.close()
+
+    _scheduler = BackgroundScheduler(timezone="Europe/Paris")
+    _scheduler.add_job(_auto_sync_job, "interval", minutes=30, id="cashpad_sync", replace_existing=True)
+    _scheduler.start()
+    print("[Cashpad] 🔄 Scheduler démarré — sync toutes les 30 min")
+
+except Exception as _sched_err:
+    print(f"[Cashpad] ⚠️ Scheduler non démarré : {_sched_err}")
