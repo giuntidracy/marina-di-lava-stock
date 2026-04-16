@@ -13,8 +13,8 @@ let authToken = null; // token API
 let inactivityTimer = null;
 
 // Onglets accessibles par rôle
-const SERVICE_VIEWS = ["inventory"];
-const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery","inventory","stats","history","suppliers","orders","mapping","events","shrinkage"];
+const SERVICE_VIEWS = ["inventory","flash"];
+const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery","inventory","flash","stats","history","suppliers","orders","mapping","events","shrinkage"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
@@ -126,7 +126,7 @@ const VIEW_TITLES = {
   dashboard:"Tableau de bord",
   stock:"Stock & Marges", cocktails:"Cocktails & Marges", alerts:"Alertes",
   shrinkage:"Démarque Inconnue", cashpad:"Import Cashpad", delivery:"Bon de Livraison",
-  inventory:"Sortie Réserve", stats:"Statistiques", history:"Historique",
+  inventory:"Sortie Réserve", flash:"Inventaire Flash", stats:"Statistiques", history:"Historique",
   events:"Événements", suppliers:"Fournisseurs", orders:"Commandes", mapping:"Mapping Cashpad",
 };
 
@@ -183,6 +183,7 @@ function renderView(view) {
     case "mapping":   renderMapping(app); break;
     case "events":    renderEvents(app); break;
     case "shrinkage": renderShrinkage(app); break;
+    case "flash":     renderFlash(app); break;
   }
 }
 
@@ -4033,6 +4034,281 @@ function showToast(msg) {
 function fmtEur(v) {
   return (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", minimumFractionDigits:2 });
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// INVENTAIRE FLASH — comptage par photo IA
+// ══════════════════════════════════════════════════════════════════════════
+
+let flashResults = null;       // derniers résultats d'analyse IA
+let flashPhotoDataUrl = null;  // preview de la photo
+
+function renderFlash(el) {
+  flashResults = null;
+  flashPhotoDataUrl = null;
+  el.innerHTML = `
+    <div class="section-header">
+      <span class="section-title">📸 Inventaire Flash</span>
+    </div>
+    <div class="info-box">
+      📷 Prenez une photo d'un frigo ou d'une étagère. L'IA comptera les bouteilles et identifiera les produits.<br>
+      <strong>Conseil :</strong> Bonne luminosité, étiquettes visibles, pas trop de reflets.
+    </div>
+
+    <div class="flash-capture-zone" id="flash-capture-zone">
+      <div class="form-group" style="max-width:300px">
+        <label>Prénom du serveur</label>
+        <input type="text" id="flash-staff" placeholder="ex: Jean"/>
+      </div>
+      <div class="form-group" style="max-width:300px">
+        <label>Zone (optionnel)</label>
+        <input type="text" id="flash-zone" placeholder="ex: Frigo bar, Étagère cave…"/>
+      </div>
+
+      <div class="flash-photo-area" id="flash-photo-area">
+        <label class="flash-upload-label" id="flash-upload-label">
+          <input type="file" id="flash-file-input" accept="image/*" capture="environment"
+                 onchange="flashPhotoSelected(this)" style="display:none"/>
+          <div class="flash-upload-placeholder">
+            <span style="font-size:48px">📸</span>
+            <span>Prendre une photo ou choisir une image</span>
+          </div>
+        </label>
+        <div id="flash-preview-wrap" class="hidden">
+          <img id="flash-preview" class="flash-preview-img" alt="Photo"/>
+          <button class="btn btn-sm" style="margin-top:8px" onclick="flashReset()">🔄 Nouvelle photo</button>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-lg" id="flash-analyze-btn" style="margin-top:16px;display:none"
+              onclick="flashAnalyze()">
+        🔍 Analyser la photo
+      </button>
+      <div id="flash-loading" class="hidden" style="text-align:center;padding:24px">
+        <div class="flash-spinner"></div>
+        <p style="color:var(--text-muted);margin-top:12px">Analyse en cours… L'IA examine votre photo</p>
+      </div>
+    </div>
+
+    <div id="flash-results" class="hidden">
+      <div id="flash-summary"></div>
+      <div id="flash-items-list"></div>
+      <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-lg" onclick="flashSubmit()">
+          ✅ Valider et mettre à jour le stock
+        </button>
+        <button class="btn btn-outline" onclick="renderFlash(document.getElementById('app'))">
+          ↩ Recommencer
+        </button>
+      </div>
+      <div id="flash-submit-result" style="margin-top:16px"></div>
+    </div>
+  `;
+}
+
+function flashPhotoSelected(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    flashPhotoDataUrl = e.target.result;
+    document.getElementById("flash-upload-label").classList.add("hidden");
+    const wrap = document.getElementById("flash-preview-wrap");
+    wrap.classList.remove("hidden");
+    document.getElementById("flash-preview").src = flashPhotoDataUrl;
+    document.getElementById("flash-analyze-btn").style.display = "";
+  };
+  reader.readAsDataURL(file);
+}
+
+function flashReset() {
+  flashResults = null;
+  flashPhotoDataUrl = null;
+  document.getElementById("flash-upload-label").classList.remove("hidden");
+  document.getElementById("flash-preview-wrap").classList.add("hidden");
+  document.getElementById("flash-analyze-btn").style.display = "none";
+  document.getElementById("flash-results").classList.add("hidden");
+  document.getElementById("flash-file-input").value = "";
+}
+
+async function flashAnalyze() {
+  const fileInput = document.getElementById("flash-file-input");
+  if (!fileInput.files[0]) {
+    showToast("Veuillez d'abord prendre une photo");
+    return;
+  }
+
+  const zone = document.getElementById("flash-zone")?.value || "";
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+  formData.append("zone", zone);
+
+  document.getElementById("flash-analyze-btn").style.display = "none";
+  document.getElementById("flash-loading").classList.remove("hidden");
+
+  try {
+    const data = await api("/api/inventory/flash-analyze", {
+      method: "POST",
+      body: formData,
+    });
+    flashResults = data;
+    flashRenderResults(data);
+  } catch(e) {
+    showToast("Erreur : " + e.message);
+    document.getElementById("flash-analyze-btn").style.display = "";
+  } finally {
+    document.getElementById("flash-loading").classList.add("hidden");
+  }
+}
+
+function flashRenderResults(data) {
+  const resultsDiv = document.getElementById("flash-results");
+  resultsDiv.classList.remove("hidden");
+
+  // Confidence badge
+  const confColors = { high: "#27ae60", medium: "#f39c12", low: "#e74c3c" };
+  const confLabels = { high: "Élevée", medium: "Moyenne", low: "Faible" };
+  const conf = data.confidence || "medium";
+
+  // Summary
+  document.getElementById("flash-summary").innerHTML = `
+    <div class="flash-summary-card">
+      <div class="flash-summary-row">
+        <div class="flash-summary-stat">
+          <div class="flash-summary-num">${data.total_bottles || 0}</div>
+          <div class="flash-summary-label">bouteilles détectées</div>
+        </div>
+        <div class="flash-summary-stat">
+          <div class="flash-summary-num">${(data.items || []).length}</div>
+          <div class="flash-summary-label">produits identifiés</div>
+        </div>
+        <div class="flash-summary-stat">
+          <span class="flash-conf-badge" style="background:${confColors[conf]}">${confLabels[conf]}</span>
+          <div class="flash-summary-label">confiance</div>
+        </div>
+      </div>
+      ${data.zone_description ? `<div class="flash-zone-desc">📍 ${esc(data.zone_description)}</div>` : ""}
+      ${data.observations ? `<div class="flash-observations">💡 ${esc(data.observations)}</div>` : ""}
+    </div>
+  `;
+
+  // Items list — editable
+  const items = data.items || [];
+  let itemsHtml = `<div class="flash-items-grid">`;
+  items.forEach((item, i) => {
+    const matched = item.product_id != null;
+    const confItem = item.confidence || "medium";
+    const stockInfo = item.current_stock != null
+      ? `<span class="flash-stock-info">Stock actuel : ${item.current_stock}</span>`
+      : "";
+    itemsHtml += `
+      <div class="flash-item-card ${matched ? "flash-item-matched" : "flash-item-unknown"}">
+        <div class="flash-item-header">
+          <span class="flash-item-name">${esc(item.product_name)}</span>
+          <span class="flash-conf-dot" style="background:${confColors[confItem]}" title="Confiance: ${confLabels[confItem]}"></span>
+        </div>
+        ${item.category ? `<div class="flash-item-cat">${esc(item.category)}</div>` : ""}
+        <div class="flash-item-body">
+          <div class="flash-item-qty-wrap">
+            <label>Quantité</label>
+            <div class="flash-qty-control">
+              <button class="flash-qty-btn" onclick="flashQtyAdjust(${i}, -1)">−</button>
+              <input type="number" class="flash-qty-input" id="flash-qty-${i}"
+                     value="${item.quantity}" min="0" step="1"/>
+              <button class="flash-qty-btn" onclick="flashQtyAdjust(${i}, 1)">+</button>
+            </div>
+          </div>
+          ${stockInfo}
+          ${item.notes ? `<div class="flash-item-notes">📝 ${esc(item.notes)}</div>` : ""}
+        </div>
+        ${!matched ? `<div class="flash-item-unmatched">⚠ Produit non reconnu dans la base</div>` : ""}
+      </div>`;
+  });
+  itemsHtml += `</div>`;
+  document.getElementById("flash-items-list").innerHTML = itemsHtml;
+}
+
+function flashQtyAdjust(index, delta) {
+  const input = document.getElementById(`flash-qty-${index}`);
+  if (!input) return;
+  let v = parseInt(input.value) || 0;
+  v = Math.max(0, v + delta);
+  input.value = v;
+}
+
+async function flashSubmit() {
+  if (!flashResults || !flashResults.items) {
+    showToast("Aucun résultat à valider");
+    return;
+  }
+
+  const staff = document.getElementById("flash-staff")?.value || "";
+  if (!staff.trim()) {
+    showToast("Veuillez saisir le prénom du serveur");
+    return;
+  }
+
+  // Build counts from the editable inputs — only matched products
+  const counts = [];
+  flashResults.items.forEach((item, i) => {
+    if (item.product_id == null) return;  // skip unmatched
+    const input = document.getElementById(`flash-qty-${i}`);
+    const qty = parseFloat(input?.value) || 0;
+    counts.push({
+      product_id: item.product_id,
+      actual: qty,
+    });
+  });
+
+  if (counts.length === 0) {
+    showToast("Aucun produit reconnu à mettre à jour");
+    return;
+  }
+
+  try {
+    const res = await api("/api/inventory/flash-submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ counts, staff_name: staff }),
+    });
+
+    let html = `<div class="info-box" style="background:var(--success-bg,rgba(39,174,96,.12));border-color:var(--success-border,#27ae60)">
+      ✅ <strong>${res.results.length} produit(s) mis à jour avec succès !</strong>
+    </div>`;
+
+    if (res.alerts && res.alerts.length) {
+      html += `<div class="info-box" style="background:rgba(231,76,60,.12);border-color:#e74c3c;margin-top:8px">
+        ⚠️ <strong>Alertes :</strong><br>${res.alerts.map(a => esc(a)).join("<br>")}
+      </div>`;
+    }
+
+    // Results table
+    if (res.results.length > 0) {
+      html += `<table class="data-table" style="margin-top:12px">
+        <thead><tr><th>Produit</th><th>Théorique</th><th>Réel</th><th>Écart</th></tr></thead>
+        <tbody>`;
+      res.results.forEach(r => {
+        const diffClass = r.diff < 0 ? "color:#e74c3c" : r.diff > 0 ? "color:#27ae60" : "";
+        html += `<tr>
+          <td>${esc(r.product)}</td>
+          <td>${r.theoretical}</td>
+          <td><strong>${r.actual}</strong></td>
+          <td style="${diffClass};font-weight:600">${r.diff > 0 ? "+" : ""}${r.diff}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    }
+
+    document.getElementById("flash-submit-result").innerHTML = html;
+    showToast("Stock mis à jour !");
+  } catch(e) {
+    document.getElementById("flash-submit-result").innerHTML =
+      `<div class="info-box" style="background:rgba(231,76,60,.12);border-color:#e74c3c">
+        ❌ Erreur : ${esc(e.message)}
+      </div>`;
+  }
+}
+
 
 // ══════════════════════════════════════════════════════════════════════════
 // TABLEAU DE BORD
