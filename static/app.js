@@ -4774,6 +4774,7 @@ async function renderDashboard(el) {
 
   let data;
   try {
+    await api("/api/weather").catch(() => null);
     data = await api("/api/dashboard");
   } catch(e) {
     el.innerHTML = `<div class="db-wrap"><p style="color:red;text-align:center;padding:40px">Erreur : ${esc(e.message)}</p></div>`;
