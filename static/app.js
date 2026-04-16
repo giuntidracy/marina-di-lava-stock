@@ -59,40 +59,41 @@ function hidePinInput() {
 
 function startApp() {
   document.getElementById("login-screen").classList.add("hidden");
-  document.querySelector("header").style.display = "";
-  document.getElementById("app").style.display = "";
+  document.getElementById("app-shell").classList.remove("hidden");
   resetInactivityTimer();
-  // Réinitialise le timer sur toute interaction utilisateur
   ["click","touchstart","keydown"].forEach(evt =>
     document.addEventListener(evt, resetOnActivity, { passive: true }));
 
   const allowedViews = userRole === "manager" ? MANAGER_VIEWS : SERVICE_VIEWS;
 
-  // Affiche/cache les boutons de nav
-  document.querySelectorAll(".nav-btn").forEach(btn => {
-    if (allowedViews.includes(btn.dataset.view)) {
-      btn.style.display = "";
-    } else {
-      btn.style.display = "none";
-    }
+  // Show/hide nav items by role
+  document.querySelectorAll(".nav-item[data-view]").forEach(btn => {
+    btn.style.display = allowedViews.includes(btn.dataset.view) ? "" : "none";
+  });
+  // Hide empty nav-groups
+  document.querySelectorAll(".nav-group").forEach(group => {
+    const anyVisible = [...group.querySelectorAll(".nav-item[data-view]")]
+      .some(b => b.style.display !== "none");
+    group.style.display = anyVisible ? "" : "none";
   });
 
-  // Ajoute bouton déconnexion
-  const nav = document.getElementById("main-nav");
-  if (!document.getElementById("logout-btn")) {
-    const logoutBtn = document.createElement("button");
-    logoutBtn.id = "logout-btn";
-    logoutBtn.className = "nav-btn logout-nav-btn";
-    logoutBtn.textContent = "🔓 Déconnexion";
-    logoutBtn.onclick = logout;
-    nav.appendChild(logoutBtn);
+  // Role badge
+  const roleBadge = document.getElementById("sidebar-role");
+  if (roleBadge) roleBadge.textContent = userRole === "manager" ? "👔 Gérant" : "🍸 Service";
+
+  // Scan button
+  const scanFab = document.getElementById("scan-fab");
+  if (scanFab) scanFab.classList.remove("hidden");
+
+  // Restore sidebar collapsed state (desktop)
+  if (localStorage.getItem("sidebar-collapsed") === "true") {
+    document.getElementById("sidebar")?.classList.add("collapsed");
   }
 
-  document.querySelectorAll(".nav-btn").forEach(btn => {
-    btn.addEventListener("click", () => btn.id !== "logout-btn" && switchView(btn.dataset.view));
+  // Nav item click handlers
+  document.querySelectorAll(".nav-item[data-view]").forEach(btn => {
+    btn.addEventListener("click", () => switchView(btn.dataset.view));
   });
-
-  document.getElementById("scan-fab").classList.remove("hidden");
 
   const defaultView = userRole === "manager" ? "stock" : "inventory";
   switchView(defaultView);
@@ -108,11 +109,7 @@ function logout() {
 
 // ── Init ───────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  // Cache l'app en attendant la connexion
-  document.querySelector("header").style.display = "none";
-  document.getElementById("app").style.display = "none";
-
-  // Toujours afficher l'écran de connexion à l'ouverture
+  document.getElementById("app-shell")?.classList.add("hidden");
 });
 
 async function loadAll() {
@@ -125,17 +122,48 @@ async function loadAll() {
   renderView(currentView);
 }
 
+const VIEW_TITLES = {
+  stock:"Stock & Marges", cocktails:"Cocktails & Marges", alerts:"Alertes",
+  shrinkage:"Démarque Inconnue", cashpad:"Import Cashpad", delivery:"Bon de Livraison",
+  inventory:"Sortie Réserve", stats:"Statistiques", history:"Historique",
+  events:"Événements", suppliers:"Fournisseurs", orders:"Commandes", mapping:"Mapping Cashpad",
+};
+
 function switchView(view) {
   currentView = view;
-  document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.view === view));
-  // close mobile nav after selection
-  document.getElementById("main-nav")?.classList.remove("open");
+  document.querySelectorAll(".nav-item[data-view]").forEach(b =>
+    b.classList.toggle("active", b.dataset.view === view));
+  const titleEl = document.getElementById("top-bar-title");
+  if (titleEl) titleEl.textContent = VIEW_TITLES[view] || view;
+  closeSidebar();
   renderView(view);
 }
 
-function toggleNav() {
-  document.getElementById("main-nav")?.classList.toggle("open");
+function toggleSidebar() {
+  const sidebar = document.getElementById("sidebar");
+  const overlay = document.getElementById("sidebar-overlay");
+  if (!sidebar) return;
+  if (window.innerWidth <= 940) {
+    const open = sidebar.classList.toggle("mobile-open");
+    overlay?.classList.toggle("active", open);
+  } else {
+    const collapsed = sidebar.classList.toggle("collapsed");
+    const wrapper = document.querySelector(".main-wrapper");
+    if (wrapper) wrapper.style.marginLeft = collapsed ? "64px" : "232px";
+    localStorage.setItem("sidebar-collapsed", collapsed);
+  }
 }
+
+function closeSidebar() {
+  const sidebar = document.getElementById("sidebar");
+  const overlay = document.getElementById("sidebar-overlay");
+  if (window.innerWidth <= 940) {
+    sidebar?.classList.remove("mobile-open");
+    overlay?.classList.remove("active");
+  }
+}
+
+function toggleNav() { toggleSidebar(); }
 
 function renderView(view) {
   const app = document.getElementById("app");
@@ -351,7 +379,7 @@ function stopBarcodeScanner(closeModalToo = true) {
 }
 
 function navigateTo(view) {
-  const btn = document.querySelector(`.nav-btn[data-view="${view}"]`);
+  const btn = document.querySelector(`.nav-item[data-view="${view}"]`);
   if (btn) btn.click();
 }
 

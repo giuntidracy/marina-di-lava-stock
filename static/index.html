@@ -42,30 +42,75 @@
   </div>
 </div>
 
-<header>
-  <div class="header-brand">
-    <img src="/static/logo.png" alt="Marina Di Lava" style="height:42px;object-fit:contain"/>
-    <span class="brand-sub" style="margin-left:8px;align-self:flex-end;padding-bottom:4px">Gestion de Stock</span>
-  </div>
-  <button id="hamburger" onclick="toggleNav()" aria-label="Menu">&#9776;</button>
-  <nav id="main-nav">
-    <button class="nav-btn active" data-view="stock">Stock &amp; Marges</button>
-    <button class="nav-btn" data-view="cocktails">Cocktails &amp; Marges</button>
-    <button class="nav-btn" data-view="alerts">Alertes <span id="alert-badge" class="badge hidden">0</span></button>
-    <button class="nav-btn" data-view="cashpad">Import Cashpad</button>
-    <button class="nav-btn" data-view="delivery">Bon de Livraison</button>
-    <button class="nav-btn" data-view="inventory">Sortie Réserve</button>
-    <button class="nav-btn" data-view="stats">📊 Stats</button>
-    <button class="nav-btn" data-view="history">Historique</button>
-    <button class="nav-btn" data-view="suppliers">Fournisseurs</button>
-    <button class="nav-btn" data-view="orders">🛒 Commandes</button>
-    <button class="nav-btn" data-view="mapping">Mapping Cashpad</button>
-    <button class="nav-btn" data-view="events">🎉 Événements</button>
-    <button class="nav-btn" data-view="shrinkage">📉 Démarque</button>
-  </nav>
-</header>
+<!-- App Shell -->
+<div id="app-shell" class="app-shell hidden">
 
-<main id="app"></main>
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-top">
+      <div class="sidebar-brand">
+        <img src="/static/logo.png" alt="Marina Di Lava" class="sidebar-logo"/>
+        <div class="sidebar-brand-text">
+          <div class="sidebar-brand-name">Marina di Lava</div>
+          <div class="sidebar-brand-sub">Corsica Hotel</div>
+        </div>
+      </div>
+      <button class="sidebar-collapse-btn" id="sidebar-toggle" onclick="toggleSidebar()" title="Réduire">◀</button>
+    </div>
+
+    <nav class="sidebar-nav" id="main-nav">
+      <div class="nav-group" id="navg-stock">
+        <span class="nav-group-label">Stock</span>
+        <button class="nav-item" data-view="stock"><span class="nav-icon">📦</span><span class="nav-label">Stock &amp; Marges</span></button>
+        <button class="nav-item" data-view="cocktails"><span class="nav-icon">🍹</span><span class="nav-label">Cocktails &amp; Marges</span></button>
+        <button class="nav-item" data-view="alerts"><span class="nav-icon">🔔</span><span class="nav-label">Alertes</span><span id="alert-badge" class="nav-badge hidden">0</span></button>
+        <button class="nav-item" data-view="shrinkage"><span class="nav-icon">📉</span><span class="nav-label">Démarque</span></button>
+      </div>
+
+      <div class="nav-group" id="navg-ops">
+        <span class="nav-group-label">Opérations</span>
+        <button class="nav-item" data-view="cashpad"><span class="nav-icon">💳</span><span class="nav-label">Import Cashpad</span></button>
+        <button class="nav-item" data-view="delivery"><span class="nav-icon">🚚</span><span class="nav-label">Bon de Livraison</span></button>
+        <button class="nav-item" data-view="inventory"><span class="nav-icon">🍸</span><span class="nav-label">Sortie Réserve</span></button>
+      </div>
+
+      <div class="nav-group" id="navg-analyse">
+        <span class="nav-group-label">Analyses</span>
+        <button class="nav-item" data-view="stats"><span class="nav-icon">📊</span><span class="nav-label">Statistiques</span></button>
+        <button class="nav-item" data-view="history"><span class="nav-icon">📅</span><span class="nav-label">Historique</span></button>
+        <button class="nav-item" data-view="events"><span class="nav-icon">🎉</span><span class="nav-label">Événements</span></button>
+      </div>
+
+      <div class="nav-group" id="navg-gestion">
+        <span class="nav-group-label">Gestion</span>
+        <button class="nav-item" data-view="suppliers"><span class="nav-icon">🏪</span><span class="nav-label">Fournisseurs</span></button>
+        <button class="nav-item" data-view="orders"><span class="nav-icon">🛒</span><span class="nav-label">Commandes</span></button>
+        <button class="nav-item" data-view="mapping"><span class="nav-icon">🗺️</span><span class="nav-label">Mapping Cashpad</span></button>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div id="sidebar-role" class="sidebar-role-badge"></div>
+      <button class="sidebar-logout" onclick="logout()">
+        <span class="nav-icon">⏻</span><span class="nav-label">Déconnexion</span>
+      </button>
+    </div>
+  </aside>
+
+  <div id="sidebar-overlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
+
+  <div class="main-wrapper">
+    <header class="top-bar">
+      <button class="hamburger-btn" onclick="toggleSidebar()" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="top-bar-title" id="top-bar-title">Stock &amp; Marges</div>
+      <div class="top-bar-actions">
+        <button id="scan-fab" class="scan-fab-topbar hidden" onclick="openGlobalScanner()" title="Scanner un code-barres">📷</button>
+      </div>
+    </header>
+    <main id="app"></main>
+  </div>
+</div>
 
 <!-- Modal -->
 <div id="modal-overlay" class="hidden">
@@ -77,11 +122,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-<script src="/static/app.js?v=20260416c"></script>
-
-<!-- Floating Scan Button -->
-<div id="scan-fab" class="scan-fab hidden" onclick="openGlobalScanner()">
-  <span>📷</span>
-</div>
+<script src="/static/app.js?v=20260416d"></script>
 </body>
 </html>
