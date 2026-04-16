@@ -8,8 +8,10 @@ let allProducts = [];
 let allSuppliers = [];
 let allCocktails = [];
 let stockSort = { col: null, dir: 1 };
-let userRole = null; // "service" ou "manager"
-let authToken = null; // token API
+let userRole = null;
+let authToken = null;
+let userName = "";
+let userPhoto = "";
 let inactivityTimer = null;
 
 // Onglets accessibles par rôle
@@ -34,6 +36,8 @@ async function loginManager() {
     });
     authToken = res.token;
     userRole = "manager";
+    userName = res.user_name || "Direction";
+    userPhoto = res.user_photo || "";
     startApp();
   } catch(e) {
     const msg = e.message || "Code incorrect";
@@ -79,7 +83,13 @@ function startApp() {
 
   // Role badge
   const roleBadge = document.getElementById("sidebar-role");
-  if (roleBadge) roleBadge.textContent = userRole === "manager" ? "👔 Gérant" : "🍸 Service";
+  if (roleBadge) {
+    if (userRole === "manager" && userName) {
+      roleBadge.innerHTML = `${userPhoto ? `<img src="${userPhoto}" class="sidebar-avatar"/>` : ""}<span>${userName}</span>`;
+    } else {
+      roleBadge.textContent = userRole === "manager" ? "Direction" : "🍸 Service";
+    }
+  }
 
   // Scan button
   const scanFab = document.getElementById("scan-fab");
@@ -1752,7 +1762,7 @@ function showAdminPinModal({ title, warning, confirmLabel, onConfirm }) {
       ${warning}
     </div>
     <div class="form-group" style="margin-bottom:16px">
-      <label style="font-size:13px;font-weight:600">Code PIN gérant</label>
+      <label style="font-size:13px;font-weight:600">Code PIN direction</label>
       <input id="admin-pin-input" type="password" inputmode="numeric" maxlength="8"
         placeholder="••••" autocomplete="off"
         style="margin-top:6px;width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;
@@ -4072,15 +4082,9 @@ function flashRenderScan() {
     </div>
 
     <div class="flash-capture-zone" id="flash-capture-zone">
-      <div style="display:flex;gap:12px;flex-wrap:wrap">
-        <div class="form-group" style="max-width:250px;margin:0">
-          <label>Votre prénom</label>
-          <input type="text" id="flash-staff" placeholder="ex: Jean-Marc"/>
-        </div>
-        <div class="form-group" style="max-width:250px;margin:0">
-          <label>Zone contrôlée</label>
-          <input type="text" id="flash-zone" placeholder="ex: Frigo bar, Étagère cave…"/>
-        </div>
+      <div class="form-group" style="max-width:300px;margin:0 0 8px">
+        <label>Zone contrôlée</label>
+        <input type="text" id="flash-zone" placeholder="ex: Frigo bar, Étagère cave…"/>
       </div>
 
       <div class="flash-photo-area" style="margin-top:14px">
@@ -4279,8 +4283,7 @@ function flashRecalcDiff(index) {
 
 async function flashSaveControl() {
   if (!flashResults || !flashResults.items) { showToast("Aucun résultat"); return; }
-  const staff = document.getElementById("flash-staff")?.value || "";
-  if (!staff.trim()) { showToast("Saisissez votre prénom"); return; }
+  const staff = userName || "Direction";
   const zone = document.getElementById("flash-zone")?.value || "";
 
   const counts = [];
@@ -4397,7 +4400,8 @@ async function flashRenderHistory() {
           <div class="flash-hist-header" onclick="flashToggleDetail(${ctrl.id})">
             <div>
               <strong>${esc(ctrl.date)}</strong>
-              ${ctrl.zone ? ` — <span style="color:var(--text-muted)">${esc(ctrl.zone)}</span>` : ""}
+              ${ctrl.staff ? ` — <span class="flash-hist-user">${esc(ctrl.staff)}</span>` : ""}
+              ${ctrl.zone ? ` <span style="color:var(--text-muted);font-size:12px">(${esc(ctrl.zone)})</span>` : ""}
             </div>
             <div class="flash-hist-badges">
               <span class="flash-hist-badge">${ctrl.nb_products} produits</span>
