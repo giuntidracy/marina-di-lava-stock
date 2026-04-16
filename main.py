@@ -540,6 +540,7 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
                3) Retourne no_smtp=True pour fallback mailto côté client.
     """
     import urllib.request as _urllib
+    import urllib.error as _urllib_err
 
     o = db.query(SupplierOrder).get(order_id)
     if not o:
@@ -624,7 +625,7 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
         try:
             with _urllib.urlopen(req, timeout=15) as resp:
                 json.loads(resp.read())
-        except _urllib.error.HTTPError as e:
+        except _urllib_err.HTTPError as e:
             body = e.read().decode("utf-8", errors="ignore")
             raise HTTPException(500, detail=f"Erreur Mailjet {e.code}: {body[:300]}")
         except Exception as e:
