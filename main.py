@@ -2872,14 +2872,26 @@ def flash_test_api():
         return {"ok": False, "error": "ANTHROPIC_API_KEY non configurée"}
     masked = api_key[:8] + "…" + api_key[-4:] if len(api_key) > 12 else "***"
     try:
-        import anthropic as _anthropic
-        client = _anthropic.Anthropic(api_key=api_key)
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=20,
-            messages=[{"role": "user", "content": "Dis juste OK"}],
+        payload = json.dumps({
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 20,
+            "messages": [{"role": "user", "content": "Dis juste OK"}],
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
         )
-        return {"ok": True, "key": masked, "response": msg.content[0].text.strip()}
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return {"ok": True, "key": masked, "response": data["content"][0]["text"]}
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        return {"ok": False, "key": masked, "error": f"HTTP {e.code}: {body[:300]}"}
     except Exception as e:
         return {"ok": False, "key": masked, "error": f"{type(e).__name__}: {str(e)}"}
 
@@ -2973,37 +2985,43 @@ Réponds UNIQUEMENT en JSON valide avec ce format :
   "observations": "Remarques générales (éclairage, visibilité, bouteilles possiblement cachées...)"
 }}"""
 
-    import anthropic as _anthropic
-    client = _anthropic.Anthropic(api_key=api_key)
-
-    # Après compression (frontend Canvas + backend Pillow fallback), c'est du JPEG
+    # Appel direct HTTP à l'API Anthropic (contourne les bugs du SDK)
     media_type = "image/jpeg"
     b64 = base64.standard_b64encode(content).decode("utf-8")
     img_size_kb = len(content) // 1024
-    b64_size_kb = len(b64) // 1024
+
+    api_payload = json.dumps({
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 4096,
+        "messages": [{"role": "user", "content": [
+            {"type": "image",
+             "source": {"type": "base64", "media_type": media_type, "data": b64}},
+            {"type": "text", "text": prompt_text},
+        ]}],
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=api_payload,
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+    )
 
     try:
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=4096,
-            messages=[{"role": "user", "content": [
-                {"type": "image",
-                 "source": {"type": "base64", "media_type": media_type, "data": b64}},
-                {"type": "text", "text": prompt_text},
-            ]}],
-        )
-    except _anthropic.BadRequestError as e:
-        raise HTTPException(400, detail=f"Image non lisible par l'IA : {str(e)}")
-    except _anthropic.AuthenticationError:
-        raise HTTPException(401, detail="Clé API Anthropic invalide")
-    except _anthropic.APIConnectionError as e:
-        raise HTTPException(502, detail=f"Connexion API impossible (image: {img_size_kb}Ko, b64: {b64_size_kb}Ko). Détail: {type(e).__name__}: {str(e)}")
-    except _anthropic.APITimeoutError as e:
-        raise HTTPException(504, detail=f"Timeout API (image: {img_size_kb}Ko). L'analyse a pris trop de temps.")
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            api_result = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")[:200]
+        raise HTTPException(e.code, detail=f"API Anthropic erreur HTTP {e.code}: {body}")
+    except urllib.error.URLError as e:
+        raise HTTPException(502, detail=f"Connexion API impossible (image: {img_size_kb}Ko): {str(e.reason)}")
     except Exception as e:
         raise HTTPException(500, detail=f"Erreur ({type(e).__name__}): {str(e)} — image: {img_size_kb}Ko")
 
-    raw = message.content[0].text.strip()
+    raw = api_result["content"][0]["text"].strip()
 
     # Parser le JSON de la réponse
     obj_start = raw.find("{")
