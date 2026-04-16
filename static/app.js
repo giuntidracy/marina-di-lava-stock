@@ -13,7 +13,7 @@ let authToken = null; // token API
 let inactivityTimer = null;
 
 // Onglets accessibles par rôle
-const SERVICE_VIEWS = ["inventory","flash"];
+const SERVICE_VIEWS = ["inventory"];
 const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery","inventory","flash","stats","history","suppliers","orders","mapping","events","shrinkage"];
 
 // ── Login ──────────────────────────────────────────────────
@@ -4036,35 +4036,55 @@ function fmtEur(v) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// INVENTAIRE FLASH — comptage par photo IA
+// INVENTAIRE FLASH — contrôle de stock par photo IA
 // ══════════════════════════════════════════════════════════════════════════
 
-let flashResults = null;       // derniers résultats d'analyse IA
-let flashPhotoDataUrl = null;  // preview de la photo
+let flashResults = null;
+let flashControlId = null;
+let flashTab = "scan"; // "scan" ou "history"
 
 function renderFlash(el) {
   flashResults = null;
-  flashPhotoDataUrl = null;
+  flashControlId = null;
   el.innerHTML = `
-    <div class="section-header">
+    <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
       <span class="section-title">📸 Inventaire Flash</span>
+      <div class="flash-tabs">
+        <button class="btn ${flashTab==='scan'?'btn-primary':'btn-outline'} btn-sm" onclick="flashSwitchTab('scan')">📷 Nouveau contrôle</button>
+        <button class="btn ${flashTab==='history'?'btn-primary':'btn-outline'} btn-sm" onclick="flashSwitchTab('history')">📋 Historique</button>
+      </div>
     </div>
+    <div id="flash-tab-content"></div>
+  `;
+  flashTab === "scan" ? flashRenderScan() : flashRenderHistory();
+}
+
+function flashSwitchTab(tab) {
+  flashTab = tab;
+  renderFlash(document.getElementById("app"));
+}
+
+function flashRenderScan() {
+  const el = document.getElementById("flash-tab-content");
+  el.innerHTML = `
     <div class="info-box">
-      📷 Prenez une photo d'un frigo ou d'une étagère. L'IA comptera les bouteilles et identifiera les produits.<br>
-      <strong>Conseil :</strong> Bonne luminosité, étiquettes visibles, pas trop de reflets.
+      📷 Prenez une photo d'un frigo ou d'une étagère pour <strong>contrôler le stock</strong>.<br>
+      L'IA compte les bouteilles et compare avec le stock théorique. <strong>Le stock n'est pas modifié</strong> — vous pouvez corriger produit par produit si besoin.
     </div>
 
     <div class="flash-capture-zone" id="flash-capture-zone">
-      <div class="form-group" style="max-width:300px">
-        <label>Prénom du serveur</label>
-        <input type="text" id="flash-staff" placeholder="ex: Jean"/>
-      </div>
-      <div class="form-group" style="max-width:300px">
-        <label>Zone (optionnel)</label>
-        <input type="text" id="flash-zone" placeholder="ex: Frigo bar, Étagère cave…"/>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="form-group" style="max-width:250px;margin:0">
+          <label>Votre prénom</label>
+          <input type="text" id="flash-staff" placeholder="ex: Jean-Marc"/>
+        </div>
+        <div class="form-group" style="max-width:250px;margin:0">
+          <label>Zone contrôlée</label>
+          <input type="text" id="flash-zone" placeholder="ex: Frigo bar, Étagère cave…"/>
+        </div>
       </div>
 
-      <div class="flash-photo-area" id="flash-photo-area">
+      <div class="flash-photo-area" style="margin-top:14px">
         <label class="flash-upload-label" id="flash-upload-label">
           <input type="file" id="flash-file-input" accept="image/*" capture="environment"
                  onchange="flashPhotoSelected(this)" style="display:none"/>
@@ -4075,7 +4095,7 @@ function renderFlash(el) {
         </label>
         <div id="flash-preview-wrap" class="hidden">
           <img id="flash-preview" class="flash-preview-img" alt="Photo"/>
-          <button class="btn btn-sm" style="margin-top:8px" onclick="flashReset()">🔄 Nouvelle photo</button>
+          <button class="btn btn-sm" style="margin-top:8px" onclick="flashResetPhoto()">🔄 Nouvelle photo</button>
         </div>
       </div>
 
@@ -4089,54 +4109,36 @@ function renderFlash(el) {
       </div>
     </div>
 
-    <div id="flash-results" class="hidden">
-      <div id="flash-summary"></div>
-      <div id="flash-items-list"></div>
-      <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
-        <button class="btn btn-primary btn-lg" onclick="flashSubmit()">
-          ✅ Valider et mettre à jour le stock
-        </button>
-        <button class="btn btn-outline" onclick="renderFlash(document.getElementById('app'))">
-          ↩ Recommencer
-        </button>
-      </div>
-      <div id="flash-submit-result" style="margin-top:16px"></div>
-    </div>
+    <div id="flash-results" class="hidden"></div>
   `;
 }
 
 function flashPhotoSelected(input) {
   const file = input.files[0];
   if (!file) return;
-
   const reader = new FileReader();
   reader.onload = (e) => {
-    flashPhotoDataUrl = e.target.result;
     document.getElementById("flash-upload-label").classList.add("hidden");
-    const wrap = document.getElementById("flash-preview-wrap");
-    wrap.classList.remove("hidden");
-    document.getElementById("flash-preview").src = flashPhotoDataUrl;
+    document.getElementById("flash-preview-wrap").classList.remove("hidden");
+    document.getElementById("flash-preview").src = e.target.result;
     document.getElementById("flash-analyze-btn").style.display = "";
   };
   reader.readAsDataURL(file);
 }
 
-function flashReset() {
-  flashResults = null;
-  flashPhotoDataUrl = null;
+function flashResetPhoto() {
   document.getElementById("flash-upload-label").classList.remove("hidden");
   document.getElementById("flash-preview-wrap").classList.add("hidden");
   document.getElementById("flash-analyze-btn").style.display = "none";
   document.getElementById("flash-results").classList.add("hidden");
   document.getElementById("flash-file-input").value = "";
+  flashResults = null;
+  flashControlId = null;
 }
 
 async function flashAnalyze() {
   const fileInput = document.getElementById("flash-file-input");
-  if (!fileInput.files[0]) {
-    showToast("Veuillez d'abord prendre une photo");
-    return;
-  }
+  if (!fileInput.files[0]) { showToast("Prenez une photo d'abord"); return; }
 
   const zone = document.getElementById("flash-zone")?.value || "";
   const formData = new FormData();
@@ -4147,12 +4149,9 @@ async function flashAnalyze() {
   document.getElementById("flash-loading").classList.remove("hidden");
 
   try {
-    const data = await api("/api/inventory/flash-analyze", {
-      method: "POST",
-      body: formData,
-    });
+    const data = await api("/api/inventory/flash-analyze", { method: "POST", body: formData });
     flashResults = data;
-    flashRenderResults(data);
+    flashShowResults(data);
   } catch(e) {
     showToast("Erreur : " + e.message);
     document.getElementById("flash-analyze-btn").style.display = "";
@@ -4161,17 +4160,21 @@ async function flashAnalyze() {
   }
 }
 
-function flashRenderResults(data) {
-  const resultsDiv = document.getElementById("flash-results");
-  resultsDiv.classList.remove("hidden");
+function flashShowResults(data) {
+  const el = document.getElementById("flash-results");
+  el.classList.remove("hidden");
 
-  // Confidence badge
   const confColors = { high: "#27ae60", medium: "#f39c12", low: "#e74c3c" };
   const confLabels = { high: "Élevée", medium: "Moyenne", low: "Faible" };
   const conf = data.confidence || "medium";
+  const items = data.items || [];
+  const matchedItems = items.filter(it => it.product_id != null);
+  const nbEcarts = matchedItems.filter(it => {
+    const diff = it.quantity - (it.current_stock || 0);
+    return Math.abs(diff) > 0.1;
+  }).length;
 
-  // Summary
-  document.getElementById("flash-summary").innerHTML = `
+  let html = `
     <div class="flash-summary-card">
       <div class="flash-summary-row">
         <div class="flash-summary-stat">
@@ -4179,53 +4182,73 @@ function flashRenderResults(data) {
           <div class="flash-summary-label">bouteilles détectées</div>
         </div>
         <div class="flash-summary-stat">
-          <div class="flash-summary-num">${(data.items || []).length}</div>
-          <div class="flash-summary-label">produits identifiés</div>
+          <div class="flash-summary-num">${matchedItems.length}</div>
+          <div class="flash-summary-label">produits reconnus</div>
+        </div>
+        <div class="flash-summary-stat">
+          <div class="flash-summary-num" style="color:${nbEcarts > 0 ? '#e74c3c' : '#27ae60'}">${nbEcarts}</div>
+          <div class="flash-summary-label">écarts détectés</div>
         </div>
         <div class="flash-summary-stat">
           <span class="flash-conf-badge" style="background:${confColors[conf]}">${confLabels[conf]}</span>
-          <div class="flash-summary-label">confiance</div>
+          <div class="flash-summary-label">confiance IA</div>
         </div>
       </div>
       ${data.zone_description ? `<div class="flash-zone-desc">📍 ${esc(data.zone_description)}</div>` : ""}
       ${data.observations ? `<div class="flash-observations">💡 ${esc(data.observations)}</div>` : ""}
-    </div>
-  `;
+    </div>`;
 
-  // Items list — editable
-  const items = data.items || [];
-  let itemsHtml = `<div class="flash-items-grid">`;
+  // Tableau de comparaison
+  html += `<table class="data-table flash-compare-table">
+    <thead><tr>
+      <th>Produit</th>
+      <th>Stock théorique</th>
+      <th>Compté</th>
+      <th>Écart</th>
+    </tr></thead>
+    <tbody>`;
+
   items.forEach((item, i) => {
     const matched = item.product_id != null;
-    const confItem = item.confidence || "medium";
-    const stockInfo = item.current_stock != null
-      ? `<span class="flash-stock-info">Stock actuel : ${item.current_stock}</span>`
-      : "";
-    itemsHtml += `
-      <div class="flash-item-card ${matched ? "flash-item-matched" : "flash-item-unknown"}">
-        <div class="flash-item-header">
-          <span class="flash-item-name">${esc(item.product_name)}</span>
-          <span class="flash-conf-dot" style="background:${confColors[confItem]}" title="Confiance: ${confLabels[confItem]}"></span>
+    const theo = item.current_stock != null ? item.current_stock : "—";
+    const diff = matched ? (item.quantity - (item.current_stock || 0)) : null;
+    const diffStr = diff != null ? (diff > 0 ? `+${diff}` : `${diff}`) : "—";
+    const diffColor = diff == null ? "" : diff < 0 ? "color:#e74c3c;font-weight:700" : diff > 0 ? "color:#f39c12;font-weight:700" : "color:#27ae60";
+    const confDot = `<span class="flash-conf-dot" style="background:${confColors[item.confidence||'medium']};display:inline-block;vertical-align:middle;margin-left:6px" title="Confiance: ${confLabels[item.confidence||'medium']}"></span>`;
+
+    html += `<tr>
+      <td>
+        <strong>${esc(item.product_name)}</strong>${confDot}
+        ${item.category ? `<br><small style="color:var(--text-muted)">${esc(item.category)}</small>` : ""}
+        ${!matched ? `<br><small style="color:#f39c12">⚠ Non reconnu</small>` : ""}
+        ${item.notes ? `<br><small style="color:var(--text-muted);font-style:italic">📝 ${esc(item.notes)}</small>` : ""}
+      </td>
+      <td>${theo}</td>
+      <td>
+        <div class="flash-qty-control">
+          <button class="flash-qty-btn" onclick="flashQtyAdjust(${i}, -1)">−</button>
+          <input type="number" class="flash-qty-input" id="flash-qty-${i}" value="${item.quantity}" min="0" step="1" onchange="flashRecalcDiff(${i})"/>
+          <button class="flash-qty-btn" onclick="flashQtyAdjust(${i}, 1)">+</button>
         </div>
-        ${item.category ? `<div class="flash-item-cat">${esc(item.category)}</div>` : ""}
-        <div class="flash-item-body">
-          <div class="flash-item-qty-wrap">
-            <label>Quantité</label>
-            <div class="flash-qty-control">
-              <button class="flash-qty-btn" onclick="flashQtyAdjust(${i}, -1)">−</button>
-              <input type="number" class="flash-qty-input" id="flash-qty-${i}"
-                     value="${item.quantity}" min="0" step="1"/>
-              <button class="flash-qty-btn" onclick="flashQtyAdjust(${i}, 1)">+</button>
-            </div>
-          </div>
-          ${stockInfo}
-          ${item.notes ? `<div class="flash-item-notes">📝 ${esc(item.notes)}</div>` : ""}
-        </div>
-        ${!matched ? `<div class="flash-item-unmatched">⚠ Produit non reconnu dans la base</div>` : ""}
-      </div>`;
+      </td>
+      <td style="${diffColor}" id="flash-diff-${i}">${diffStr}</td>
+    </tr>`;
   });
-  itemsHtml += `</div>`;
-  document.getElementById("flash-items-list").innerHTML = itemsHtml;
+
+  html += `</tbody></table>`;
+
+  html += `
+    <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-lg" onclick="flashSaveControl()">
+        📋 Enregistrer le contrôle
+      </button>
+      <button class="btn btn-outline" onclick="flashResetPhoto()">
+        ↩ Recommencer
+      </button>
+    </div>
+    <div id="flash-save-result" style="margin-top:16px"></div>`;
+
+  el.innerHTML = html;
 }
 
 function flashQtyAdjust(index, delta) {
@@ -4234,79 +4257,186 @@ function flashQtyAdjust(index, delta) {
   let v = parseInt(input.value) || 0;
   v = Math.max(0, v + delta);
   input.value = v;
+  flashRecalcDiff(index);
 }
 
-async function flashSubmit() {
-  if (!flashResults || !flashResults.items) {
-    showToast("Aucun résultat à valider");
-    return;
-  }
+function flashRecalcDiff(index) {
+  if (!flashResults || !flashResults.items[index]) return;
+  const item = flashResults.items[index];
+  if (item.product_id == null) return;
+  const input = document.getElementById(`flash-qty-${index}`);
+  const actual = parseFloat(input?.value) || 0;
+  const theo = item.current_stock || 0;
+  const diff = actual - theo;
+  const cell = document.getElementById(`flash-diff-${index}`);
+  if (!cell) return;
+  cell.textContent = diff > 0 ? `+${diff}` : `${diff}`;
+  cell.style.color = diff < 0 ? "#e74c3c" : diff > 0 ? "#f39c12" : "#27ae60";
+  cell.style.fontWeight = diff !== 0 ? "700" : "";
+}
 
+async function flashSaveControl() {
+  if (!flashResults || !flashResults.items) { showToast("Aucun résultat"); return; }
   const staff = document.getElementById("flash-staff")?.value || "";
-  if (!staff.trim()) {
-    showToast("Veuillez saisir le prénom du serveur");
-    return;
-  }
+  if (!staff.trim()) { showToast("Saisissez votre prénom"); return; }
+  const zone = document.getElementById("flash-zone")?.value || "";
 
-  // Build counts from the editable inputs — only matched products
   const counts = [];
   flashResults.items.forEach((item, i) => {
-    if (item.product_id == null) return;  // skip unmatched
+    if (item.product_id == null) return;
     const input = document.getElementById(`flash-qty-${i}`);
-    const qty = parseFloat(input?.value) || 0;
     counts.push({
       product_id: item.product_id,
-      actual: qty,
+      product_name: item.product_name,
+      actual: parseFloat(input?.value) || 0,
     });
   });
 
-  if (counts.length === 0) {
-    showToast("Aucun produit reconnu à mettre à jour");
-    return;
-  }
+  if (counts.length === 0) { showToast("Aucun produit reconnu"); return; }
 
   try {
-    const res = await api("/api/inventory/flash-submit", {
+    const res = await api("/api/inventory/flash-save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ counts, staff_name: staff }),
+      body: JSON.stringify({ counts, staff_name: staff, zone }),
     });
+    flashControlId = res.control_id;
+    flashRenderControlReport(res);
+    showToast("Contrôle enregistré !");
+  } catch(e) {
+    document.getElementById("flash-save-result").innerHTML =
+      `<div class="info-box" style="background:rgba(231,76,60,.12);border-color:#e74c3c">❌ ${esc(e.message)}</div>`;
+  }
+}
 
-    let html = `<div class="info-box" style="background:var(--success-bg,rgba(39,174,96,.12));border-color:var(--success-border,#27ae60)">
-      ✅ <strong>${res.results.length} produit(s) mis à jour avec succès !</strong>
+function flashRenderControlReport(res) {
+  const el = document.getElementById("flash-results");
+  const items = res.items || [];
+  const nbEcarts = items.filter(it => Math.abs(it.diff) > 0.1).length;
+
+  let html = `
+    <div class="info-box" style="background:rgba(39,174,96,.12);border-color:#27ae60">
+      📋 <strong>Contrôle enregistré</strong> — ${items.length} produits vérifiés, ${nbEcarts} écart(s) détecté(s).<br>
+      <small>Le stock n'a pas été modifié. Vous pouvez corriger les écarts produit par produit ci-dessous.</small>
     </div>`;
 
-    if (res.alerts && res.alerts.length) {
-      html += `<div class="info-box" style="background:rgba(231,76,60,.12);border-color:#e74c3c;margin-top:8px">
-        ⚠️ <strong>Alertes :</strong><br>${res.alerts.map(a => esc(a)).join("<br>")}
-      </div>`;
-    }
-
-    // Results table
-    if (res.results.length > 0) {
-      html += `<table class="data-table" style="margin-top:12px">
-        <thead><tr><th>Produit</th><th>Théorique</th><th>Réel</th><th>Écart</th></tr></thead>
-        <tbody>`;
-      res.results.forEach(r => {
-        const diffClass = r.diff < 0 ? "color:#e74c3c" : r.diff > 0 ? "color:#27ae60" : "";
-        html += `<tr>
-          <td>${esc(r.product)}</td>
-          <td>${r.theoretical}</td>
-          <td><strong>${r.actual}</strong></td>
-          <td style="${diffClass};font-weight:600">${r.diff > 0 ? "+" : ""}${r.diff}</td>
-        </tr>`;
-      });
-      html += `</tbody></table>`;
-    }
-
-    document.getElementById("flash-submit-result").innerHTML = html;
-    showToast("Stock mis à jour !");
-  } catch(e) {
-    document.getElementById("flash-submit-result").innerHTML =
-      `<div class="info-box" style="background:rgba(231,76,60,.12);border-color:#e74c3c">
-        ❌ Erreur : ${esc(e.message)}
-      </div>`;
+  if (res.alerts && res.alerts.length) {
+    html += `<div class="info-box" style="background:rgba(231,76,60,.12);border-color:#e74c3c;margin-top:8px">
+      ⚠️ <strong>Écarts signalés :</strong><br>${res.alerts.map(a => esc(a)).join("<br>")}
+    </div>`;
   }
+
+  html += `<table class="data-table flash-compare-table">
+    <thead><tr><th>Produit</th><th>Théorique</th><th>Compté</th><th>Écart</th><th>Action</th></tr></thead>
+    <tbody>`;
+
+  items.forEach(item => {
+    const diffColor = item.diff < 0 ? "color:#e74c3c;font-weight:700" : item.diff > 0 ? "color:#f39c12;font-weight:700" : "color:#27ae60";
+    const diffStr = item.diff > 0 ? `+${item.diff}` : `${item.diff}`;
+    const hasEcart = Math.abs(item.diff) > 0.1;
+
+    html += `<tr id="flash-report-row-${item.product_id}">
+      <td>
+        <strong>${esc(item.product_name)}</strong>
+        ${item.category ? `<br><small style="color:var(--text-muted)">${esc(item.category)}</small>` : ""}
+      </td>
+      <td>${item.theoretical}</td>
+      <td><strong>${item.actual}</strong></td>
+      <td style="${diffColor}">${diffStr}</td>
+      <td id="flash-action-${item.product_id}">
+        ${hasEcart
+          ? `<button class="btn btn-sm btn-primary" onclick="flashCorrectProduct(${flashControlId}, ${item.product_id})">
+               Corriger le stock
+             </button>`
+          : `<span style="color:#27ae60;font-size:13px">✓ OK</span>`}
+      </td>
+    </tr>`;
+  });
+
+  html += `</tbody></table>
+    <div style="margin-top:20px">
+      <button class="btn btn-outline" onclick="flashSwitchTab('scan')">📷 Nouveau contrôle</button>
+      <button class="btn btn-outline" onclick="flashSwitchTab('history')" style="margin-left:8px">📋 Voir l'historique</button>
+    </div>`;
+
+  el.innerHTML = html;
+}
+
+async function flashCorrectProduct(controlId, productId) {
+  const actionCell = document.getElementById(`flash-action-${productId}`);
+  if (!actionCell) return;
+  actionCell.innerHTML = `<span style="color:var(--text-muted)">…</span>`;
+
+  try {
+    const res = await api(`/api/inventory/flash-correct/${controlId}/${productId}`, { method: "POST" });
+    actionCell.innerHTML = `<span style="color:#27ae60;font-weight:600">✓ Corrigé (${res.old_stock} → ${res.new_stock})</span>`;
+    showToast(`${res.product_name} : stock corrigé`);
+  } catch(e) {
+    actionCell.innerHTML = `<span style="color:#e74c3c">${esc(e.message)}</span>`;
+  }
+}
+
+async function flashRenderHistory() {
+  const el = document.getElementById("flash-tab-content");
+  el.innerHTML = `<p style="color:var(--text-muted);padding:20px;text-align:center">Chargement…</p>`;
+
+  try {
+    const controls = await api("/api/inventory/flash-history");
+    if (!controls.length) {
+      el.innerHTML = `<div class="info-box">Aucun contrôle enregistré pour le moment.</div>`;
+      return;
+    }
+
+    let html = `<div class="flash-history-list">`;
+    controls.forEach(ctrl => {
+      const ecartClass = ctrl.nb_ecarts > 0 ? "flash-hist-ecart" : "flash-hist-ok";
+      html += `
+        <div class="flash-hist-card ${ecartClass}">
+          <div class="flash-hist-header" onclick="flashToggleDetail(${ctrl.id})">
+            <div>
+              <strong>${esc(ctrl.date)}</strong>
+              ${ctrl.zone ? ` — <span style="color:var(--text-muted)">${esc(ctrl.zone)}</span>` : ""}
+            </div>
+            <div class="flash-hist-badges">
+              <span class="flash-hist-badge">${ctrl.nb_products} produits</span>
+              ${ctrl.nb_ecarts > 0
+                ? `<span class="flash-hist-badge flash-badge-warn">${ctrl.nb_ecarts} écart(s)</span>`
+                : `<span class="flash-hist-badge flash-badge-ok">✓ RAS</span>`}
+              ${ctrl.nb_corrected > 0
+                ? `<span class="flash-hist-badge flash-badge-info">${ctrl.nb_corrected} corrigé(s)</span>`
+                : ""}
+            </div>
+          </div>
+          <div class="flash-hist-detail hidden" id="flash-hist-detail-${ctrl.id}">
+            <table class="data-table" style="margin:8px 0;font-size:13px">
+              <thead><tr><th>Produit</th><th>Théo.</th><th>Compté</th><th>Écart</th><th>Corrigé</th></tr></thead>
+              <tbody>
+                ${ctrl.items.map(it => {
+                  const dc = it.diff < 0 ? "color:#e74c3c;font-weight:700" : it.diff > 0 ? "color:#f39c12;font-weight:700" : "color:#27ae60";
+                  const ds = it.diff > 0 ? `+${it.diff}` : `${it.diff}`;
+                  return `<tr>
+                    <td>${esc(it.product_name)}</td>
+                    <td>${it.theoretical}</td>
+                    <td>${it.actual}</td>
+                    <td style="${dc}">${ds}</td>
+                    <td>${it.corrected ? `<span style="color:#27ae60">✓ ${it.corrected_at||""}</span>` : "—"}</td>
+                  </tr>`;
+                }).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    });
+    html += `</div>`;
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = `<div class="info-box" style="border-color:#e74c3c">Erreur : ${esc(e.message)}</div>`;
+  }
+}
+
+function flashToggleDetail(id) {
+  const el = document.getElementById(`flash-hist-detail-${id}`);
+  if (el) el.classList.toggle("hidden");
 }
 
 
