@@ -3579,7 +3579,7 @@ def _fetch_openweather(lat: str, lon: str, api_key: str) -> dict:
 
 @app.get("/api/weather")
 def get_weather(refresh: bool = False, db: Session = Depends(get_db)):
-    api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
+    api_key = (os.getenv("OPENWEATHER_API_KEY") or os.getenv("OPENWEATHER-API-KEY") or "").strip()
     lat     = os.getenv("WEATHER_LAT", "41.9267").strip()   # Ajaccio, Corse (défaut)
     lon     = os.getenv("WEATHER_LON", "8.7369").strip()
 
