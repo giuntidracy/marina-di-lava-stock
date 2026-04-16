@@ -4880,6 +4880,12 @@ async function renderDashboard(el) {
     ).join("");
   }
 
+  // ── Countdown fin de saison ────────────────────────────────────────────
+  const endSeason = new Date(now.getFullYear(), 9, 5); // 5 octobre
+  if (endSeason < now) endSeason.setFullYear(endSeason.getFullYear() + 1);
+  const daysLeft = Math.ceil((endSeason - now) / (1000 * 60 * 60 * 24));
+  const countdownEmoji = daysLeft > 60 ? "☀️" : daysLeft > 30 ? "🔥" : "🏁";
+
   // ── Render ─────────────────────────────────────────────────────────────
   el.innerHTML = `
     <div class="db-wrap">
@@ -4889,6 +4895,10 @@ async function renderDashboard(el) {
           <div>
             <div class="db-greeting-hello">${esc(greeting)}${userName ? ` ${esc(userName)}` : ""} 👋</div>
             <div class="db-greeting-date">${dateCap}</div>
+          </div>
+          <div class="db-countdown">
+            <div class="db-countdown-num">${countdownEmoji} ${daysLeft}</div>
+            <div class="db-countdown-label">jours avant fin de saison</div>
           </div>
         </div>
       </div>

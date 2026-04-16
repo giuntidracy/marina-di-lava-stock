@@ -1914,6 +1914,16 @@ details[open] .history-details summary::before { content: '▼'; }
   transition: transform .15s;
 }
 .db-greeting-avatar:hover { transform: scale(1.08); }
+.db-countdown {
+  margin-left: auto; text-align: right;
+}
+.db-countdown-num {
+  font-size: 20px; font-weight: 800; color: #fff;
+}
+.db-countdown-label {
+  font-size: 10px; color: rgba(255,255,255,.5); text-transform: uppercase;
+  letter-spacing: .5px;
+}
 .db-greeting-hello {
   font-size: 22px;
   font-weight: 700;
