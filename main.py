@@ -2864,6 +2864,26 @@ def submit_inventory(body: InventoryCountIn, db: Session = Depends(get_db)):
 #  INVENTAIRE FLASH — comptage par photo IA
 # ═══════════════════════════════════════════════════════════════════════════
 
+@app.get("/api/inventory/flash-test")
+def flash_test_api():
+    """Endpoint de diagnostic : vérifie que l'API Anthropic est joignable."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return {"ok": False, "error": "ANTHROPIC_API_KEY non configurée"}
+    masked = api_key[:8] + "…" + api_key[-4:] if len(api_key) > 12 else "***"
+    try:
+        import anthropic as _anthropic
+        client = _anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=20,
+            messages=[{"role": "user", "content": "Dis juste OK"}],
+        )
+        return {"ok": True, "key": masked, "response": msg.content[0].text.strip()}
+    except Exception as e:
+        return {"ok": False, "key": masked, "error": f"{type(e).__name__}: {str(e)}"}
+
+
 @app.post("/api/inventory/flash-analyze")
 async def flash_analyze_photo(
     file: UploadFile = File(...),
@@ -2954,15 +2974,13 @@ Réponds UNIQUEMENT en JSON valide avec ce format :
 }}"""
 
     import anthropic as _anthropic
-    import httpx as _httpx
-    client = _anthropic.Anthropic(
-        api_key=api_key,
-        timeout=_httpx.Timeout(120.0, connect=30.0),
-    )
+    client = _anthropic.Anthropic(api_key=api_key)
 
     # Après compression (frontend Canvas + backend Pillow fallback), c'est du JPEG
     media_type = "image/jpeg"
     b64 = base64.standard_b64encode(content).decode("utf-8")
+    img_size_kb = len(content) // 1024
+    b64_size_kb = len(b64) // 1024
 
     try:
         message = client.messages.create(
@@ -2978,8 +2996,12 @@ Réponds UNIQUEMENT en JSON valide avec ce format :
         raise HTTPException(400, detail=f"Image non lisible par l'IA : {str(e)}")
     except _anthropic.AuthenticationError:
         raise HTTPException(401, detail="Clé API Anthropic invalide")
+    except _anthropic.APIConnectionError as e:
+        raise HTTPException(502, detail=f"Connexion API impossible (image: {img_size_kb}Ko, b64: {b64_size_kb}Ko). Détail: {type(e).__name__}: {str(e)}")
+    except _anthropic.APITimeoutError as e:
+        raise HTTPException(504, detail=f"Timeout API (image: {img_size_kb}Ko). L'analyse a pris trop de temps.")
     except Exception as e:
-        raise HTTPException(500, detail=f"Erreur lors de l'analyse : {str(e)}")
+        raise HTTPException(500, detail=f"Erreur ({type(e).__name__}): {str(e)} — image: {img_size_kb}Ko")
 
     raw = message.content[0].text.strip()
 
