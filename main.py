@@ -313,10 +313,10 @@ def auth_pin(body: PinIn, request: Request):
         secs = int((locked_until - datetime.utcnow()).total_seconds())
         raise HTTPException(429, f"Trop de tentatives. Réessayez dans {secs}s")
 
-    # Utilisateurs direction : PIN → profil
+    # Utilisateurs direction : PIN → profil (configurable via env)
     direction_users = {
-        "0034": {"name": "J-Marc", "slug": "jmarc"},
-        "1143": {"name": "Lisandru", "slug": "lisandru"},
+        os.environ.get("PIN_JMARC", "0034"): {"name": "J-Marc", "slug": "jmarc"},
+        os.environ.get("PIN_LISANDRU", "1143"): {"name": "Lisandru", "slug": "lisandru"},
     }
     # Fallback : ancien MANAGER_PIN (rétrocompatible)
     legacy_pin = os.environ.get("MANAGER_PIN", "")
@@ -3174,7 +3174,9 @@ class FlashCorrectIn(BaseModel):
 
 
 @app.post("/api/inventory/flash-correct/{control_id}/{product_id}")
-def flash_correct_product(control_id: int, product_id: int, body: FlashCorrectIn = FlashCorrectIn(), db: Session = Depends(get_db)):
+def flash_correct_product(control_id: int, product_id: int, body: FlashCorrectIn = None, db: Session = Depends(get_db)):
+    if body is None:
+        body = FlashCorrectIn()
     """Corrige le stock d'UN seul produit suite à un contrôle flash.
     Accepte un body JSON optionnel {"qty": X} pour corriger la quantité avant envoi."""
     h = db.query(StockHistory).get(control_id)

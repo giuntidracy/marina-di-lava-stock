@@ -85,7 +85,7 @@ function startApp() {
   const roleBadge = document.getElementById("sidebar-role");
   if (roleBadge) {
     if (userRole === "manager" && userName) {
-      roleBadge.innerHTML = `${userPhoto ? `<img src="${userPhoto}" class="sidebar-avatar"/>` : ""}<span>${userName}</span>`;
+      roleBadge.innerHTML = `${userPhoto ? `<img src="${esc(userPhoto)}" class="sidebar-avatar"/>` : ""}<span>${esc(userName)}</span>`;
     } else {
       roleBadge.textContent = userRole === "manager" ? "Direction" : "🍸 Service";
     }
@@ -4397,7 +4397,9 @@ async function flashCorrectProduct(controlId, productId) {
   actionCell.innerHTML = `<span style="color:var(--text-muted)">…</span>`;
 
   try {
-    const res = await api(`/api/inventory/flash-correct/${controlId}/${productId}`, { method: "POST" });
+    const res = await api(`/api/inventory/flash-correct/${controlId}/${productId}`, {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({})
+    });
     actionCell.innerHTML = `<span style="color:#27ae60;font-weight:600">✓ Corrigé (${res.old_stock} → ${res.new_stock})</span>`;
     showToast(`${res.product_name} : stock corrigé`);
   } catch(e) {
