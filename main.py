@@ -2864,6 +2864,26 @@ def submit_inventory(body: InventoryCountIn, db: Session = Depends(get_db)):
 #  INVENTAIRE FLASH — comptage par photo IA
 # ═══════════════════════════════════════════════════════════════════════════
 
+@app.get("/api/inventory/flash-test")
+def flash_test_api():
+    """Endpoint de diagnostic : vérifie que l'API Anthropic est joignable."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return {"ok": False, "error": "ANTHROPIC_API_KEY non configurée"}
+    masked = api_key[:8] + "…" + api_key[-4:] if len(api_key) > 12 else "***"
+    try:
+        import anthropic as _anthropic
+        client = _anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=20,
+            messages=[{"role": "user", "content": "Dis juste OK"}],
+        )
+        return {"ok": True, "key": masked, "response": msg.content[0].text.strip()}
+    except Exception as e:
+        return {"ok": False, "key": masked, "error": f"{type(e).__name__}: {str(e)}"}
+
+
 @app.post("/api/inventory/flash-analyze")
 async def flash_analyze_photo(
     file: UploadFile = File(...),
