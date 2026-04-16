@@ -4049,6 +4049,16 @@ async function renderDashboard(el) {
     return;
   }
 
+  // ── KPIs stock (depuis allProducts déjà chargé) ────────────────────────
+  const withVal   = allProducts.filter(p => p.valeur_stock !== null);
+  const totalVal  = withVal.reduce((s, p) => s + p.valeur_stock, 0);
+  const ruptures  = allProducts.filter(p => p.stock === 0).length;
+  const stockBas  = allProducts.filter(p => p.stock > 0 && p.stock <= p.alert_threshold).length;
+  const margesOk  = allProducts.filter(p => p.marge_color === "green").length;
+  const nbProd    = allProducts.length;
+  const nbEnStock = allProducts.filter(p => p.stock > 0).length;
+  const ruptureColor = ruptures > 0 ? "#dc2626" : "#16a34a";
+
   // ── Greeting ───────────────────────────────────────────────────────────
   const now = new Date();
   const hour = now.getHours();
@@ -4144,6 +4154,32 @@ async function renderDashboard(el) {
       <div class="db-greeting">
         <div class="db-greeting-hello">${esc(greeting)} 👋</div>
         <div class="db-greeting-date">${dateCap}</div>
+      </div>
+
+      <div class="db-kpi-row" onclick="switchView('stock')">
+        <div class="db-kpi">
+          <div class="db-kpi-label">💰 Valeur stock</div>
+          <div class="db-kpi-val">€${totalVal.toFixed(0)}</div>
+          <div class="db-kpi-sub">${withVal.length} valorisés</div>
+        </div>
+        <div class="db-kpi-sep"></div>
+        <div class="db-kpi">
+          <div class="db-kpi-label">📦 Produits</div>
+          <div class="db-kpi-val">${nbProd}</div>
+          <div class="db-kpi-sub">${nbEnStock} en stock</div>
+        </div>
+        <div class="db-kpi-sep"></div>
+        <div class="db-kpi">
+          <div class="db-kpi-label">🚨 Ruptures</div>
+          <div class="db-kpi-val" style="color:${ruptureColor}">${ruptures}</div>
+          <div class="db-kpi-sub">${stockBas > 0 ? `⚠️ ${stockBas} stock bas` : "Stock sain ✅"}</div>
+        </div>
+        <div class="db-kpi-sep"></div>
+        <div class="db-kpi">
+          <div class="db-kpi-label">📈 Marge ≥ 70%</div>
+          <div class="db-kpi-val" style="color:#16a34a">${margesOk}</div>
+          <div class="db-kpi-sub">sur ${allProducts.filter(p => p.marge !== null).length} valorisés</div>
+        </div>
       </div>
 
       <div class="db-grid">

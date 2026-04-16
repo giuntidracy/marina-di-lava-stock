@@ -1911,6 +1911,35 @@ details[open] .history-details summary::before { content: '▼'; }
   text-transform: capitalize;
 }
 
+.db-kpi-row {
+  display: flex;
+  align-items: stretch;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  margin-bottom: 18px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: box-shadow .15s;
+}
+.db-kpi-row:hover { box-shadow: 0 4px 18px rgba(0,0,0,.08); }
+.db-kpi {
+  flex: 1;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.db-kpi-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--text-muted); }
+.db-kpi-val   { font-size: 28px; font-weight: 800; color: var(--text); line-height: 1.1; }
+.db-kpi-sub   { font-size: 12px; color: var(--text-muted); }
+.db-kpi-sep   { width: 1px; background: var(--border); margin: 14px 0; flex-shrink: 0; }
+@media (max-width: 680px) {
+  .db-kpi-row { flex-wrap: wrap; }
+  .db-kpi { flex: 1 1 45%; }
+  .db-kpi-sep { display: none; }
+}
+
 .db-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
