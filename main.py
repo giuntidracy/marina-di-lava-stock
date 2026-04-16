@@ -1898,7 +1898,7 @@ async def analyze_delivery(file: UploadFile = File(...)):
             pass
 
     # ── Pour les photos (ou si pdfplumber n'a rien extrait) : Claude ──
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         raise HTTPException(400, detail="Clé API Anthropic non configurée. Vérifiez le fichier .env")
 
@@ -2867,7 +2867,7 @@ def submit_inventory(body: InventoryCountIn, db: Session = Depends(get_db)):
 @app.get("/api/inventory/flash-test")
 def flash_test_api():
     """Endpoint de diagnostic : vérifie que l'API Anthropic est joignable."""
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip().strip()
     if not api_key:
         return {"ok": False, "error": "ANTHROPIC_API_KEY non configurée"}
     masked = api_key[:8] + "…" + api_key[-4:] if len(api_key) > 12 else "***"
@@ -2925,7 +2925,7 @@ async def flash_analyze_photo(
     except Exception:
         pass  # si Pillow échoue, on envoie l'image originale
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         raise HTTPException(400, detail="Clé API Anthropic non configurée. Vérifiez le fichier .env")
 
