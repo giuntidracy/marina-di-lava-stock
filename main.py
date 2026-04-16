@@ -2861,6 +2861,188 @@ def submit_inventory(body: InventoryCountIn, db: Session = Depends(get_db)):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  INVENTAIRE FLASH — comptage par photo IA
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/inventory/flash-analyze")
+async def flash_analyze_photo(
+    file: UploadFile = File(...),
+    zone: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Analyse une photo de frigo/étagère et détecte les bouteilles visibles.
+    Utilise Claude vision pour identifier et compter les bouteilles."""
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(400, detail="Image trop volumineuse (max 10 Mo)")
+
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise HTTPException(400, detail="Clé API Anthropic non configurée. Vérifiez le fichier .env")
+
+    # Récupérer la liste des produits connus pour aider l'IA à identifier
+    all_prods = db.query(Product).filter(Product.unit != 'Fût').order_by(Product.category, Product.name).all()
+    known_products = []
+    for p in all_prods:
+        if p.unit and 'Carton' in p.unit:
+            continue
+        known_products.append({"id": p.id, "name": p.name, "category": p.category})
+
+    product_list_str = "\n".join(
+        f"- ID {p['id']}: {p['name']} (catégorie: {p['category']})"
+        for p in known_products
+    )
+
+    prompt_text = f"""Tu analyses une photo d'un frigo, d'une étagère ou d'une zone de stockage de boissons dans un bar/restaurant.
+
+TÂCHE : Identifie et compte TOUTES les bouteilles, canettes et contenants de boissons visibles sur la photo.
+
+INSTRUCTIONS :
+1. Pour chaque type de produit visible, indique le nombre exact de bouteilles/canettes.
+2. Essaie de reconnaître les marques et types de produits (Coca-Cola, Pietra, Orezza, etc.)
+3. Si tu vois des bouteilles partiellement cachées, inclus-les dans ton comptage avec une note.
+4. Regroupe les produits identiques ensemble.
+5. Sois précis : il vaut mieux signaler une incertitude que donner un chiffre faux.
+
+PRODUITS CONNUS DANS NOTRE BASE :
+{product_list_str}
+
+IMPORTANT : Quand tu reconnais un produit, associe-le à l'ID correspondant de la liste ci-dessus.
+Si tu ne reconnais pas un produit ou s'il n'est pas dans la liste, mets product_id à null.
+
+Zone indiquée par l'utilisateur : {zone or "non précisée"}
+
+Réponds UNIQUEMENT en JSON valide avec ce format :
+{{
+  "zone_description": "Description courte de ce que tu vois (ex: frigo principal, étagère haute...)",
+  "total_bottles": 22,
+  "confidence": "high/medium/low",
+  "items": [
+    {{
+      "product_name": "Coca-Cola 33cl",
+      "product_id": 15,
+      "quantity": 6,
+      "confidence": "high",
+      "notes": ""
+    }},
+    {{
+      "product_name": "Bouteille inconnue (verre vert)",
+      "product_id": null,
+      "quantity": 2,
+      "confidence": "low",
+      "notes": "partiellement cachées derrière les Coca"
+    }}
+  ],
+  "observations": "Remarques générales (éclairage, visibilité, bouteilles possiblement cachées...)"
+}}"""
+
+    import anthropic as _anthropic
+    client = _anthropic.Anthropic(api_key=api_key)
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "jpg"
+    media_map = {
+        "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "png": "image/png", "webp": "image/webp",
+        "gif": "image/gif", "heic": "image/jpeg",
+    }
+    media_type = media_map.get(ext, "image/jpeg")
+    b64 = base64.standard_b64encode(content).decode("utf-8")
+
+    try:
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": [
+                {"type": "image",
+                 "source": {"type": "base64", "media_type": media_type, "data": b64}},
+                {"type": "text", "text": prompt_text},
+            ]}],
+        )
+    except _anthropic.BadRequestError as e:
+        raise HTTPException(400, detail=f"Image non lisible par l'IA : {str(e)}")
+    except _anthropic.AuthenticationError:
+        raise HTTPException(401, detail="Clé API Anthropic invalide")
+    except Exception as e:
+        raise HTTPException(500, detail=f"Erreur lors de l'analyse : {str(e)}")
+
+    raw = message.content[0].text.strip()
+
+    # Parser le JSON de la réponse
+    obj_start = raw.find("{")
+    obj_end = raw.rfind("}") + 1
+    if obj_start == -1:
+        raise HTTPException(400, detail="L'IA n'a pas pu analyser cette image. Essayez avec un meilleur éclairage.")
+
+    try:
+        result = json.loads(raw[obj_start:obj_end])
+    except json.JSONDecodeError:
+        raise HTTPException(400, detail="L'analyse n'a pas produit un résultat exploitable. Réessayez.")
+
+    # Enrichir chaque item avec le stock théorique actuel
+    for item in result.get("items", []):
+        pid = item.get("product_id")
+        if pid:
+            prod = db.query(Product).get(pid)
+            if prod:
+                item["current_stock"] = round(prod.stock, 3)
+                item["category"] = prod.category
+            else:
+                item["product_id"] = None
+                item["current_stock"] = None
+                item["category"] = None
+        else:
+            item["current_stock"] = None
+            item["category"] = None
+
+    return result
+
+
+@app.post("/api/inventory/flash-submit")
+def flash_submit_counts(body: InventoryCountIn, db: Session = Depends(get_db)):
+    """Valide les comptages issus de l'inventaire flash (photo IA).
+    Même logique que l'inventaire classique mais avec event_type dédié."""
+    results = []
+    alerts = []
+    for item in body.counts:
+        pid = item.get("product_id") or item.get("produit_id")
+        if not pid:
+            continue
+        p = db.query(Product).get(pid)
+        if not p:
+            continue
+        theoretical = p.stock
+        actual = float(item.get("actual", item.get("quantite_reelle", 0)))
+        diff = actual - theoretical
+        sess = InventorySession(
+            product_id=p.id,
+            theoretical_qty=theoretical,
+            actual_qty=actual,
+            difference=diff,
+            staff_name=body.staff_name,
+        )
+        db.add(sess)
+        p.stock = actual
+        result = {
+            "product": p.name,
+            "theoretical": round(theoretical, 3),
+            "actual": actual,
+            "diff": round(diff, 3),
+        }
+        results.append(result)
+        if diff < -0.5:
+            alerts.append(f"Écart anormal : {p.name} (écart {diff:+.3f})")
+            log_event(db, "alerte_inventaire_flash", f"Écart anormal (flash) : {p.name}", result)
+
+    log_event(db, "inventaire_flash", f"Inventaire Flash photo — {len(results)} produits comptés", {
+        "staff": body.staff_name,
+        "results": results,
+        "alerts": alerts,
+    })
+    db.commit()
+    return {"ok": True, "results": results, "alerts": alerts}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  MODULE ÉVÉNEMENTS / BOOST
 # ═══════════════════════════════════════════════════════════════════════════
 
