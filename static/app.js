@@ -92,6 +92,8 @@ function startApp() {
     btn.addEventListener("click", () => btn.id !== "logout-btn" && switchView(btn.dataset.view));
   });
 
+  document.getElementById("scan-fab").classList.remove("hidden");
+
   const defaultView = userRole === "manager" ? "stock" : "inventory";
   switchView(defaultView);
   loadAll();
@@ -215,6 +217,148 @@ function openModal(html) {
 }
 function closeModal() {
   document.getElementById("modal-overlay").classList.add("hidden");
+}
+
+// ── Barcode Scanner ────────────────────────────────────────────────────────
+let _html5QrScanner = null;
+let _scannerCallback = null;
+let _scannerMode = "global"; // "global" | "field"
+let _scannerFieldId = null;
+
+function openBarcodeScanner(fieldId) {
+  _scannerMode = fieldId ? "field" : "global";
+  _scannerFieldId = fieldId || null;
+  openModal(`
+    <div class="scan-modal-header">📷 Scanner un code-barres</div>
+    <div class="scan-modal-sub">${fieldId ? "Pointez la caméra vers le code-barres du produit" : "Pointez la caméra vers un produit pour le retrouver"}</div>
+    <div id="scan-reader" class="scan-reader"></div>
+    <div id="scan-result" class="scan-result hidden"></div>
+    <button class="btn btn-outline" style="margin-top:12px;width:100%" onclick="stopBarcodeScanner()">✕ Annuler</button>
+  `);
+
+  setTimeout(() => {
+    _html5QrScanner = new Html5Qrcode("scan-reader");
+    const config = { fps: 10, qrbox: { width: 280, height: 120 }, aspectRatio: 1.5 };
+    _html5QrScanner.start(
+      { facingMode: "environment" },
+      config,
+      (decodedText) => _onBarcodeScanned(decodedText),
+      () => {}
+    ).catch(err => {
+      document.getElementById("scan-reader").innerHTML =
+        `<div style="color:#DC2626;padding:20px;text-align:center">❌ Caméra inaccessible<br><small>${err}</small></div>`;
+    });
+  }, 200);
+}
+
+function openGlobalScanner() {
+  openBarcodeScanner(null);
+}
+
+async function _onBarcodeScanned(code) {
+  stopBarcodeScanner(false);
+
+  if (_scannerMode === "field" && _scannerFieldId) {
+    // Mode saisie : remplir le champ barcode dans le formulaire
+    closeModal();
+    const field = document.getElementById(_scannerFieldId);
+    if (field) {
+      field.value = code;
+      field.style.borderColor = "var(--accent)";
+      setTimeout(() => field.style.borderColor = "", 2000);
+    }
+    showToast(`✅ Code scanné : ${code}`);
+    return;
+  }
+
+  // Mode global : rechercher le produit
+  try {
+    const product = await api(`/api/products/by-barcode/${encodeURIComponent(code)}`);
+    closeModal();
+    // Ouvrir action rapide pour ce produit
+    openQuickScanAction(product);
+  } catch(e) {
+    // Produit non trouvé → proposer de l'assigner
+    closeModal();
+    openModal(`
+      <div class="scan-modal-header">📷 Code scanné</div>
+      <div style="font-family:monospace;font-size:13px;background:var(--bg);padding:8px 12px;border-radius:6px;margin:10px 0">${code}</div>
+      <div class="kpi-alert-bar">Aucun produit associé à ce code-barres.</div>
+      <p style="font-size:13px;color:var(--text-muted);margin-top:12px">Voulez-vous assigner ce code à un produit existant ?</p>
+      <div style="margin-top:12px">
+        <select id="scan-assign-product" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px">
+          <option value="">-- Choisir un produit --</option>
+          ${allProducts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+        <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
+        <button class="btn btn-primary" onclick="assignBarcodeToProduct('${code}')">Assigner</button>
+      </div>
+    `);
+  }
+}
+
+function openQuickScanAction(product) {
+  const stock = product.stock;
+  const stockStr = stock % 1 < 0.05 ? Math.round(stock) : parseFloat(stock.toFixed(1));
+  const stockColor = stock === 0 ? "#DC2626" : stock <= product.alert_threshold ? "#B45309" : "#15803D";
+
+  openModal(`
+    <div class="scan-modal-header">📦 Produit trouvé</div>
+    <div style="margin:14px 0">
+      <div style="font-size:18px;font-weight:800;color:var(--primary)">${esc(product.name)}</div>
+      <div style="font-size:13px;color:var(--text-muted)">${esc(product.category)}</div>
+      <div style="margin-top:10px;font-size:28px;font-weight:900;color:${stockColor}">${stockStr} <span style="font-size:14px;font-weight:500">unités</span></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
+      <button class="btn btn-outline" onclick="closeModal();openProductForm(${product.id})">✏️ Modifier</button>
+      <button class="btn btn-primary" onclick="closeModal();navigateTo('inventory');setTimeout(()=>preselectInventoryProduct(${product.id}),400)">📤 Sortie réserve</button>
+    </div>
+    <button class="btn btn-outline" style="width:100%;margin-top:8px" onclick="closeModal();openGlobalScanner()">📷 Scanner un autre</button>
+  `);
+}
+
+async function assignBarcodeToProduct(barcode) {
+  const sel = document.getElementById("scan-assign-product");
+  if (!sel || !sel.value) { alert("Choisissez un produit"); return; }
+  const pid = parseInt(sel.value);
+  const product = allProducts.find(p => p.id === pid);
+  if (!product) return;
+
+  try {
+    await api(`/api/products/${pid}`, {
+      method: "PUT",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ ...product, barcode })
+    });
+    allProducts = await api("/api/products");
+    closeModal();
+    showToast(`✅ Code-barres assigné à ${product.name}`);
+  } catch(e) {
+    alert("Erreur : " + e.message);
+  }
+}
+
+function stopBarcodeScanner(closeModalToo = true) {
+  if (_html5QrScanner) {
+    _html5QrScanner.stop().catch(() => {});
+    _html5QrScanner = null;
+  }
+  if (closeModalToo) closeModal();
+}
+
+function navigateTo(view) {
+  const btn = document.querySelector(`.nav-btn[data-view="${view}"]`);
+  if (btn) btn.click();
+}
+
+function preselectInventoryProduct(productId) {
+  const sel = document.getElementById("inv-product-select");
+  if (sel) {
+    sel.value = productId;
+    sel.dispatchEvent(new Event("change"));
+  }
 }
 
 // ── KPI Detail Modals ──────────────────────────────────────
@@ -751,6 +895,13 @@ function openProductForm(id) {
           </label>
         </div>
       </div>
+      <div class="form-group">
+        <label>Code-barres EAN</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" name="barcode" id="barcode-input" inputmode="numeric" placeholder="ex: 3124480187086" value="${p && p.barcode ? esc(p.barcode) : ''}"/>
+          <button type="button" class="btn btn-outline scan-btn" onclick="openBarcodeScanner('barcode-input')">📷 Scanner</button>
+        </div>
+      </div>
       <div class="form-group" style="margin-top:8px">
         <label>Fournisseurs &amp; Prix par fournisseur</label>
         <div id="suppliers-list" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
@@ -834,6 +985,7 @@ async function submitProductForm(e, id) {
     purchase_price:  fd.get("purchase_price") ? parseFloat(fd.get("purchase_price")) : (primary?.purchase_price || null),
     sale_price_ttc:  fd.get("sale_price_ttc")  ? parseFloat(fd.get("sale_price_ttc"))  : null,
     is_estimated:    fd.get("is_estimated") === "on",
+    barcode:         fd.get("barcode") || "",
   };
   try {
     let pid = id;

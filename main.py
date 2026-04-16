@@ -53,6 +53,12 @@ with engine.connect() as _conn:
         _conn.commit()
     except Exception:
         pass
+    # barcode sur products
+    try:
+        _conn.execute(_text("ALTER TABLE products ADD COLUMN barcode TEXT DEFAULT ''"))
+        _conn.commit()
+    except Exception:
+        pass
 
     # Migration données : product_suppliers depuis supplier_id + purchase_price existants
     try:
@@ -150,6 +156,7 @@ def calc_product(p: Product) -> dict:
         "sale_price_ttc": p.sale_price_ttc,
         "prix_estime": p.is_estimated,
         "is_estimated": p.is_estimated,
+        "barcode": p.barcode or "",
         "cout_unitaire": round(cout_unitaire, 4) if cout_unitaire is not None else None,
         "marge": round(marge, 1) if marge is not None else None,
         "marge_color": marge_color,
@@ -712,6 +719,7 @@ class ProductIn(BaseModel):
     purchase_price: Optional[float] = None
     sale_price_ttc: Optional[float] = None
     is_estimated: bool = False
+    barcode: str = ""
 
 
 @app.get("/api/produits")
@@ -728,6 +736,14 @@ def create_product(body: ProductIn, db: Session = Depends(get_db)):
     db.add(p)
     db.commit()
     db.refresh(p)
+    return calc_product(p)
+
+
+@app.get("/api/products/by-barcode/{code}")
+def get_product_by_barcode(code: str, db: Session = Depends(get_db)):
+    p = db.query(Product).filter(Product.barcode == code).first()
+    if not p:
+        raise HTTPException(404, detail="Produit non trouvé")
     return calc_product(p)
 
 

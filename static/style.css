@@ -1195,3 +1195,38 @@ details[open] .history-details summary::before { content: '▼'; }
   .ord-qty-input { width: 64px; }
   .ord-price-input { width: 80px; }
 }
+
+/* ══════════════════════════════════════════════
+   BARCODE SCANNER
+══════════════════════════════════════════════ */
+.scan-fab {
+  position: fixed; bottom: 24px; right: 24px; z-index: 200;
+  width: 56px; height: 56px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), #A8872A);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; cursor: pointer;
+  box-shadow: 0 4px 20px rgba(201,168,76,.5);
+  transition: transform .15s, box-shadow .15s;
+}
+.scan-fab:hover { transform: scale(1.08); box-shadow: 0 6px 28px rgba(201,168,76,.6); }
+.scan-fab span { line-height: 1; }
+
+.scan-modal-header {
+  font-size: 17px; font-weight: 800; color: var(--primary);
+  margin-bottom: 6px;
+}
+.scan-modal-sub {
+  font-size: 12.5px; color: var(--text-muted); margin-bottom: 14px;
+}
+.scan-reader {
+  width: 100%; border-radius: 12px; overflow: hidden;
+  background: #000; min-height: 200px;
+}
+.scan-reader video { width: 100% !important; border-radius: 12px; }
+.scan-result {
+  margin-top: 10px; padding: 10px 14px;
+  background: rgba(201,168,76,.1); border: 1px solid rgba(201,168,76,.3);
+  border-radius: 8px; font-family: monospace; font-size: 14px;
+  color: var(--primary); font-weight: 700;
+}
+.scan-btn { white-space: nowrap; flex-shrink: 0; }

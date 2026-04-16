@@ -31,6 +31,7 @@ class Product(Base):
     purchase_price = Column(Float, nullable=True)
     sale_price_ttc = Column(Float, nullable=True)
     is_estimated = Column(Boolean, default=False)
+    barcode = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
