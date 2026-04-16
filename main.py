@@ -2954,9 +2954,13 @@ Réponds UNIQUEMENT en JSON valide avec ce format :
 }}"""
 
     import anthropic as _anthropic
-    client = _anthropic.Anthropic(api_key=api_key)
+    import httpx as _httpx
+    client = _anthropic.Anthropic(
+        api_key=api_key,
+        timeout=_httpx.Timeout(120.0, connect=30.0),
+    )
 
-    # Après compression Pillow, c'est toujours du JPEG
+    # Après compression (frontend Canvas + backend Pillow fallback), c'est du JPEG
     media_type = "image/jpeg"
     b64 = base64.standard_b64encode(content).decode("utf-8")
 

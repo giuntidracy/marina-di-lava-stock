@@ -4113,15 +4113,38 @@ function flashRenderScan() {
   `;
 }
 
+let flashCompressedBlob = null;  // photo compressée prête à envoyer
+
 function flashPhotoSelected(input) {
   const file = input.files[0];
   if (!file) return;
+
+  // Compresser l'image côté téléphone avant upload (réduit de ~8Mo à ~150Ko)
+  const img = new Image();
   const reader = new FileReader();
   reader.onload = (e) => {
-    document.getElementById("flash-upload-label").classList.add("hidden");
-    document.getElementById("flash-preview-wrap").classList.remove("hidden");
-    document.getElementById("flash-preview").src = e.target.result;
-    document.getElementById("flash-analyze-btn").style.display = "";
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const MAX = 1400;
+      let w = img.width, h = img.height;
+      if (w > MAX || h > MAX) {
+        if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+        else       { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      canvas.toBlob((blob) => {
+        flashCompressedBlob = blob;
+        document.getElementById("flash-upload-label").classList.add("hidden");
+        document.getElementById("flash-preview-wrap").classList.remove("hidden");
+        document.getElementById("flash-preview").src = URL.createObjectURL(blob);
+        document.getElementById("flash-analyze-btn").style.display = "";
+        const sizeKo = Math.round(blob.size / 1024);
+        showToast(`Photo compressée : ${sizeKo} Ko`);
+      }, "image/jpeg", 0.80);
+    };
+    img.src = e.target.result;
   };
   reader.readAsDataURL(file);
 }
@@ -4134,15 +4157,15 @@ function flashResetPhoto() {
   document.getElementById("flash-file-input").value = "";
   flashResults = null;
   flashControlId = null;
+  flashCompressedBlob = null;
 }
 
 async function flashAnalyze() {
-  const fileInput = document.getElementById("flash-file-input");
-  if (!fileInput.files[0]) { showToast("Prenez une photo d'abord"); return; }
+  if (!flashCompressedBlob) { showToast("Prenez une photo d'abord"); return; }
 
   const zone = document.getElementById("flash-zone")?.value || "";
   const formData = new FormData();
-  formData.append("file", fileInput.files[0]);
+  formData.append("file", flashCompressedBlob, "photo.jpg");
   formData.append("zone", zone);
 
   document.getElementById("flash-analyze-btn").style.display = "none";
