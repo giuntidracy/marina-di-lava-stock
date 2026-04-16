@@ -1527,7 +1527,7 @@ async function triggerCashpadSync() {
   if (btn) { btn.disabled = true; btn.textContent = "⏳ Synchronisation…"; }
 
   try {
-    const r = await api("/api/cashpad/sync", "POST");
+    const r = await api("/api/cashpad/sync", { method: "POST" });
     const msg = r.archives === 0
       ? `<div class="cp-sync-ok">✅ Stock déjà à jour — aucune nouvelle archive.</div>`
       : `<div class="cp-sync-ok">
@@ -1550,7 +1550,7 @@ async function triggerCashpadSync() {
 
 async function resetCashpadCursor() {
   if (!confirm("Réinitialiser le curseur ?\n\nLe prochain sync re-téléchargera TOUTES les archives depuis le début.\nCela peut créer des doublons si les données ont déjà été importées.")) return;
-  await api("/api/cashpad/reset-cursor", "POST");
+  await api("/api/cashpad/reset-cursor", { method: "POST" });
   loadCashpadStatus();
 }
 
@@ -3667,10 +3667,11 @@ async function saveEvent(id) {
   if (!date) { alert("Date requise"); return; }
   const body = { name, event_type: type, date, notes };
   try {
+    const opts = { method: id ? "PUT" : "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) };
     if (id) {
-      await api(`/api/events/${id}`, "PUT", body);
+      await api(`/api/events/${id}`, opts);
     } else {
-      await api("/api/events", "POST", body);
+      await api("/api/events", opts);
     }
     cancelEventForm();
     loadEvents();
@@ -3681,7 +3682,7 @@ async function saveEvent(id) {
 
 async function deleteEvent(id) {
   if (!confirm("Supprimer cet événement ?")) return;
-  await api(`/api/events/${id}`, "DELETE");
+  await api(`/api/events/${id}`, { method: "DELETE" });
   loadEvents();
 }
 
@@ -4031,9 +4032,9 @@ async function saveLoss() {
   if (!qty || qty <= 0)   { alert("Quantité invalide"); return; }
 
   try {
-    const res = await api("/api/losses", "POST", {
-      product_id: pid, quantity: qty, reason, date, staff_name: staff,
-      notes, update_stock: update
+    const res = await api("/api/losses", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ product_id: pid, quantity: qty, reason, date, staff_name: staff, notes, update_stock: update })
     });
     cancelLossForm();
     loadShrinkage();
@@ -4047,7 +4048,7 @@ async function saveLoss() {
 
 async function deleteLoss(id) {
   if (!confirm("Supprimer cette perte déclarée ?\n(Le stock sera restitué si la déduction avait été faite.)")) return;
-  await api(`/api/losses/${id}`, "DELETE");
+  await api(`/api/losses/${id}`, { method: "DELETE" });
   loadShrinkage();
 }
 
