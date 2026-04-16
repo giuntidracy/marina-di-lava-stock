@@ -23,7 +23,7 @@ load_dotenv(override=True)
 from typing import Optional, List
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel
@@ -137,7 +137,7 @@ OPEN_PATHS = {"/api/auth", "/api/auth/service"}
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     # Laisser passer : pages HTML, assets statiques, endpoints d'auth
-    if not path.startswith("/api/") or path in OPEN_PATHS:
+    if not path.startswith("/api/") or path in OPEN_PATHS or path.startswith("/api/auth/avatar/"):
         return await call_next(request)
     # Vérifier le token
     auth = request.headers.get("Authorization", "")
@@ -304,7 +304,7 @@ def auth_service():
     return {"ok": True, "role": "service", "token": token}
 
 @app.post("/api/auth")
-def auth_pin(body: PinIn, request: Request):
+def auth_pin(body: PinIn, request: Request, db: Session = Depends(get_db)):
     """Connexion direction — vérifie PIN avec anti-brute-force. Supporte plusieurs utilisateurs."""
     ip = request.client.host if request.client else "unknown"
     failure = _pin_failures.get(ip, {})
@@ -327,12 +327,11 @@ def auth_pin(body: PinIn, request: Request):
     if user:
         _pin_failures.pop(ip, None)
         slug = user["slug"]
-        # Chercher une photo uploadée (jpg/png/webp), sinon SVG par défaut
-        photo = f"/static/avatars/{slug}.svg"
-        for ext in ("jpg", "jpeg", "png", "webp"):
-            if os.path.isfile(f"static/avatars/{slug}.{ext}"):
-                photo = f"/static/avatars/{slug}.{ext}"
-                break
+        # Chercher un avatar en base (persistant), sinon SVG par défaut
+        if _get_setting(db, f"avatar_{slug}_data", ""):
+            photo = f"/api/auth/avatar/{slug}"
+        else:
+            photo = f"/static/avatars/{slug}.svg"
         token = secrets.token_urlsafe(32)
         _sessions[token] = {
             "role": "manager",
@@ -354,8 +353,8 @@ def auth_pin(body: PinIn, request: Request):
 
 
 @app.post("/api/auth/avatar")
-async def upload_avatar(file: UploadFile = File(...), request: Request = None):
-    """Upload une photo de profil pour l'utilisateur connecté."""
+async def upload_avatar(file: UploadFile = File(...), request: Request = None, db: Session = Depends(get_db)):
+    """Upload une photo de profil — stockée en base (persistant sur Railway)."""
     auth = request.headers.get("Authorization", "")
     token = auth[7:] if auth.startswith("Bearer ") else ""
     session = _sessions.get(token)
@@ -371,15 +370,29 @@ async def upload_avatar(file: UploadFile = File(...), request: Request = None):
 
     slug = user_name.lower().replace("-", "").replace(" ", "")
     ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "jpg"
-    if ext not in ("jpg", "jpeg", "png", "webp"):
-        ext = "jpg"
-    avatar_path = f"static/avatars/{slug}.{ext}"
-    with open(avatar_path, "wb") as f:
-        f.write(content)
+    media_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+    media_type = media_map.get(ext, "image/jpeg")
 
-    photo_url = f"/{avatar_path}"
+    b64 = base64.standard_b64encode(content).decode("utf-8")
+    _set_setting(db, f"avatar_{slug}_data", b64)
+    _set_setting(db, f"avatar_{slug}_type", media_type)
+    db.commit()
+
+    photo_url = f"/api/auth/avatar/{slug}?t={int(datetime.utcnow().timestamp())}"
     session["user_photo"] = photo_url
     return {"ok": True, "photo": photo_url}
+
+
+@app.get("/api/auth/avatar/{slug}")
+def serve_avatar(slug: str, db: Session = Depends(get_db)):
+    """Sert un avatar stocké en base de données."""
+    b64 = _get_setting(db, f"avatar_{slug}_data", "")
+    if not b64:
+        raise HTTPException(404, detail="Avatar non trouvé")
+    media_type = _get_setting(db, f"avatar_{slug}_type", "image/jpeg")
+    data = base64.standard_b64decode(b64)
+    return Response(content=data, media_type=media_type,
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/api/auth/me")
