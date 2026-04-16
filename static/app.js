@@ -2764,18 +2764,19 @@ let _orderEditId = null;
 async function renderOrders(el) {
   el.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">Chargement…</div>`;
   try {
-    const [orders, suppliers] = await Promise.all([
+    const [orders, suppliers, serviceAlerts] = await Promise.all([
       api("/api/orders"),
       api("/api/suppliers"),
+      api("/api/service-alerts?status=open").catch(() => []),
     ]);
     _ordersData = orders;
-    el.innerHTML = _buildOrdersListHTML(orders, suppliers);
+    el.innerHTML = _buildOrdersListHTML(orders, suppliers, serviceAlerts);
   } catch(e) {
     el.innerHTML = `<div style="padding:40px;color:#DC2626">Erreur : ${e.message}</div>`;
   }
 }
 
-function _buildOrdersListHTML(orders, suppliers) {
+function _buildOrdersListHTML(orders, suppliers, serviceAlerts = []) {
   const statusLabel = { draft: "Brouillon", sent: "Envoyée", partial: "Partielle", received: "Reçue" };
   const statusIcon  = { draft: "📝", sent: "📤", partial: "📦", received: "✅" };
   const statusClass = { draft: "ord-draft", sent: "ord-sent", partial: "ord-partial", received: "ord-received" };
@@ -2851,6 +2852,28 @@ function _buildOrdersListHTML(orders, suppliers) {
     </div>
   </div>
 
+  <!-- Alertes service -->
+  ${serviceAlerts.length > 0 ? `
+  <div class="ord-section-title" style="color:#e74c3c">🚨 Signalements du service (${serviceAlerts.length})</div>
+  <div class="ord-alerts-grid">
+    ${serviceAlerts.map(a => `
+      <div class="ord-alert-card ${a.is_rupture ? 'ord-alert-rupture' : 'ord-alert-low'}">
+        <div class="ord-alert-top">
+          <div>
+            <strong>${esc(a.product_name)}</strong>
+            ${a.is_rupture ? '<span class="sa-badge-rupture">RUPTURE</span>' : `<small style="color:#f39c12;font-weight:600">${a.reported_stock} restant</small>`}
+          </div>
+          <small style="color:var(--text-muted)">${esc(a.created_at)} — ${esc(a.staff_name)}</small>
+        </div>
+        ${a.notes ? `<div style="font-size:12px;color:var(--text-muted);font-style:italic;margin:4px 0">📝 ${esc(a.notes)}</div>` : ""}
+        <div class="ord-alert-actions">
+          ${a.supplier_name ? `<button class="btn btn-sm btn-primary" onclick="ordCreateFromAlert(${a.id}, ${a.product_id}, '${esc(a.supplier_name).replace(/'/g,"\\'")}')">Commander chez ${esc(a.supplier_name)}</button>` : ""}
+          <button class="btn btn-sm btn-outline" onclick="ordAckAlert(${a.id})">✓ Vu</button>
+        </div>
+      </div>
+    `).join("")}
+  </div>` : ""}
+
   <!-- Cartes fournisseurs -->
   <div class="ord-section-title">Commander par fournisseur</div>
   <div class="ord-supplier-grid">${suppCards}</div>
@@ -2866,6 +2889,26 @@ function _buildOrdersListHTML(orders, suppliers) {
       <tbody id="orders-tbody">${orderRows}</tbody>
     </table>
   </div>`;
+}
+
+async function ordAckAlert(alertId) {
+  try {
+    await api(`/api/service-alerts/${alertId}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({}) });
+    showToast("Alerte marquée comme vue");
+    renderOrders(document.getElementById("app"));
+  } catch(e) { showToast("Erreur : " + e.message); }
+}
+
+async function ordCreateFromAlert(alertId, productId, supplierName) {
+  // Find the supplier
+  const suppliers = allSuppliers.length ? allSuppliers : await api("/api/suppliers");
+  const supp = suppliers.find(s => s.name === supplierName);
+  if (supp) {
+    await api(`/api/service-alerts/${alertId}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({}) });
+    openOrderForm(supp.id, supp.name);
+  } else {
+    showToast("Fournisseur introuvable — créez la commande manuellement");
+  }
 }
 
 async function openOrderForm(supplierId, suppName) {
@@ -5130,6 +5173,31 @@ async function renderDashboard(el) {
           ${topsHtml}
         </div>
 
+        <div class="db-card db-card-full" id="db-manque-gagner">
+          <div class="db-card-title">💸 Manque à gagner (ruptures)</div>
+          <p class="db-empty">Chargement…</p>
+        </div>
+
       </div>
     </div>`;
+
+  // Charger le manque à gagner en parallèle
+  api("/api/manque-a-gagner").then(mag => {
+    const el = document.getElementById("db-manque-gagner");
+    if (!el) return;
+    if (!mag.items || mag.items.length === 0) {
+      el.innerHTML = `<div class="db-card-title">💸 Manque à gagner (ruptures)</div>
+        <p class="db-empty">✅ Aucune perte due aux ruptures ce mois — ${esc(mag.month)}</p>`;
+    } else {
+      el.innerHTML = `<div class="db-card-title">💸 Manque à gagner — ${esc(mag.month)}</div>
+        <div class="db-mag-total">${fmtCA(mag.total_lost)} perdus</div>
+        ${mag.items.map(it => `
+          <div class="db-mag-row">
+            <span class="db-mag-name">${esc(it.product_name)}</span>
+            <span class="db-mag-detail">${it.hours_rupture}h en rupture</span>
+            <span class="db-mag-loss">−${fmtCA(it.lost_eur)}</span>
+          </div>
+        `).join("")}`;
+    }
+  }).catch(() => {});
 }

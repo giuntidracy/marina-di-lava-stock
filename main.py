@@ -4187,6 +4187,86 @@ def get_weather(refresh: bool = False, db: Session = Depends(get_db)):
 # TABLEAU DE BORD
 # ══════════════════════════════════════════════════════════════════════════
 
+@app.get("/api/manque-a-gagner")
+def get_manque_a_gagner(db: Session = Depends(get_db)):
+    """Calcule le manque à gagner dû aux ruptures de stock ce mois."""
+    now_local = datetime.now(_LOCAL_TZ)
+    month_start = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # Récupérer les alertes de rupture du mois
+    ruptures = db.query(ServiceAlert).filter(
+        ServiceAlert.is_rupture == True,
+        ServiceAlert.created_at >= month_start.astimezone(timezone.utc).replace(tzinfo=None),
+    ).all()
+
+    if not ruptures:
+        return {"total_lost": 0, "items": [], "month": now_local.strftime("%B %Y")}
+
+    # Calculer les ventes moyennes par produit (sur 30 derniers jours d'historique)
+    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+    sales_history = db.query(StockHistory).filter(
+        StockHistory.event_type.in_(["import_cashpad", "cashpad_sync"]),
+        StockHistory.created_at >= thirty_days_ago,
+    ).all()
+
+    daily_sales = {}
+    for h in sales_history:
+        try:
+            data = json.loads(h.data_json)
+            items = data if isinstance(data, list) else data.get("results", data.get("items", []))
+            if isinstance(items, dict):
+                items = [items]
+            for item in items:
+                name = item.get("product_name", item.get("name", ""))
+                qty = float(item.get("qty_sold", item.get("quantity", 0)) or 0)
+                price = float(item.get("sale_price_ttc", 0) or 0)
+                if name and qty > 0 and price > 0:
+                    if name not in daily_sales:
+                        daily_sales[name] = {"total_qty": 0, "price": price}
+                    daily_sales[name]["total_qty"] += qty
+        except Exception:
+            pass
+
+    # Calculer le manque pour chaque produit en rupture
+    items = []
+    total_lost = 0.0
+    for r in ruptures:
+        p = r.product
+        if not p:
+            continue
+        # Durée de rupture en heures
+        end = r.resolved_at or datetime.utcnow()
+        hours = (end - r.created_at).total_seconds() / 3600
+
+        # Ventes moyennes par heure (sur 30j, environ 10h d'ouverture/jour)
+        avg = daily_sales.get(p.name, {})
+        total_qty = avg.get("total_qty", 0)
+        price = avg.get("price", p.sale_price_ttc or 0)
+        daily_avg = total_qty / 30 if total_qty > 0 else 0
+        hourly_avg = daily_avg / 10  # ~10h d'ouverture par jour
+
+        lost_qty = hourly_avg * hours
+        lost_eur = lost_qty * price
+
+        if lost_eur > 0.5:
+            total_lost += lost_eur
+            items.append({
+                "product_name": p.name,
+                "hours_rupture": round(hours, 1),
+                "lost_qty": round(lost_qty, 1),
+                "lost_eur": round(lost_eur, 2),
+                "reported_by": r.staff_name,
+                "date": to_local(r.created_at).strftime("%d/%m %H:%M") if r.created_at else "",
+            })
+
+    items.sort(key=lambda x: -x["lost_eur"])
+    return {
+        "total_lost": round(total_lost, 2),
+        "items": items,
+        "month": now_local.strftime("%B %Y").capitalize(),
+    }
+
+
 @app.get("/api/dashboard")
 def get_dashboard(db: Session = Depends(get_db)):
     now_local = datetime.now(_LOCAL_TZ)

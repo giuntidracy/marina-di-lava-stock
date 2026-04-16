@@ -2176,6 +2176,18 @@ details[open] .history-details summary::before { content: '▼'; }
 }
 .db-shortcut-btn:hover { opacity: .85; }
 
+.db-mag-total {
+  font-size: 24px; font-weight: 800; color: #e74c3c; margin: 4px 0 10px;
+}
+.db-mag-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 0;
+  border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.db-mag-row:last-child { border-bottom: none; }
+.db-mag-name { flex: 1; font-weight: 600; }
+.db-mag-detail { color: var(--text-muted); font-size: 12px; }
+.db-mag-loss { color: #e74c3c; font-weight: 700; }
+
 /* ══════════════════════════════════════════════════════════════
    ALERTE STOCK (serveur)
    ══════════════════════════════════════════════════════════════ */
@@ -2217,8 +2229,19 @@ details[open] .history-details summary::before { content: '▼'; }
 }
 .sa-status { font-size: 12px; margin-left: 8px; }
 
+/* Order page alerts */
+.ord-alerts-grid { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+.ord-alert-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; border-left: 4px solid #f39c12;
+}
+.ord-alert-rupture { border-left-color: #e74c3c; background: rgba(231,76,60,.03); }
+.ord-alert-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.ord-alert-actions { display: flex; gap: 8px; margin-top: 8px; }
+
 @media (max-width: 600px) {
   .sa-hist-row { flex-direction: column; align-items: flex-start; }
+  .ord-alert-top { flex-direction: column; align-items: flex-start; }
 }
 
 
