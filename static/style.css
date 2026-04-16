@@ -191,7 +191,7 @@ body {
 .sidebar {
   position: fixed; left: 0; top: 0; bottom: 0;
   width: 232px;
-  background: linear-gradient(180deg, #0D2D1A 0%, #081F10 100%);
+  background: linear-gradient(180deg, #1B5E37 0%, #0F3D22 100%);
   display: flex; flex-direction: column;
   z-index: 200;
   transition: width .25s cubic-bezier(.4,0,.2,1);
@@ -1396,10 +1396,10 @@ details[open] .history-details summary::before { content: '▼'; }
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 16px; margin-bottom: 24px; flex-wrap: wrap;
 }
-.ev-title { font-size: 22px; font-weight: 800; color: var(--primary); margin: 0 0 4px; }
+.ev-title { font-size: 22px; font-weight: 800; color: var(--primary-light, #166534); margin: 0 0 4px; }
 .ev-subtitle { font-size: 13px; color: var(--text-muted); margin: 0; }
 .ev-add-btn {
-  background: var(--primary); color: #1a1208; font-weight: 700;
+  background: var(--accent); color: #1a1208; font-weight: 700;
   border: none; border-radius: 10px; padding: 10px 18px; cursor: pointer;
   font-size: 14px; white-space: nowrap; flex-shrink: 0;
   transition: opacity .2s;
@@ -1431,7 +1431,7 @@ details[open] .history-details summary::before { content: '▼'; }
 }
 .ev-form-footer { display: flex; gap: 10px; margin-top: 16px; }
 .ev-save-btn {
-  background: var(--primary); color: #1a1208; font-weight: 700;
+  background: var(--accent); color: #1a1208; font-weight: 700;
   border: none; border-radius: 8px; padding: 9px 20px; cursor: pointer; font-size: 14px;
 }
 .ev-save-btn:hover { opacity: .85; }
@@ -1558,7 +1558,7 @@ details[open] .history-details summary::before { content: '▼'; }
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 16px; margin-bottom: 24px; flex-wrap: wrap;
 }
-.sh-title { font-size: 22px; font-weight: 800; color: var(--primary); margin: 0 0 4px; }
+.sh-title { font-size: 22px; font-weight: 800; color: var(--primary-light, #166534); margin: 0 0 4px; }
 .sh-subtitle { font-size: 13px; color: var(--text-muted); margin: 0; }
 .sh-loss-btn {
   background: #ef4444; color: #fff; font-weight: 700;
@@ -1751,7 +1751,7 @@ details[open] .history-details summary::before { content: '▼'; }
   font-size: 13px; color: var(--text); line-height: 1.6;
 }
 .cp-step-num {
-  background: var(--primary); color: #1a1208; font-weight: 800;
+  background: var(--accent); color: #1a1208; font-weight: 800;
   width: 24px; height: 24px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; flex-shrink: 0; margin-top: 1px;
@@ -1770,7 +1770,7 @@ details[open] .history-details summary::before { content: '▼'; }
 .cp-copy-text  { font-size: 13px; color: var(--text); white-space: pre-wrap; line-height: 1.6; }
 .cp-copy-btn {
   position: absolute; top: 10px; right: 10px;
-  background: var(--primary); color: #1a1208; font-weight: 700;
+  background: var(--accent); color: #1a1208; font-weight: 700;
   border: none; border-radius: 7px; padding: 5px 12px; cursor: pointer; font-size: 12px;
 }
 .cp-copy-btn:hover { opacity: .85; }
@@ -1788,7 +1788,7 @@ details[open] .history-details summary::before { content: '▼'; }
 
 .cp-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .cp-sync-btn {
-  background: var(--primary); color: #1a1208; font-weight: 700;
+  background: var(--accent); color: #1a1208; font-weight: 700;
   border: none; border-radius: 10px; padding: 10px 20px; cursor: pointer;
   font-size: 14px; transition: opacity .2s;
 }
