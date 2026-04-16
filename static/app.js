@@ -2647,11 +2647,12 @@ async function previewAndSendOrder() {
       </table>
       ${total > 0 ? `<p style="text-align:right;font-weight:700;margin-top:8px">Total estimé HT : €${total.toFixed(2)}</p>` : ''}
     </div>
-    <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">
+    <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;flex-wrap:wrap">
       <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-outline" onclick="copyOrderMailto(${order.id})">✉ Ouvrir dans Mail</button>
       ${order.supplier_email
-        ? `<button class="btn btn-primary" onclick="sendOrderNow(${order.id})">📤 Envoyer par email</button>`
-        : `<button class="btn btn-outline" onclick="copyOrderMailto(${order.id})">📋 Copier / ouvrir email</button>`
+        ? `<button class="btn btn-primary" onclick="sendOrderNow(${order.id})">📤 Envoyer automatiquement</button>`
+        : ``
       }
     </div>
   `);
