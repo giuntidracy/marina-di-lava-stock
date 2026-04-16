@@ -211,10 +211,9 @@ body {
 }
 .sidebar-logo { height: 38px; object-fit: contain; flex-shrink: 0; }
 .sidebar-brand { display: flex; align-items: center; gap: 10px; overflow: hidden; }
-.sidebar-brand-text { overflow: hidden; transition: opacity .2s, max-width .25s; max-width: 140px; }
-.sidebar-brand-name { font-size: 13px; font-weight: 800; color: #fff; white-space: nowrap; letter-spacing: -.01em; }
-.sidebar-brand-sub  { font-size: 9px; color: rgba(201,168,76,.8); text-transform: uppercase; letter-spacing: .12em; margin-top: 1px; }
-.sidebar.collapsed .sidebar-brand-text { opacity: 0; max-width: 0; }
+.sidebar-brand-block { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.sidebar-brand-by { font-size: 10px; color: var(--accent); font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; opacity: .85; transition: opacity .2s; }
+.sidebar.collapsed .sidebar-brand-by { opacity: 0; }
 .sidebar-collapse-btn {
   background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2);
   border-radius: 6px; padding: 5px 8px; cursor: pointer; color: rgba(255,255,255,.7);
@@ -381,7 +380,7 @@ body {
   /* Always show labels on mobile */
   .sidebar .nav-label { opacity: 1 !important; max-width: 200px !important; }
   .sidebar .nav-group-label { opacity: 1 !important; height: auto !important; padding: 0 18px 4px !important; }
-  .sidebar .sidebar-brand-text { opacity: 1 !important; max-width: 140px !important; }
+  .sidebar .sidebar-brand-by { opacity: .85 !important; }
   .sidebar .sidebar-role-badge { opacity: 1 !important; height: auto !important; padding: 6px 12px 4px !important; }
   .sidebar .nav-item { justify-content: flex-start !important; padding: 9px 12px !important; }
   .sidebar .sidebar-logout { justify-content: flex-start !important; }
