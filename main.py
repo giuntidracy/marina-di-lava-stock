@@ -315,26 +315,33 @@ def auth_pin(body: PinIn, request: Request):
 
     # Utilisateurs direction : PIN → profil
     direction_users = {
-        "0034": {"name": "J-Marc", "photo": "/static/avatars/jmarc.svg"},
-        "1143": {"name": "Lisandru", "photo": "/static/avatars/lisandru.svg"},
+        "0034": {"name": "J-Marc", "slug": "jmarc"},
+        "1143": {"name": "Lisandru", "slug": "lisandru"},
     }
     # Fallback : ancien MANAGER_PIN (rétrocompatible)
     legacy_pin = os.environ.get("MANAGER_PIN", "")
     if legacy_pin and legacy_pin not in direction_users:
-        direction_users[legacy_pin] = {"name": "Direction", "photo": ""}
+        direction_users[legacy_pin] = {"name": "Direction", "slug": "direction"}
 
     user = direction_users.get(body.pin)
     if user:
         _pin_failures.pop(ip, None)
+        slug = user["slug"]
+        # Chercher une photo uploadée (jpg/png/webp), sinon SVG par défaut
+        photo = f"/static/avatars/{slug}.svg"
+        for ext in ("jpg", "jpeg", "png", "webp"):
+            if os.path.isfile(f"static/avatars/{slug}.{ext}"):
+                photo = f"/static/avatars/{slug}.{ext}"
+                break
         token = secrets.token_urlsafe(32)
         _sessions[token] = {
             "role": "manager",
             "user_name": user["name"],
-            "user_photo": user["photo"],
+            "user_photo": photo,
             "expires": datetime.utcnow() + timedelta(minutes=30),
         }
         return {"ok": True, "role": "manager", "token": token,
-                "user_name": user["name"], "user_photo": user["photo"]}
+                "user_name": user["name"], "user_photo": photo}
 
     count = failure.get("count", 0) + 1
     if count >= 3:
