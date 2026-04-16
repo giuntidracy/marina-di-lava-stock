@@ -2184,7 +2184,7 @@ details[open] .history-details summary::before { content: '▼'; }
 }
 
 .flash-preview-img {
-  max-width: 100%; max-height: 300px;
+  max-width: 100%; max-height: 200px;
   border-radius: 10px; border: 1px solid var(--border); object-fit: contain;
 }
 
@@ -2341,10 +2341,27 @@ details[open] .history-details summary::before { content: '▼'; }
 .flash-assoc-option:last-child { border-bottom: none; }
 .flash-assoc-option:hover { background: var(--accent-ultra); }
 
+/* ── Report banners ── */
+.flash-report-banner {
+  border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+  font-size: 14px; line-height: 1.4; word-wrap: break-word;
+}
+.flash-report-ok { background: rgba(39,174,96,.1); border: 1px solid #27ae60; color: var(--text); }
+.flash-report-warn { background: rgba(231,76,60,.08); border: 1px solid #e74c3c; color: #c0392b; font-size: 13px; }
+
+/* ── Mobile responsive ── */
 @media (max-width: 600px) {
-  .flash-kpi-bar { padding: 10px 14px; gap: 8px; }
-  .flash-kpi-num { font-size: 18px; }
-  .flash-prod-name { font-size: 13px; }
+  .flash-kpi-bar { padding: 10px 12px; gap: 6px; }
+  .flash-kpi { font-size: 12px; }
+  .flash-kpi-num { font-size: 17px; }
+  .flash-prod-name { font-size: 13px; white-space: normal; }
+  .flash-prod-top { gap: 8px; }
+  .flash-prod-compare { gap: 6px; font-size: 12px; }
   .flash-hist-header { flex-direction: column; align-items: flex-start; }
-  .flash-bottom-bar { padding: 10px 0; }
+  .flash-bottom-bar { padding: 10px 0; gap: 8px; }
+  .flash-bottom-bar .btn { font-size: 13px; padding: 10px 14px; flex: 1; }
+  .flash-preview-img { max-height: 160px; }
+  .flash-capture-zone { padding: 14px; }
+  .flash-report-banner { font-size: 13px; padding: 10px 12px; }
+  .flash-upload-label { padding: 24px 16px; }
 }
