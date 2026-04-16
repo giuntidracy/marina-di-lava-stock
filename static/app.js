@@ -123,7 +123,6 @@ function flashOpenAvatarUpload() {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "image/*";
-  input.capture = "user";
   input.onchange = async () => {
     const file = input.files[0];
     if (!file) return;
