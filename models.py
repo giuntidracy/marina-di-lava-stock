@@ -183,3 +183,19 @@ class ManualLoss(Base):
     stock_updated = Column(Boolean, default=True)  # stock déjà déduit
 
     product = relationship("Product")
+
+
+class ServiceAlert(Base):
+    """Alerte stock signalée par un serveur (rupture ou stock bas)."""
+    __tablename__ = "service_alerts"
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    reported_stock = Column(Float, nullable=False)
+    is_rupture = Column(Boolean, default=False)
+    staff_name = Column(String, default="")
+    notes = Column(Text, default="")
+    status = Column(String, default="open")  # open / acknowledged / ordered / resolved
+    created_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+    product = relationship("Product")

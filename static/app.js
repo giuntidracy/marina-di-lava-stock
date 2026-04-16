@@ -15,8 +15,8 @@ let userPhoto = "";
 let inactivityTimer = null;
 
 // Onglets accessibles par rôle
-const SERVICE_VIEWS = ["inventory"];
-const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery","inventory","flash","stats","history","suppliers","orders","mapping","events","shrinkage"];
+const SERVICE_VIEWS = ["inventory","service_alert"];
+const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery","inventory","service_alert","flash","stats","history","suppliers","orders","mapping","events","shrinkage"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
@@ -159,7 +159,8 @@ const VIEW_TITLES = {
   dashboard:"Tableau de bord",
   stock:"Stock & Marges", cocktails:"Cocktails & Marges", alerts:"Alertes",
   shrinkage:"Démarque Inconnue", cashpad:"Import Cashpad", delivery:"Bon de Livraison",
-  inventory:"Sortie Réserve", flash:"Inventaire Flash", stats:"Statistiques", history:"Historique",
+  inventory:"Sortie Réserve", flash:"Inventaire Flash", service_alert:"Alerte Stock",
+  stats:"Statistiques", history:"Historique",
   events:"Événements", suppliers:"Fournisseurs", orders:"Commandes", mapping:"Mapping Cashpad",
 };
 
@@ -217,6 +218,7 @@ function renderView(view) {
     case "events":    renderEvents(app); break;
     case "shrinkage": renderShrinkage(app); break;
     case "flash":     renderFlash(app); break;
+    case "service_alert": renderServiceAlert(app); break;
   }
 }
 
@@ -4067,6 +4069,165 @@ function showToast(msg) {
 
 function fmtEur(v) {
   return (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", minimumFractionDigits:2 });
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// ALERTE STOCK (serveur)
+// ══════════════════════════════════════════════════════════════════════════
+
+let saProducts = [];
+
+async function renderServiceAlert(el) {
+  el.innerHTML = `
+    <div class="section-header">
+      <span class="section-title">🚨 Alerte Stock</span>
+    </div>
+    <div class="info-box" style="font-size:13px">
+      Signalez un produit en <strong>rupture</strong> ou <strong>bientôt vide</strong>. La direction sera prévenue.
+    </div>
+    <div class="sa-search-wrap">
+      <input type="text" id="sa-search" placeholder="🔍 Rechercher un produit…"
+             oninput="saFilterProducts()" autofocus style="font-size:16px"/>
+    </div>
+    <div id="sa-product-list"></div>
+    <div id="sa-history" style="margin-top:24px"></div>
+  `;
+  try {
+    saProducts = await api("/api/products");
+    saFilterProducts();
+    saLoadHistory();
+  } catch(e) {
+    el.innerHTML += `<div class="info-box" style="border-color:#e74c3c">Erreur : ${esc(e.message)}</div>`;
+  }
+}
+
+function saFilterProducts() {
+  const q = (document.getElementById("sa-search")?.value || "").toLowerCase();
+  const container = document.getElementById("sa-product-list");
+  if (!container) return;
+
+  if (!q || q.length < 2) {
+    container.innerHTML = `<p style="color:var(--text-muted);text-align:center;padding:12px;font-size:13px">Tapez au moins 2 lettres…</p>`;
+    return;
+  }
+
+  const filtered = saProducts.filter(p =>
+    p.name.toLowerCase().includes(q) || (p.category || "").toLowerCase().includes(q)
+  ).slice(0, 10);
+
+  if (!filtered.length) {
+    container.innerHTML = `<p style="color:var(--text-muted);text-align:center;padding:12px">Aucun produit trouvé</p>`;
+    return;
+  }
+
+  container.innerHTML = filtered.map(p => `
+    <div class="sa-product-row" onclick="saOpenAlert(${p.id}, '${esc(p.name).replace(/'/g,"\\'")}', ${p.stock || 0}, '${esc(p.unit || "").replace(/'/g,"\\'")}')">
+      <div class="sa-product-info">
+        <strong>${esc(p.name)}</strong>
+        <small>${esc(p.category || "")}</small>
+      </div>
+      <div class="sa-product-stock ${p.stock <= 0 ? 'sa-stock-zero' : p.stock <= p.alert_threshold ? 'sa-stock-low' : ''}">
+        ${p.stock} ${esc(p.unit || "")}
+      </div>
+    </div>
+  `).join("");
+}
+
+function saOpenAlert(productId, productName, currentStock, unit) {
+  openModal(`
+    <h3 style="margin-bottom:14px">🚨 Signaler : ${productName}</h3>
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px">Stock système : <strong>${currentStock} ${esc(unit)}</strong></p>
+    <div class="form-group">
+      <label>Combien il en reste ?</label>
+      <div class="flash-qty-control" style="width:fit-content">
+        <button class="flash-qty-btn" onclick="saQtyAdj(-1)">−</button>
+        <input type="number" class="flash-qty-input" id="sa-qty" value="0" min="0" step="1"/>
+        <button class="flash-qty-btn" onclick="saQtyAdj(1)">+</button>
+      </div>
+    </div>
+    <div class="form-group" style="margin-top:12px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="sa-rupture" ${currentStock <= 0 ? "checked" : ""} style="width:18px;height:18px"/>
+        <span>C'est une <strong>rupture totale</strong> (il n'en reste plus du tout)</span>
+      </label>
+    </div>
+    <div class="form-group" style="margin-top:10px">
+      <label>Note (optionnel)</label>
+      <input type="text" id="sa-notes" placeholder="ex: les clients demandent beaucoup ce soir"/>
+    </div>
+    <button class="btn btn-primary" style="width:100%;margin-top:14px;padding:12px" onclick="saSubmitAlert(${productId})">
+      🚨 Envoyer l'alerte
+    </button>
+  `);
+}
+
+function saQtyAdj(d) {
+  const i = document.getElementById("sa-qty");
+  if (!i) return;
+  i.value = Math.max(0, (parseInt(i.value) || 0) + d);
+  if (parseInt(i.value) === 0) document.getElementById("sa-rupture").checked = true;
+}
+
+async function saSubmitAlert(productId) {
+  const qty = parseFloat(document.getElementById("sa-qty")?.value) || 0;
+  const isRupture = document.getElementById("sa-rupture")?.checked || false;
+  const notes = document.getElementById("sa-notes")?.value || "";
+  const staff = userName || "Service";
+
+  try {
+    const res = await api("/api/service-alerts", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        product_id: productId,
+        reported_stock: qty,
+        is_rupture: isRupture,
+        staff_name: staff,
+        notes,
+      }),
+    });
+    closeModal();
+    showToast(`Alerte envoyée : ${res.product_name}`);
+    saLoadHistory();
+  } catch(e) {
+    showToast("Erreur : " + e.message);
+  }
+}
+
+async function saLoadHistory() {
+  const container = document.getElementById("sa-history");
+  if (!container) return;
+  try {
+    const alerts = await api("/api/service-alerts?status=all");
+    if (!alerts.length) {
+      container.innerHTML = "";
+      return;
+    }
+    const recent = alerts.slice(0, 10);
+    container.innerHTML = `
+      <strong style="font-size:14px">Vos alertes récentes</strong>
+      <div class="sa-history-list">
+        ${recent.map(a => {
+          const statusMap = {
+            open: "🟡 En attente",
+            acknowledged: "🔵 Vue par la direction",
+            ordered: "🟢 Commandé",
+            resolved: "✅ Résolu",
+          };
+          return `<div class="sa-hist-row">
+            <div>
+              <strong>${esc(a.product_name)}</strong>
+              ${a.is_rupture ? '<span class="sa-badge-rupture">RUPTURE</span>' : `<span class="sa-badge-low">${a.reported_stock} restant</span>`}
+            </div>
+            <div>
+              <small style="color:var(--text-muted)">${esc(a.created_at)}</small>
+              <span class="sa-status">${statusMap[a.status] || a.status}</span>
+            </div>
+          </div>`;
+        }).join("")}
+      </div>`;
+  } catch(e) {}
 }
 
 // ══════════════════════════════════════════════════════════════════════════

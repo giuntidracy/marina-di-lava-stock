@@ -2177,6 +2177,52 @@ details[open] .history-details summary::before { content: '▼'; }
 .db-shortcut-btn:hover { opacity: .85; }
 
 /* ══════════════════════════════════════════════════════════════
+   ALERTE STOCK (serveur)
+   ══════════════════════════════════════════════════════════════ */
+
+.sa-search-wrap { margin-bottom: 12px; }
+.sa-search-wrap input { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); }
+
+.sa-product-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px;
+  margin-bottom: 6px; cursor: pointer; background: var(--surface);
+  transition: background .15s;
+}
+.sa-product-row:hover { background: var(--accent-ultra); }
+
+.sa-product-info { flex: 1; min-width: 0; }
+.sa-product-info strong { display: block; font-size: 14px; }
+.sa-product-info small { color: var(--text-muted); font-size: 12px; }
+
+.sa-product-stock {
+  font-weight: 700; font-size: 14px; padding: 4px 10px; border-radius: 8px;
+  background: var(--surface-alt); flex-shrink: 0;
+}
+.sa-stock-zero { background: rgba(231,76,60,.12); color: #e74c3c; }
+.sa-stock-low { background: rgba(243,156,18,.12); color: #f39c12; }
+
+.sa-history-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.sa-hist-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; gap: 8px; flex-wrap: wrap;
+}
+.sa-badge-rupture {
+  font-size: 10px; font-weight: 700; background: #e74c3c; color: #fff;
+  padding: 2px 8px; border-radius: 10px; margin-left: 6px;
+}
+.sa-badge-low {
+  font-size: 11px; color: #f39c12; font-weight: 600; margin-left: 6px;
+}
+.sa-status { font-size: 12px; margin-left: 8px; }
+
+@media (max-width: 600px) {
+  .sa-hist-row { flex-direction: column; align-items: flex-start; }
+}
+
+
+/* ══════════════════════════════════════════════════════════════
    INVENTAIRE FLASH
    ══════════════════════════════════════════════════════════════ */
 

@@ -36,7 +36,7 @@ from database import get_db, engine
 from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
     CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
-    SupplierOrder, SupplierOrderItem, Event, ManualLoss, AppSetting
+    SupplierOrder, SupplierOrderItem, Event, ManualLoss, AppSetting, ServiceAlert
 )
 
 Base.metadata.create_all(bind=engine)
@@ -1142,6 +1142,93 @@ def get_alerts(db: Session = Depends(get_db)):
         except Exception:
             pass
     return alerts
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ALERTES SERVEUR (signalements terrain)
+# ══════════════════════════════════════════════════════════════════════════
+
+class ServiceAlertIn(BaseModel):
+    product_id: int
+    reported_stock: float
+    is_rupture: bool = False
+    staff_name: str = ""
+    notes: str = ""
+
+
+@app.post("/api/service-alerts")
+def create_service_alert(body: ServiceAlertIn, db: Session = Depends(get_db)):
+    """Un serveur signale un stock bas ou une rupture."""
+    p = db.query(Product).get(body.product_id)
+    if not p:
+        raise HTTPException(404, detail="Produit introuvable")
+
+    alert = ServiceAlert(
+        product_id=body.product_id,
+        reported_stock=body.reported_stock,
+        is_rupture=body.is_rupture,
+        staff_name=body.staff_name,
+        notes=body.notes,
+    )
+    db.add(alert)
+
+    event_desc = f"{'Rupture' if body.is_rupture else 'Stock bas'} signalé par {body.staff_name or 'service'} : {p.name} ({body.reported_stock} restant)"
+    log_event(db, "alerte_service", event_desc, {
+        "product_id": p.id, "product_name": p.name,
+        "reported_stock": body.reported_stock, "is_rupture": body.is_rupture,
+        "staff_name": body.staff_name,
+    })
+    db.commit()
+    db.refresh(alert)
+    return {"ok": True, "id": alert.id, "product_name": p.name}
+
+
+@app.get("/api/service-alerts")
+def list_service_alerts(status: str = "open", db: Session = Depends(get_db)):
+    """Liste les alertes serveur. status=open|all"""
+    q = db.query(ServiceAlert).order_by(ServiceAlert.created_at.desc())
+    if status != "all":
+        q = q.filter(ServiceAlert.status == status)
+    alerts = q.limit(100).all()
+    result = []
+    for a in alerts:
+        p = a.product
+        supplier_name = ""
+        if p and p.product_suppliers:
+            primary = next((ps for ps in p.product_suppliers if ps.is_primary), None)
+            if primary and primary.supplier:
+                supplier_name = primary.supplier.name
+        result.append({
+            "id": a.id,
+            "product_id": a.product_id,
+            "product_name": p.name if p else "?",
+            "category": p.category if p else "",
+            "reported_stock": a.reported_stock,
+            "is_rupture": a.is_rupture,
+            "staff_name": a.staff_name,
+            "notes": a.notes,
+            "status": a.status,
+            "supplier_name": supplier_name,
+            "created_at": to_local(a.created_at).strftime("%d/%m %H:%M") if a.created_at else "",
+        })
+    return result
+
+
+@app.patch("/api/service-alerts/{alert_id}")
+def update_service_alert(alert_id: int, db: Session = Depends(get_db)):
+    """Direction acknowledge/résout une alerte."""
+    a = db.query(ServiceAlert).get(alert_id)
+    if not a:
+        raise HTTPException(404, detail="Alerte introuvable")
+    if a.status == "open":
+        a.status = "acknowledged"
+    elif a.status == "acknowledged":
+        a.status = "ordered"
+    elif a.status == "ordered":
+        a.status = "resolved"
+        a.resolved_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True, "status": a.status}
 
 
 # ══════════════════════════════════════════════════════════════════════════
