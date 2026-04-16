@@ -149,3 +149,14 @@ class SupplierOrderItem(Base):
 
     order = relationship("SupplierOrder", back_populates="items")
     product = relationship("Product")
+
+
+class Event(Base):
+    """Événement (concert, soirée, brunch…) pour analyse de boost consommation."""
+    __tablename__ = "events"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)          # "Concert vendredi soir"
+    event_type = Column(String, default="Autre")   # "Concert", "Soirée", "Brunch"…
+    date = Column(DateTime, nullable=False)
+    notes = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)

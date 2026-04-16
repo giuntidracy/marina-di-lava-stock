@@ -33,7 +33,7 @@ from database import get_db, engine
 from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
     CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
-    SupplierOrder, SupplierOrderItem
+    SupplierOrder, SupplierOrderItem, Event
 )
 
 Base.metadata.create_all(bind=engine)
@@ -59,6 +59,21 @@ with engine.connect() as _conn:
         _conn.commit()
     except Exception:
         pass
+
+    # events table (créée par create_all mais migration si ancienne DB)
+    try:
+        _conn.execute(_text("SELECT 1 FROM events LIMIT 1"))
+    except Exception:
+        _conn.execute(_text(
+            "CREATE TABLE IF NOT EXISTS events ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "name TEXT NOT NULL, "
+            "event_type TEXT DEFAULT 'Autre', "
+            "date DATETIME NOT NULL, "
+            "notes TEXT DEFAULT '', "
+            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+        ))
+        _conn.commit()
 
     # Migration données : product_suppliers depuis supplier_id + purchase_price existants
     try:
@@ -2811,3 +2826,174 @@ def submit_inventory(body: InventoryCountIn, db: Session = Depends(get_db)):
     })
     db.commit()
     return {"ok": True, "results": results, "alerts": alerts}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  MODULE ÉVÉNEMENTS / BOOST
+# ═══════════════════════════════════════════════════════════════════════════
+
+class EventIn(BaseModel):
+    name: str
+    event_type: str = "Autre"
+    date: str          # "YYYY-MM-DD"
+    notes: str = ""
+
+
+@app.get("/api/events")
+def list_events(db: Session = Depends(get_db)):
+    evs = db.query(Event).order_by(Event.date.desc()).all()
+    return [
+        {
+            "id": e.id, "name": e.name, "event_type": e.event_type,
+            "date": e.date.strftime("%Y-%m-%d"),
+            "notes": e.notes,
+            "created_at": e.created_at.strftime("%d/%m/%Y") if e.created_at else "",
+        }
+        for e in evs
+    ]
+
+
+@app.post("/api/events")
+def create_event(body: EventIn, db: Session = Depends(get_db)):
+    ev = Event(
+        name=body.name,
+        event_type=body.event_type or "Autre",
+        date=datetime.strptime(body.date, "%Y-%m-%d"),
+        notes=body.notes,
+    )
+    db.add(ev)
+    db.commit()
+    db.refresh(ev)
+    return {"id": ev.id}
+
+
+@app.put("/api/events/{eid}")
+def update_event(eid: int, body: EventIn, db: Session = Depends(get_db)):
+    ev = db.query(Event).get(eid)
+    if not ev:
+        raise HTTPException(404, "Événement introuvable")
+    ev.name = body.name
+    ev.event_type = body.event_type or "Autre"
+    ev.date = datetime.strptime(body.date, "%Y-%m-%d")
+    ev.notes = body.notes
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/events/{eid}")
+def delete_event(eid: int, db: Session = Depends(get_db)):
+    ev = db.query(Event).get(eid)
+    if not ev:
+        raise HTTPException(404)
+    db.delete(ev)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/events/analysis")
+def get_events_analysis(db: Session = Depends(get_db)):
+    """
+    Pour chaque type d'événement, compare la consommation lors des événements
+    vs la consommation moyenne des jours 'normaux'. Retourne le boost % par produit.
+    """
+    from collections import defaultdict
+
+    events = db.query(Event).order_by(Event.date.desc()).all()
+    if not events:
+        return []
+
+    # ── 1. Construction du map consommation journalière ──────────────────
+    all_imports = db.query(StockHistory).filter(
+        StockHistory.event_type == "import_cashpad"
+    ).all()
+
+    # daily_consumption[day][product_id] = qty_totale_ce_jour
+    daily_consumption: dict = {}
+    for imp in all_imports:
+        day = imp.created_at.strftime("%Y-%m-%d")
+        d = json.loads(imp.data_json)
+        if day not in daily_consumption:
+            daily_consumption[day] = {}
+        for ded in d.get("deductions", []):
+            pid = ded.get("product_id")
+            qty = abs(float(ded.get("quantity", ded.get("qty", 0)) or 0))
+            if pid and qty > 0:
+                daily_consumption[day][pid] = daily_consumption[day].get(pid, 0) + qty
+
+    # ── 2. Baseline : jours sans événement ───────────────────────────────
+    all_event_days = {ev.date.strftime("%Y-%m-%d") for ev in events}
+    non_event_days = {d: c for d, c in daily_consumption.items() if d not in all_event_days}
+
+    baseline: dict = {}
+    if non_event_days:
+        n_base = len(non_event_days)
+        for day_data in non_event_days.values():
+            for pid, qty in day_data.items():
+                baseline[pid] = baseline.get(pid, 0) + qty
+        baseline = {pid: total / n_base for pid, total in baseline.items()}
+
+    # ── 3. Regroupement par type ──────────────────────────────────────────
+    type_events: dict = defaultdict(list)
+    for ev in events:
+        type_events[ev.event_type or "Autre"].append(ev)
+
+    # Noms de produits
+    products_map = {p.id: p.name for p in db.query(Product).all()}
+
+    results = []
+    for et, evs in type_events.items():
+        # Consommation totale sur les jours d'événement de ce type
+        event_consumption: dict = defaultdict(float)
+        n_with_data = 0
+        event_list = []
+        for ev in evs:
+            day = ev.date.strftime("%Y-%m-%d")
+            event_list.append({"id": ev.id, "name": ev.name, "date": ev.date.strftime("%d/%m/%Y")})
+            if day in daily_consumption:
+                n_with_data += 1
+                for pid, qty in daily_consumption[day].items():
+                    event_consumption[pid] += qty
+
+        if not event_consumption:
+            results.append({
+                "event_type": et,
+                "count": len(evs),
+                "events": event_list,
+                "boosts": [],
+                "no_data": True,
+                "n_with_data": 0,
+            })
+            continue
+
+        n_ev = max(n_with_data, 1)
+        event_avg = {pid: total / n_ev for pid, total in event_consumption.items()}
+
+        boosts = []
+        for pid, avg in event_avg.items():
+            base = baseline.get(pid, 0)
+            if base > 0:
+                pct = round((avg / base - 1) * 100, 1)
+            else:
+                pct = None   # pas de baseline → nouveau produit
+            boosts.append({
+                "product_id": pid,
+                "product_name": products_map.get(pid, f"#{pid}"),
+                "event_avg": round(avg, 2),
+                "baseline_avg": round(base, 2),
+                "boost_pct": pct,
+            })
+
+        # Tri : plus fort boost d'abord ; produits sans baseline à la fin
+        boosts.sort(key=lambda x: (x["boost_pct"] is None, -(x["boost_pct"] or 0)))
+
+        results.append({
+            "event_type": et,
+            "count": len(evs),
+            "n_with_data": n_with_data,
+            "events": event_list,
+            "boosts": boosts[:15],   # top 15 produits
+        })
+
+    # Tri résultats : plus d'événements d'abord
+    results.sort(key=lambda x: -x["count"])
+    return results

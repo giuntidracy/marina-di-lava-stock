@@ -14,7 +14,7 @@ let inactivityTimer = null;
 
 // Onglets accessibles par rôle
 const SERVICE_VIEWS = ["inventory"];
-const MANAGER_VIEWS = ["stock","cocktails","alerts","cashpad","delivery","inventory","stats","history","suppliers","orders","mapping"];
+const MANAGER_VIEWS = ["stock","cocktails","alerts","cashpad","delivery","inventory","stats","history","suppliers","orders","mapping","events"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
@@ -151,6 +151,7 @@ function renderView(view) {
     case "suppliers": renderSuppliers(app); break;
     case "orders":    renderOrders(app); break;
     case "mapping":   renderMapping(app); break;
+    case "events":    renderEvents(app); break;
   }
 }
 
@@ -3227,4 +3228,223 @@ function fmtStock(p) {
 function formatDate(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString("fr-FR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  MODULE ÉVÉNEMENTS / BOOST ÉVÉNEMENTIEL
+// ═══════════════════════════════════════════════════════════════════════════
+
+const EVENT_TYPES = ["Concert","Soirée","Brunch","Match","Anniversaire","Privatisé","Happy Hour","Autre"];
+
+const EVENT_TYPE_ICON = {
+  "Concert": "🎸", "Soirée": "🌙", "Brunch": "☕", "Match": "⚽",
+  "Anniversaire": "🎂", "Privatisé": "🔒", "Happy Hour": "🍹", "Autre": "🎉"
+};
+
+async function renderEvents(app) {
+  app.innerHTML = `<div class="ev-wrap">
+    <div class="ev-header">
+      <div>
+        <h2 class="ev-title">🎉 Boost Événementiel</h2>
+        <p class="ev-subtitle">Marquez vos événements et découvrez leur impact sur la consommation</p>
+      </div>
+      <button class="ev-add-btn" onclick="openEventForm()">+ Ajouter un événement</button>
+    </div>
+    <div id="ev-form-area"></div>
+    <div id="ev-list-area"><div class="ev-loading">Chargement…</div></div>
+    <div id="ev-analysis-area"></div>
+  </div>`;
+
+  loadEvents();
+}
+
+async function loadEvents() {
+  const [events, analysis] = await Promise.all([
+    api("/api/events"),
+    api("/api/events/analysis"),
+  ]);
+  renderEventList(events);
+  renderEventAnalysis(analysis);
+}
+
+function renderEventList(events) {
+  const el = document.getElementById("ev-list-area");
+  if (!el) return;
+  if (!events.length) {
+    el.innerHTML = `<div class="ev-empty">
+      <div style="font-size:48px;margin-bottom:12px">🗓️</div>
+      <p>Aucun événement enregistré.<br>Ajoutez votre premier événement pour commencer l'analyse.</p>
+    </div>`;
+    return;
+  }
+  const rows = events.map(ev => {
+    const icon = EVENT_TYPE_ICON[ev.event_type] || "🎉";
+    return `<div class="ev-item" id="ev-item-${ev.id}">
+      <div class="ev-item-icon">${icon}</div>
+      <div class="ev-item-info">
+        <div class="ev-item-name">${ev.name}</div>
+        <div class="ev-item-meta">
+          <span class="ev-badge">${ev.event_type}</span>
+          <span class="ev-item-date">📅 ${ev.date}</span>
+          ${ev.notes ? `<span class="ev-item-notes">· ${ev.notes}</span>` : ""}
+        </div>
+      </div>
+      <div class="ev-item-actions">
+        <button class="ev-btn-edit" onclick="openEventForm(${ev.id}, '${ev.name.replace(/'/g,"\\'")}', '${ev.event_type}', '${ev.date}', '${(ev.notes||"").replace(/'/g,"\\'")}')">✏️</button>
+        <button class="ev-btn-del" onclick="deleteEvent(${ev.id})">🗑</button>
+      </div>
+    </div>`;
+  }).join("");
+  el.innerHTML = `<div class="ev-list-title">Événements enregistrés (${events.length})</div>
+    <div class="ev-list">${rows}</div>`;
+}
+
+function openEventForm(id=null, name="", type="Concert", date="", notes="") {
+  const area = document.getElementById("ev-form-area");
+  if (!area) return;
+  const today = new Date().toISOString().slice(0,10);
+  const typeOpts = EVENT_TYPES.map(t =>
+    `<option value="${t}" ${t === type ? "selected" : ""}>${EVENT_TYPE_ICON[t]||"🎉"} ${t}</option>`
+  ).join("");
+  area.innerHTML = `<div class="ev-form">
+    <div class="ev-form-title">${id ? "✏️ Modifier l'événement" : "➕ Nouvel événement"}</div>
+    <div class="ev-form-grid">
+      <div class="ev-field">
+        <label>Nom de l'événement</label>
+        <input id="evf-name" type="text" placeholder="Ex: Concert Rock, Soirée DJ…" value="${name}"/>
+      </div>
+      <div class="ev-field">
+        <label>Type</label>
+        <select id="evf-type">${typeOpts}</select>
+      </div>
+      <div class="ev-field">
+        <label>Date</label>
+        <input id="evf-date" type="date" value="${date || today}"/>
+      </div>
+      <div class="ev-field ev-field-full">
+        <label>Notes (optionnel)</label>
+        <input id="evf-notes" type="text" placeholder="Ex: 300 personnes, soirée années 80…" value="${notes}"/>
+      </div>
+    </div>
+    <div class="ev-form-footer">
+      <button class="ev-save-btn" onclick="saveEvent(${id || 'null'})">💾 Enregistrer</button>
+      <button class="ev-cancel-btn" onclick="cancelEventForm()">Annuler</button>
+    </div>
+  </div>`;
+  area.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function cancelEventForm() {
+  const area = document.getElementById("ev-form-area");
+  if (area) area.innerHTML = "";
+}
+
+async function saveEvent(id) {
+  const name  = document.getElementById("evf-name").value.trim();
+  const type  = document.getElementById("evf-type").value;
+  const date  = document.getElementById("evf-date").value;
+  const notes = document.getElementById("evf-notes").value.trim();
+  if (!name) { alert("Nom de l'événement requis"); return; }
+  if (!date) { alert("Date requise"); return; }
+  const body = { name, event_type: type, date, notes };
+  try {
+    if (id) {
+      await api(`/api/events/${id}`, "PUT", body);
+    } else {
+      await api("/api/events", "POST", body);
+    }
+    cancelEventForm();
+    loadEvents();
+  } catch(e) {
+    alert("Erreur : " + e.message);
+  }
+}
+
+async function deleteEvent(id) {
+  if (!confirm("Supprimer cet événement ?")) return;
+  await api(`/api/events/${id}`, "DELETE");
+  loadEvents();
+}
+
+function renderEventAnalysis(analysis) {
+  const el = document.getElementById("ev-analysis-area");
+  if (!el) return;
+
+  if (!analysis.length) {
+    el.innerHTML = "";
+    return;
+  }
+
+  const blocks = analysis.map(group => {
+    const icon = EVENT_TYPE_ICON[group.event_type] || "🎉";
+    const n = group.count;
+    const nData = group.n_with_data || 0;
+    const evList = group.events.map(e => `<span class="ev-tag">${e.date} – ${e.name}</span>`).join("");
+
+    if (group.no_data || !group.boosts.length) {
+      return `<div class="ev-analysis-card">
+        <div class="ev-an-header">
+          <span class="ev-an-icon">${icon}</span>
+          <div>
+            <div class="ev-an-type">${group.event_type}</div>
+            <div class="ev-an-count">${n} événement${n>1?"s":""}</div>
+          </div>
+        </div>
+        <div class="ev-no-data">Aucune donnée de consommation pour ces dates.<br>
+        <small>Les données proviennent des imports Cashpad effectués ces jours-là.</small></div>
+        <div class="ev-tags">${evList}</div>
+      </div>`;
+    }
+
+    const boostRows = group.boosts.map(b => {
+      if (b.boost_pct === null) return "";
+      const pct = b.boost_pct;
+      const isPositive = pct > 0;
+      const arrow = pct > 15 ? "⬆️" : pct < -15 ? "⬇️" : "➡️";
+      const cls = pct > 15 ? "ev-boost-up" : pct < -15 ? "ev-boost-down" : "ev-boost-neutral";
+      const bar_w = Math.min(Math.abs(pct), 100);
+      const bar_cls = pct > 0 ? "ev-bar-pos" : "ev-bar-neg";
+      return `<div class="ev-boost-row">
+        <div class="ev-boost-name">${b.product_name}</div>
+        <div class="ev-boost-bar-wrap">
+          <div class="ev-boost-bar ${bar_cls}" style="width:${bar_w}%"></div>
+        </div>
+        <div class="ev-boost-nums">
+          <span class="ev-boost-event">${b.event_avg.toFixed(1)}/j</span>
+          <span class="ev-boost-vs">vs ${b.baseline_avg.toFixed(1)}/j</span>
+          <span class="${cls}">${arrow} ${pct > 0 ? "+" : ""}${pct}%</span>
+        </div>
+      </div>`;
+    }).filter(Boolean).join("");
+
+    // Genère la phrase narrative (top 3 produits)
+    const top3 = group.boosts.filter(b => b.boost_pct !== null && b.boost_pct > 10).slice(0, 3);
+    let narrative = "";
+    if (top3.length) {
+      const parts = top3.map(b => `<strong>${b.product_name}</strong> (+${b.boost_pct}%)`).join(", ");
+      narrative = `<div class="ev-narrative">
+        💡 Pour les ${nData} dernier${nData>1?"s":""} ${group.event_type.toLowerCase()}${nData>1?"s":""}, vous avez consommé significativement plus de ${parts}.
+      </div>`;
+    }
+
+    return `<div class="ev-analysis-card">
+      <div class="ev-an-header">
+        <span class="ev-an-icon">${icon}</span>
+        <div>
+          <div class="ev-an-type">${group.event_type}</div>
+          <div class="ev-an-count">${n} événement${n>1?"s":""} · ${nData} avec données Cashpad</div>
+        </div>
+      </div>
+      ${narrative}
+      <div class="ev-boost-legend">
+        <span>Produit</span><span></span><span>Événement · Normal · Variation</span>
+      </div>
+      <div class="ev-boost-list">${boostRows || '<div class="ev-no-data">Aucune variation significative détectée.</div>'}</div>
+      <div class="ev-tags" style="margin-top:12px">${evList}</div>
+    </div>`;
+  }).join("");
+
+  el.innerHTML = `<div class="ev-analysis-title">📊 Analyse de l'impact événementiel</div>
+    <div class="ev-analysis-info">Comparaison entre la consommation lors des événements et les jours normaux (baseline).</div>
+    <div class="ev-analysis-grid">${blocks}</div>`;
 }
