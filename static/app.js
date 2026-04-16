@@ -1244,6 +1244,9 @@ async function loadWeatherWidget(refresh = false) {
   const el = document.getElementById("weather-widget-area");
   if (!el) return;
 
+  // Afficher un indicateur de chargement
+  el.innerHTML = `<div class="wx-loading">🌤️ Chargement météo…</div>`;
+
   try {
     const w = await api(`/api/weather${refresh ? "?refresh=true" : ""}`);
 
@@ -1317,7 +1320,13 @@ async function loadWeatherWidget(refresh = false) {
 
   } catch(e) {
     const el2 = document.getElementById("weather-widget-area");
-    if (el2) el2.innerHTML = "";
+    if (el2) el2.innerHTML = `<div class="wx-setup wx-error">
+      <span class="wx-setup-icon">⚠️</span>
+      <div>
+        <strong>Widget météo indisponible</strong><br>
+        <span style="font-size:12px;opacity:.8">${esc(e.message || "Erreur de connexion")} — Vérifiez que <code>OPENWEATHER_API_KEY</code> est configuré dans Railway.</span>
+      </div>
+    </div>`;
   }
 }
 

@@ -1873,10 +1873,12 @@ details[open] .history-details summary::before { content: '▼'; }
 .wx-prod-extra { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 .wx-setup {
   display: flex; align-items: flex-start; gap: 14px;
-  background: var(--surface); border: 1px dashed var(--border);
-  border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;
-  font-size: 13px; color: var(--text-muted); line-height: 1.6;
+  background: var(--surface); border: 2px dashed rgba(201,168,76,.4);
+  border-radius: 12px; padding: 16px 18px; margin-bottom: 16px;
+  font-size: 13px; color: var(--text); line-height: 1.6;
 }
 .wx-setup code { background: var(--surface-alt); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 12px; }
 .wx-setup-icon { font-size: 26px; flex-shrink: 0; }
-.wx-error { border-color: rgba(239,68,68,.3); color: #dc2626; }
+.wx-error { border-color: rgba(239,68,68,.3); color: #dc2626; background: rgba(239,68,68,.04); }
+.wx-loading { display:flex; align-items:center; gap:10px; padding:14px 16px; font-size:13px; color:var(--text-muted); border-radius:12px; background:var(--surface); border:1px solid var(--border); margin-bottom:16px; animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
