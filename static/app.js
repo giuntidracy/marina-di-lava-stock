@@ -4198,88 +4198,56 @@ function flashShowResults(data) {
   }).length;
 
   let html = `
-    <div class="flash-summary-card">
-      <div class="flash-summary-row">
-        <div class="flash-summary-stat">
-          <div class="flash-summary-num">${data.total_bottles || 0}</div>
-          <div class="flash-summary-label">bouteilles détectées</div>
-        </div>
-        <div class="flash-summary-stat">
-          <div class="flash-summary-num">${matchedItems.length}</div>
-          <div class="flash-summary-label">produits reconnus</div>
-        </div>
-        <div class="flash-summary-stat">
-          <div class="flash-summary-num" style="color:${nbEcarts > 0 ? '#e74c3c' : '#27ae60'}">${nbEcarts}</div>
-          <div class="flash-summary-label">écarts détectés</div>
-        </div>
-        <div class="flash-summary-stat">
-          <span class="flash-conf-badge" style="background:${confColors[conf]}">${confLabels[conf]}</span>
-          <div class="flash-summary-label">confiance IA</div>
-        </div>
-      </div>
-      ${data.zone_description ? `<div class="flash-zone-desc">📍 ${esc(data.zone_description)}</div>` : ""}
-      ${data.observations ? `<div class="flash-observations">💡 ${esc(data.observations)}</div>` : ""}
+    <div class="flash-kpi-bar">
+      <div class="flash-kpi"><span class="flash-kpi-num">${data.total_bottles || 0}</span> détectées</div>
+      <div class="flash-kpi"><span class="flash-kpi-num">${matchedItems.length}</span> reconnues</div>
+      <div class="flash-kpi"><span class="flash-kpi-num flash-kpi-${nbEcarts > 0 ? 'warn' : 'ok'}">${nbEcarts}</span> écarts</div>
+      <div class="flash-kpi"><span class="flash-conf-badge" style="background:${confColors[conf]}">${confLabels[conf]}</span></div>
     </div>`;
 
-  // Tableau de comparaison
-  html += `<table class="data-table flash-compare-table">
-    <thead><tr>
-      <th>Produit</th>
-      <th>Stock théorique</th>
-      <th>Compté</th>
-      <th>Écart</th>
-    </tr></thead>
-    <tbody>`;
-
+  // Produits détectés — cartes
+  html += `<div class="flash-products">`;
   items.forEach((item, i) => {
     const matched = item.product_id != null;
-    const theo = item.current_stock != null ? item.current_stock : "—";
+    const theo = item.current_stock != null ? item.current_stock : null;
     const diff = matched ? (item.quantity - (item.current_stock || 0)) : null;
-    const diffStr = diff != null ? (diff > 0 ? `+${diff}` : `${diff}`) : "—";
-    const diffColor = diff == null ? "" : diff < 0 ? "color:#e74c3c;font-weight:700" : diff > 0 ? "color:#f39c12;font-weight:700" : "color:#27ae60";
-    const confDot = `<span class="flash-conf-dot" style="background:${confColors[item.confidence||'medium']};display:inline-block;vertical-align:middle;margin-left:6px" title="Confiance: ${confLabels[item.confidence||'medium']}"></span>`;
+    const diffStr = diff != null ? (diff > 0 ? `+${diff}` : `${diff}`) : "";
+    const diffClass = diff == null ? "" : diff < -0.1 ? "flash-diff-neg" : diff > 0.1 ? "flash-diff-warn" : "flash-diff-ok";
 
-    html += `<tr id="flash-row-${i}">
-      <td>
-        <strong>${esc(item.product_name)}</strong>${confDot}
-        ${item.category ? `<br><small style="color:var(--text-muted)">${esc(item.category)}</small>` : ""}
-        <div id="flash-unmatched-${i}">
-        ${!matched ? `
-          <small style="color:#f39c12">⚠ Non reconnu</small>
-          <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn btn-sm btn-outline" onclick="flashOpenAssociate(${i})">🔗 Associer</button>
-            <button class="btn btn-sm btn-primary" onclick="flashOpenCreate(${i})">➕ Créer</button>
-          </div>
-        ` : `
-          <div style="margin-top:4px">
-            <button class="btn btn-sm btn-outline" style="font-size:11px;padding:2px 8px" onclick="flashOpenAssociate(${i})">✏️ Modifier</button>
-          </div>
-        `}
+    html += `<div class="flash-prod-card ${matched ? '' : 'flash-prod-unknown'}" id="flash-row-${i}">
+      <div class="flash-prod-top">
+        <div class="flash-prod-info">
+          <span class="flash-prod-name">${esc(item.product_name)}</span>
+          ${item.category ? `<span class="flash-prod-cat">${esc(item.category)}</span>` : ""}
         </div>
-        ${item.notes ? `<br><small style="color:var(--text-muted);font-style:italic">📝 ${esc(item.notes)}</small>` : ""}
-      </td>
-      <td>${theo}</td>
-      <td>
-        <div class="flash-qty-control">
-          <button class="flash-qty-btn" onclick="flashQtyAdjust(${i}, -1)">−</button>
-          <input type="number" class="flash-qty-input" id="flash-qty-${i}" value="${item.quantity}" min="0" step="1" onchange="flashRecalcDiff(${i})"/>
-          <button class="flash-qty-btn" onclick="flashQtyAdjust(${i}, 1)">+</button>
+        <div class="flash-prod-qty-block">
+          <div class="flash-qty-control">
+            <button class="flash-qty-btn" onclick="flashQtyAdjust(${i}, -1)">−</button>
+            <input type="number" class="flash-qty-input" id="flash-qty-${i}" value="${item.quantity}" min="0" step="1" onchange="flashRecalcDiff(${i})"/>
+            <button class="flash-qty-btn" onclick="flashQtyAdjust(${i}, 1)">+</button>
+          </div>
         </div>
-      </td>
-      <td style="${diffColor}" id="flash-diff-${i}">${diffStr}</td>
-    </tr>`;
+      </div>
+      ${matched ? `
+        <div class="flash-prod-compare">
+          <span class="flash-prod-theo">Théo. <strong>${theo}</strong></span>
+          <span class="flash-prod-diff ${diffClass}" id="flash-diff-${i}">${diffStr}</span>
+          <button class="flash-prod-edit-btn" onclick="flashOpenAssociate(${i})">✏️</button>
+        </div>
+      ` : `
+        <div class="flash-prod-actions" id="flash-unmatched-${i}">
+          <button class="flash-prod-action-btn flash-btn-assoc" onclick="flashOpenAssociate(${i})">🔗 Associer</button>
+          <button class="flash-prod-action-btn flash-btn-create" onclick="flashOpenCreate(${i})">＋ Créer</button>
+        </div>
+      `}
+    </div>`;
   });
-
-  html += `</tbody></table>`;
+  html += `</div>`;
 
   html += `
-    <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
-      <button class="btn btn-primary btn-lg" onclick="flashSaveControl()">
-        📋 Enregistrer le contrôle
-      </button>
-      <button class="btn btn-outline" onclick="flashResetPhoto()">
-        ↩ Recommencer
-      </button>
+    <div class="flash-bottom-bar">
+      <button class="btn btn-primary btn-lg" onclick="flashSaveControl()">Enregistrer le contrôle</button>
+      <button class="btn btn-outline" onclick="flashResetPhoto()">Recommencer</button>
     </div>
     <div id="flash-save-result" style="margin-top:16px"></div>`;
 
