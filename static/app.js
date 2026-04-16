@@ -4449,18 +4449,27 @@ async function flashRenderHistory() {
                 ${ctrl.items.map(it => {
                   const dc = it.diff < 0 ? "color:#e74c3c;font-weight:700" : it.diff > 0 ? "color:#f39c12;font-weight:700" : "color:#27ae60";
                   const ds = it.diff > 0 ? `+${it.diff}` : `${it.diff}`;
-                  const hasEcart = Math.abs(it.diff) > 0.1 && it.product_id;
+                  const uid = `${ctrl.id}-${it.product_id}`;
                   return `<tr>
                     <td>${esc(it.product_name)}</td>
                     <td>${it.theoretical}</td>
-                    <td>${it.actual}</td>
-                    <td style="${dc}">${ds}</td>
-                    <td id="flash-hist-action-${ctrl.id}-${it.product_id}">
+                    <td>
+                      ${it.corrected
+                        ? it.actual
+                        : `<div class="flash-qty-control" style="transform:scale(0.85);transform-origin:left">
+                            <button class="flash-qty-btn" onclick="flashHistQty('${uid}',-1)">−</button>
+                            <input type="number" class="flash-qty-input" id="flash-hist-qty-${uid}" value="${it.actual}" min="0" step="1"
+                                   onchange="flashHistRecalc('${uid}',${it.theoretical})"/>
+                            <button class="flash-qty-btn" onclick="flashHistQty('${uid}',1)">+</button>
+                          </div>`}
+                    </td>
+                    <td style="${dc}" id="flash-hist-diff-${uid}">${ds}</td>
+                    <td id="flash-hist-action-${uid}">
                       ${it.corrected
                         ? `<span style="color:#27ae60;font-size:12px">✓ Corrigé ${it.corrected_at||""}</span>`
-                        : hasEcart
-                          ? `<button class="btn btn-sm btn-primary" style="font-size:11px" onclick="flashCorrectFromHistory(${ctrl.id}, ${it.product_id})">Corriger</button>`
-                          : `<span style="color:#27ae60;font-size:12px">✓ OK</span>`}
+                        : it.product_id
+                          ? `<button class="btn btn-sm btn-primary" style="font-size:11px" onclick="flashCorrectFromHistory(${ctrl.id}, ${it.product_id})">→ Stock</button>`
+                          : `—`}
                     </td>
                   </tr>`;
                 }).join("")}
@@ -4481,14 +4490,44 @@ function flashToggleDetail(id) {
   if (el) el.classList.toggle("hidden");
 }
 
+function flashHistQty(uid, delta) {
+  const input = document.getElementById(`flash-hist-qty-${uid}`);
+  if (!input) return;
+  let v = parseInt(input.value) || 0;
+  v = Math.max(0, v + delta);
+  input.value = v;
+  const theo = parseFloat(input.closest("tr").querySelectorAll("td")[1].textContent) || 0;
+  flashHistRecalc(uid, theo);
+}
+
+function flashHistRecalc(uid, theo) {
+  const input = document.getElementById(`flash-hist-qty-${uid}`);
+  const diffCell = document.getElementById(`flash-hist-diff-${uid}`);
+  if (!input || !diffCell) return;
+  const actual = parseFloat(input.value) || 0;
+  const diff = actual - theo;
+  diffCell.textContent = diff > 0 ? `+${diff}` : `${diff}`;
+  diffCell.style.color = diff < 0 ? "#e74c3c" : diff > 0 ? "#f39c12" : "#27ae60";
+  diffCell.style.fontWeight = diff !== 0 ? "700" : "";
+}
+
 async function flashCorrectFromHistory(controlId, productId) {
-  const cell = document.getElementById(`flash-hist-action-${controlId}-${productId}`);
+  const uid = `${controlId}-${productId}`;
+  const cell = document.getElementById(`flash-hist-action-${uid}`);
+  const input = document.getElementById(`flash-hist-qty-${uid}`);
   if (!cell) return;
+
+  const qty = input ? parseFloat(input.value) : null;
   cell.innerHTML = `<span style="color:var(--text-muted)">…</span>`;
 
   try {
-    const res = await api(`/api/inventory/flash-correct/${controlId}/${productId}`, { method: "POST" });
-    cell.innerHTML = `<span style="color:#27ae60;font-size:12px">✓ Corrigé (${res.old_stock} → ${res.new_stock})</span>`;
+    const res = await api(`/api/inventory/flash-correct/${controlId}/${productId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(qty != null ? { qty } : {}),
+    });
+    cell.innerHTML = `<span style="color:#27ae60;font-size:12px">✓ ${res.old_stock} → ${res.new_stock}</span>`;
+    if (input) input.replaceWith(document.createTextNode(res.new_stock));
     showToast(`${res.product_name} : stock corrigé`);
   } catch(e) {
     cell.innerHTML = `<span style="color:#e74c3c;font-size:12px">${esc(e.message)}</span>`;
