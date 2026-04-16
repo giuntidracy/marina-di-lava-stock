@@ -113,8 +113,32 @@ function startApp() {
 function logout() {
   userRole = null;
   authToken = null;
+  userName = "";
+  userPhoto = "";
   clearTimeout(inactivityTimer);
   location.reload();
+}
+
+function flashOpenAvatarUpload() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.capture = "user";
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await api("/api/auth/avatar", { method: "POST", body: formData });
+      userPhoto = res.photo + "?t=" + Date.now();
+      showToast("Photo mise à jour !");
+      renderView(currentView);
+    } catch(e) {
+      showToast("Erreur : " + e.message);
+    }
+  };
+  input.click();
 }
 
 // ── Init ───────────────────────────────────────────────────
@@ -4860,8 +4884,13 @@ async function renderDashboard(el) {
   el.innerHTML = `
     <div class="db-wrap">
       <div class="db-greeting">
-        <div class="db-greeting-hello">${esc(greeting)} 👋</div>
-        <div class="db-greeting-date">${dateCap}</div>
+        <div class="db-greeting-top">
+          ${userPhoto ? `<img src="${userPhoto}" class="db-greeting-avatar" onclick="flashOpenAvatarUpload()"/>` : ""}
+          <div>
+            <div class="db-greeting-hello">${esc(greeting)}${userName ? ` ${esc(userName)}` : ""} 👋</div>
+            <div class="db-greeting-date">${dateCap}</div>
+          </div>
+        </div>
       </div>
 
       <div class="db-kpi-row" onclick="switchView('stock')">

@@ -346,6 +346,35 @@ def auth_pin(body: PinIn, request: Request):
         raise HTTPException(401, f"Code PIN incorrect — {remaining} tentative(s) restante(s)")
 
 
+@app.post("/api/auth/avatar")
+async def upload_avatar(file: UploadFile = File(...), request: Request = None):
+    """Upload une photo de profil pour l'utilisateur connecté."""
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    session = _sessions.get(token)
+    if not session or session.get("role") != "manager":
+        raise HTTPException(401, detail="Non authentifié")
+    user_name = session.get("user_name", "")
+    if not user_name:
+        raise HTTPException(400, detail="Utilisateur inconnu")
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(400, detail="Image trop grande (max 5 Mo)")
+
+    slug = user_name.lower().replace("-", "").replace(" ", "")
+    ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "jpg"
+    if ext not in ("jpg", "jpeg", "png", "webp"):
+        ext = "jpg"
+    avatar_path = f"static/avatars/{slug}.{ext}"
+    with open(avatar_path, "wb") as f:
+        f.write(content)
+
+    photo_url = f"/{avatar_path}"
+    session["user_photo"] = photo_url
+    return {"ok": True, "photo": photo_url}
+
+
 @app.get("/api/auth/me")
 def auth_me(request: Request):
     """Retourne le profil de l'utilisateur connecté."""
