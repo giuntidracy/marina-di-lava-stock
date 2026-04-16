@@ -1882,3 +1882,227 @@ details[open] .history-details summary::before { content: '▼'; }
 .wx-error { border-color: rgba(239,68,68,.3); color: #dc2626; background: rgba(239,68,68,.04); }
 .wx-loading { display:flex; align-items:center; gap:10px; padding:14px 16px; font-size:13px; color:var(--text-muted); border-radius:12px; background:var(--surface); border:1px solid var(--border); margin-bottom:16px; animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+/* ══════════════════════════════════════════════════════════════
+   TABLEAU DE BORD
+══════════════════════════════════════════════════════════════ */
+.db-wrap {
+  padding: 20px 24px 40px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.db-greeting {
+  background: linear-gradient(135deg, var(--primary) 0%, #1a4a2e 100%);
+  border-radius: 16px;
+  padding: 28px 32px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 24px rgba(0,0,0,.18);
+}
+.db-greeting-hello {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.db-greeting-date {
+  font-size: 14px;
+  color: rgba(255,255,255,.7);
+  text-transform: capitalize;
+}
+
+.db-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 18px;
+}
+@media (max-width: 680px) {
+  .db-grid { grid-template-columns: 1fr; }
+  .db-wrap { padding: 14px 14px 32px; }
+  .db-greeting { padding: 20px 20px; }
+  .db-greeting-hello { font-size: 20px; }
+}
+
+.db-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.db-card-full {
+  grid-column: 1 / -1;
+}
+
+.db-card-title {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+
+.db-card-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.1;
+}
+.db-card-value-sm {
+  font-size: 22px;
+}
+
+/* CA block */
+.db-ca-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.db-ca-block {
+  flex: 1;
+}
+.db-ca-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin-bottom: 2px;
+}
+.db-ca-sep {
+  width: 1px;
+  height: 50px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* Météo */
+.db-weather-mini {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.db-weather-emoji {
+  font-size: 36px;
+  line-height: 1;
+}
+.db-weather-temp {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--text);
+}
+.db-weather-city {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: -4px;
+}
+.db-weather-label {
+  font-size: 13px;
+  color: var(--text);
+  margin-top: 2px;
+}
+
+/* Alertes */
+.db-alert-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  gap: 10px;
+}
+.db-alert-row:last-child { border-bottom: none; }
+.db-alert-name {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.db-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 20px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.db-badge-red    { background: rgba(239,68,68,.15);  color: #dc2626; }
+.db-badge-orange { background: rgba(234,179,8,.15);  color: #b45309; }
+
+/* Événements */
+.db-event-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.db-event-row:last-child { border-bottom: none; }
+.db-event-date {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 52px;
+  flex-shrink: 0;
+}
+.db-event-name {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.db-event-type {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Top produits */
+.db-top-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.db-top-row:last-child { border-bottom: none; }
+.db-top-medal {
+  font-size: 20px;
+  width: 28px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.db-top-name {
+  flex: 1;
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.db-top-qty {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.db-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 0;
+  padding: 8px 0;
+}

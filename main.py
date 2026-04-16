@@ -3688,3 +3688,162 @@ def get_weather(refresh: bool = False, db: Session = Depends(get_db)):
     _set_setting(db, "weather_cache_ts", datetime.utcnow().isoformat())
     db.commit()
     return result
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TABLEAU DE BORD
+# ══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/dashboard")
+def get_dashboard(db: Session = Depends(get_db)):
+    now_local = datetime.now(_LOCAL_TZ)
+    today     = now_local.date()
+
+    # ── Météo (depuis cache) ──────────────────────────────────────────────
+    api_key = (os.getenv("OPENWEATHER_API_KEY") or os.getenv("OPENWEATHER-API-KEY") or "").strip()
+    weather_summary: dict
+    if not api_key:
+        weather_summary = {"configured": False}
+    else:
+        cached   = _get_setting(db, "weather_cache", "")
+        cache_ts = _get_setting(db, "weather_cache_ts", "")
+        if cached and cache_ts:
+            try:
+                age = (datetime.utcnow() - datetime.fromisoformat(cache_ts)).total_seconds()
+                if age < 7200:          # 2h de tolérance pour le dashboard
+                    full = json.loads(cached)
+                    weather_summary = {
+                        "configured":   True,
+                        "current_temp": full.get("current_temp"),
+                        "alert_level":  full.get("alert_level"),
+                        "alert_emoji":  full.get("alert_emoji"),
+                        "alert_label":  full.get("alert_label"),
+                        "city":         full.get("city", "Corse"),
+                    }
+                else:
+                    weather_summary = {"configured": True, "stale": True}
+            except Exception:
+                weather_summary = {"configured": True, "stale": True}
+        else:
+            # Pas encore en cache : tenter un appel léger
+            lat = os.getenv("WEATHER_LAT", "41.9267").strip()
+            lon = os.getenv("WEATHER_LON", "8.7369").strip()
+            try:
+                raw = _fetch_openweather(lat, lon, api_key)
+                forecasts = raw.get("list", [])
+                city_name = raw.get("city", {}).get("name", "")
+                country   = raw.get("city", {}).get("country", "")
+                if forecasts:
+                    current_t = round(forecasts[0]["main"]["temp"], 1)
+                    tomorrow  = forecasts[8:16] if len(forecasts) >= 16 else forecasts[1:]
+                    t_max = round(max(s["main"].get("temp_max", s["main"]["temp"]) for s in tomorrow), 1) if tomorrow else current_t
+                    if t_max >= 35:
+                        level, emoji, label = "canicule", "🔥", f"Canicule prévue ({t_max:.0f}°C)"
+                    elif t_max >= 30:
+                        level, emoji, label = "chaud",    "☀️", f"Forte chaleur ({t_max:.0f}°C)"
+                    elif t_max >= 25:
+                        level, emoji, label = "tiede",    "🌤️", f"Belle journée ({t_max:.0f}°C)"
+                    else:
+                        level, emoji, label = "normal",   "⛅", f"Temps normal ({t_max:.0f}°C)"
+                    weather_summary = {
+                        "configured":   True,
+                        "current_temp": current_t,
+                        "alert_level":  level,
+                        "alert_emoji":  emoji,
+                        "alert_label":  label,
+                        "city":         f"{city_name}, {country}" if city_name else "Corse",
+                    }
+                else:
+                    weather_summary = {"configured": True, "stale": True}
+            except Exception:
+                weather_summary = {"configured": True, "stale": True}
+
+    # ── Prochains événements ──────────────────────────────────────────────
+    upcoming_events_q = (
+        db.query(Event)
+        .filter(Event.date >= datetime.combine(today, datetime.min.time()))
+        .order_by(Event.date.asc())
+        .limit(3)
+        .all()
+    )
+    events_upcoming = [
+        {
+            "id":         ev.id,
+            "name":       ev.name,
+            "event_type": ev.event_type,
+            "date":       ev.date.isoformat(),
+        }
+        for ev in upcoming_events_q
+    ]
+
+    # ── Alertes stock urgentes ────────────────────────────────────────────
+    urgent_products = (
+        db.query(Product)
+        .filter(Product.stock <= Product.alert_threshold)
+        .order_by((Product.stock / (Product.alert_threshold + 0.001)).asc())
+        .limit(5)
+        .all()
+    )
+    urgent_alerts = [
+        {
+            "id":              p.id,
+            "name":            p.name,
+            "stock":           round(p.stock, 2),
+            "alert_threshold": p.alert_threshold,
+            "unit":            p.unit or "u",
+        }
+        for p in urgent_products
+    ]
+
+    # ── CA hier & CA semaine + Top produits ──────────────────────────────
+    yesterday_start = datetime.combine(today - timedelta(days=1), datetime.min.time())
+    today_start     = datetime.combine(today,                     datetime.min.time())
+    week_start      = datetime.combine(today - timedelta(days=7), datetime.min.time())
+
+    cashpad_history = (
+        db.query(StockHistory)
+        .filter(
+            StockHistory.event_type == "import_cashpad",
+            StockHistory.created_at >= week_start,
+        )
+        .all()
+    )
+
+    ca_yesterday = 0.0
+    ca_week      = 0.0
+    product_totals: dict = {}   # name → {"qty": float, "unit": str}
+
+    for h in cashpad_history:
+        try:
+            data = json.loads(h.data_json or "[]")
+            if not isinstance(data, list):
+                data = [data]
+            for item in data:
+                qty   = float(item.get("qty_sold", 0) or 0)
+                price = float(item.get("sale_price_ttc", 0) or 0)
+                name  = item.get("product_name", item.get("name", ""))
+                unit  = item.get("unit", "u")
+                revenue = qty * price
+                ca_week += revenue
+                if yesterday_start <= h.created_at < today_start:
+                    ca_yesterday += revenue
+                if name:
+                    if name not in product_totals:
+                        product_totals[name] = {"qty": 0.0, "unit": unit}
+                    product_totals[name]["qty"] += qty
+        except Exception:
+            pass
+
+    top_products = sorted(
+        [{"name": k, "qty_sold": round(v["qty"], 2), "unit": v["unit"]} for k, v in product_totals.items()],
+        key=lambda x: -x["qty_sold"],
+    )[:3]
+
+    return {
+        "weather":         weather_summary,
+        "events_upcoming": events_upcoming,
+        "urgent_alerts":   urgent_alerts,
+        "ca_yesterday":    round(ca_yesterday, 2),
+        "ca_week":         round(ca_week, 2),
+        "top_products":    top_products,
+    }

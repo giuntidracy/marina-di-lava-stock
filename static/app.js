@@ -14,7 +14,7 @@ let inactivityTimer = null;
 
 // Onglets accessibles par rôle
 const SERVICE_VIEWS = ["inventory"];
-const MANAGER_VIEWS = ["stock","cocktails","alerts","cashpad","delivery","inventory","stats","history","suppliers","orders","mapping","events","shrinkage"];
+const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery","inventory","stats","history","suppliers","orders","mapping","events","shrinkage"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
@@ -95,7 +95,7 @@ function startApp() {
     btn.addEventListener("click", () => switchView(btn.dataset.view));
   });
 
-  const defaultView = userRole === "manager" ? "stock" : "inventory";
+  const defaultView = userRole === "manager" ? "dashboard" : "inventory";
   switchView(defaultView);
   loadAll();
 }
@@ -123,6 +123,7 @@ async function loadAll() {
 }
 
 const VIEW_TITLES = {
+  dashboard:"Tableau de bord",
   stock:"Stock & Marges", cocktails:"Cocktails & Marges", alerts:"Alertes",
   shrinkage:"Démarque Inconnue", cashpad:"Import Cashpad", delivery:"Bon de Livraison",
   inventory:"Sortie Réserve", stats:"Statistiques", history:"Historique",
@@ -168,6 +169,7 @@ function toggleNav() { toggleSidebar(); }
 function renderView(view) {
   const app = document.getElementById("app");
   switch (view) {
+    case "dashboard":  renderDashboard(app); break;
     case "stock":     renderStock(app); break;
     case "cocktails": renderCocktails(app); break;
     case "alerts":    renderAlerts(app); break;
@@ -4030,4 +4032,153 @@ function showToast(msg) {
 
 function fmtEur(v) {
   return (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", minimumFractionDigits:2 });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// TABLEAU DE BORD
+// ══════════════════════════════════════════════════════════════════════════
+
+async function renderDashboard(el) {
+  el.innerHTML = `<div class="db-wrap"><p style="color:var(--text-muted);text-align:center;padding:40px">Chargement du tableau de bord…</p></div>`;
+
+  let data;
+  try {
+    data = await api("/api/dashboard");
+  } catch(e) {
+    el.innerHTML = `<div class="db-wrap"><p style="color:red;text-align:center;padding:40px">Erreur : ${esc(e.message)}</p></div>`;
+    return;
+  }
+
+  // ── Greeting ───────────────────────────────────────────────────────────
+  const now = new Date();
+  const hour = now.getHours();
+  let greeting = "Bonne journée";
+  if (hour < 6)  greeting = "Bonne nuit";
+  else if (hour < 12) greeting = "Bonjour";
+  else if (hour < 18) greeting = "Bon après-midi";
+  else greeting = "Bonsoir";
+
+  const dateStr = now.toLocaleDateString("fr-FR", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric"
+  });
+  const dateCap = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+
+  // ── Météo ──────────────────────────────────────────────────────────────
+  const w = data.weather || {};
+  let weatherHtml;
+  if (!w.configured) {
+    weatherHtml = `<p class="db-empty">Météo non configurée</p>`;
+  } else if (w.stale || !w.current_temp) {
+    weatherHtml = `<p class="db-empty">Données météo indisponibles</p>`;
+  } else {
+    weatherHtml = `
+      <div class="db-weather-mini">
+        <span class="db-weather-emoji">${esc(w.alert_emoji || "⛅")}</span>
+        <span class="db-weather-temp">${w.current_temp}°C</span>
+      </div>
+      <div class="db-weather-city">${esc(w.city || "")}</div>
+      <div class="db-weather-label">${esc(w.alert_label || "")}</div>`;
+  }
+
+  // ── CA ─────────────────────────────────────────────────────────────────
+  const fmtCA = v => (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", minimumFractionDigits:2 });
+
+  // ── Alertes ────────────────────────────────────────────────────────────
+  const alerts = data.urgent_alerts || [];
+  let alertsHtml;
+  if (alerts.length === 0) {
+    alertsHtml = `<p class="db-empty">✅ Aucune alerte stock urgente</p>`;
+  } else {
+    alertsHtml = alerts.map(a => {
+      const isRupture = a.stock <= 0;
+      const badge = isRupture
+        ? `<span class="db-badge db-badge-red">Rupture</span>`
+        : `<span class="db-badge db-badge-orange">${a.stock} ${esc(a.unit)}</span>`;
+      return `<div class="db-alert-row">
+        <span class="db-alert-name">${esc(a.name)}</span>
+        ${badge}
+      </div>`;
+    }).join("");
+  }
+
+  // ── Événements ─────────────────────────────────────────────────────────
+  const events = data.events_upcoming || [];
+  let eventsHtml;
+  if (events.length === 0) {
+    eventsHtml = `<p class="db-empty">Aucun événement à venir</p>`;
+  } else {
+    eventsHtml = events.map(ev => {
+      const d = new Date(ev.date);
+      const dStr = d.toLocaleDateString("fr-FR", { day:"numeric", month:"short" });
+      return `<div class="db-event-row">
+        <span class="db-event-date">${dStr}</span>
+        <span class="db-event-name">${esc(ev.name)}</span>
+        <span class="db-event-type">${esc(ev.event_type || "")}</span>
+      </div>`;
+    }).join("");
+  }
+
+  // ── Top produits ───────────────────────────────────────────────────────
+  const tops = data.top_products || [];
+  let topsHtml;
+  if (tops.length === 0) {
+    topsHtml = `<p class="db-empty">Aucune vente enregistrée cette semaine</p>`;
+  } else {
+    const medals = ["🥇", "🥈", "🥉"];
+    topsHtml = tops.map((t, i) =>
+      `<div class="db-top-row">
+        <span class="db-top-medal">${medals[i] || ""}</span>
+        <span class="db-top-name">${esc(t.name)}</span>
+        <span class="db-top-qty">${t.qty_sold} ${esc(t.unit)}</span>
+      </div>`
+    ).join("");
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────
+  el.innerHTML = `
+    <div class="db-wrap">
+      <div class="db-greeting">
+        <div class="db-greeting-hello">${esc(greeting)} 👋</div>
+        <div class="db-greeting-date">${dateCap}</div>
+      </div>
+
+      <div class="db-grid">
+
+        <div class="db-card">
+          <div class="db-card-title">🌡️ Météo</div>
+          ${weatherHtml}
+        </div>
+
+        <div class="db-card">
+          <div class="db-card-title">💰 Chiffre d'affaires</div>
+          <div class="db-ca-row">
+            <div class="db-ca-block">
+              <div class="db-ca-label">Hier</div>
+              <div class="db-card-value">${fmtCA(data.ca_yesterday)}</div>
+            </div>
+            <div class="db-ca-sep"></div>
+            <div class="db-ca-block">
+              <div class="db-ca-label">7 derniers jours</div>
+              <div class="db-card-value db-card-value-sm">${fmtCA(data.ca_week)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="db-card">
+          <div class="db-card-title">🔴 Alertes stock urgentes</div>
+          ${alertsHtml}
+        </div>
+
+        <div class="db-card">
+          <div class="db-card-title">📅 Prochains événements</div>
+          ${eventsHtml}
+        </div>
+
+        <div class="db-card db-card-full">
+          <div class="db-card-title">📦 Top 3 produits vendus cette semaine</div>
+          ${topsHtml}
+        </div>
+
+      </div>
+    </div>`;
 }
