@@ -4067,9 +4067,8 @@ function flashSwitchTab(tab) {
 function flashRenderScan() {
   const el = document.getElementById("flash-tab-content");
   el.innerHTML = `
-    <div class="info-box">
-      📷 Prenez une photo d'un frigo ou d'une étagère pour <strong>contrôler le stock</strong>.<br>
-      L'IA compte les bouteilles et compare avec le stock théorique. <strong>Le stock n'est pas modifié</strong> — vous pouvez corriger produit par produit si besoin.
+    <div class="info-box" style="font-size:13px">
+      Photographiez un frigo ou une étagère. L'IA compte et compare au stock. <strong>Rien n'est modifié</strong> sans votre accord.
     </div>
 
     <div class="flash-capture-zone" id="flash-capture-zone">
@@ -4318,48 +4317,48 @@ function flashRenderControlReport(res) {
   const nbEcarts = items.filter(it => Math.abs(it.diff) > 0.1).length;
 
   let html = `
-    <div class="info-box" style="background:rgba(39,174,96,.12);border-color:#27ae60">
-      📋 <strong>Contrôle enregistré</strong> — ${items.length} produits vérifiés, ${nbEcarts} écart(s) détecté(s).<br>
-      <small>Le stock n'a pas été modifié. Vous pouvez corriger les écarts produit par produit ci-dessous.</small>
+    <div class="flash-report-banner flash-report-ok">
+      <strong>Contrôle enregistré</strong><br>
+      <span>${items.length} produit(s), ${nbEcarts} écart(s). Stock non modifié.</span>
     </div>`;
 
   if (res.alerts && res.alerts.length) {
-    html += `<div class="info-box" style="background:rgba(231,76,60,.12);border-color:#e74c3c;margin-top:8px">
-      ⚠️ <strong>Écarts signalés :</strong><br>${res.alerts.map(a => esc(a)).join("<br>")}
+    html += `<div class="flash-report-banner flash-report-warn">
+      ${res.alerts.map(a => esc(a)).join("<br>")}
     </div>`;
   }
 
-  html += `<table class="data-table flash-compare-table">
-    <thead><tr><th>Produit</th><th>Théorique</th><th>Compté</th><th>Écart</th><th>Action</th></tr></thead>
-    <tbody>`;
-
+  html += `<div class="flash-products">`;
   items.forEach(item => {
-    const diffColor = item.diff < 0 ? "color:#e74c3c;font-weight:700" : item.diff > 0 ? "color:#f39c12;font-weight:700" : "color:#27ae60";
     const diffStr = item.diff > 0 ? `+${item.diff}` : `${item.diff}`;
+    const diffClass = item.diff < -0.1 ? "flash-diff-neg" : item.diff > 0.1 ? "flash-diff-warn" : "flash-diff-ok";
     const hasEcart = Math.abs(item.diff) > 0.1;
 
-    html += `<tr id="flash-report-row-${item.product_id}">
-      <td>
-        <strong>${esc(item.product_name)}</strong>
-        ${item.category ? `<br><small style="color:var(--text-muted)">${esc(item.category)}</small>` : ""}
-      </td>
-      <td>${item.theoretical}</td>
-      <td><strong>${item.actual}</strong></td>
-      <td style="${diffColor}">${diffStr}</td>
-      <td id="flash-action-${item.product_id}">
-        ${hasEcart
-          ? `<button class="btn btn-sm btn-primary" onclick="flashCorrectProduct(${flashControlId}, ${item.product_id})">
-               Corriger le stock
-             </button>`
-          : `<span style="color:#27ae60;font-size:13px">✓ OK</span>`}
-      </td>
-    </tr>`;
+    html += `<div class="flash-prod-card">
+      <div class="flash-prod-top">
+        <div class="flash-prod-info">
+          <span class="flash-prod-name">${esc(item.product_name)}</span>
+          ${item.category ? `<span class="flash-prod-cat">${esc(item.category)}</span>` : ""}
+        </div>
+        <span class="flash-prod-diff ${diffClass}">${diffStr}</span>
+      </div>
+      <div class="flash-prod-compare">
+        <span class="flash-prod-theo">Théo. <strong>${item.theoretical}</strong></span>
+        <span class="flash-prod-theo">Compté <strong>${item.actual}</strong></span>
+        <span id="flash-action-${item.product_id}" style="margin-left:auto">
+          ${hasEcart
+            ? `<button class="btn btn-sm btn-primary" onclick="flashCorrectProduct(${flashControlId}, ${item.product_id})">→ Stock</button>`
+            : `<span style="color:#27ae60;font-weight:600">✓</span>`}
+        </span>
+      </div>
+    </div>`;
   });
+  html += `</div>`;
 
-  html += `</tbody></table>
-    <div style="margin-top:20px">
-      <button class="btn btn-outline" onclick="flashSwitchTab('scan')">📷 Nouveau contrôle</button>
-      <button class="btn btn-outline" onclick="flashSwitchTab('history')" style="margin-left:8px">📋 Voir l'historique</button>
+  html += `
+    <div class="flash-bottom-bar">
+      <button class="btn btn-outline" onclick="flashSwitchTab('scan')">Nouveau contrôle</button>
+      <button class="btn btn-outline" onclick="flashSwitchTab('history')">Voir l'historique</button>
     </div>`;
 
   el.innerHTML = html;
