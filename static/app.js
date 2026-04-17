@@ -15,8 +15,8 @@ let userPhoto = "";
 let inactivityTimer = null;
 
 // Onglets accessibles par rôle
-const SERVICE_VIEWS = ["inventory","service_alert"];
-const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery","inventory","service_alert","flash","stats","history","suppliers","orders","mapping","events","shrinkage"];
+const SERVICE_VIEWS = ["inventory","service_alert","delivery_check"];
+const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery","delivery_check","inventory","service_alert","flash","stats","history","suppliers","orders","mapping","events","shrinkage"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
@@ -181,6 +181,7 @@ const VIEW_TITLES = {
   dashboard:"Tableau de bord",
   stock:"Stock & Marges", cocktails:"Cocktails & Marges", alerts:"Alertes",
   shrinkage:"Démarque Inconnue", cashpad:"Import Cashpad", delivery:"Bon de Livraison",
+  delivery_check:"Contrôle livraison",
   inventory:"Sortie Réserve", flash:"Inventaire Flash", service_alert:"Alerte Stock",
   stats:"Statistiques", history:"Historique",
   events:"Événements", suppliers:"Fournisseurs", orders:"Commandes", mapping:"Mapping Cashpad",
@@ -241,6 +242,7 @@ function renderView(view) {
     case "shrinkage": renderShrinkage(app); break;
     case "flash":     renderFlash(app); break;
     case "service_alert": renderServiceAlert(app); break;
+    case "delivery_check": renderDeliveryCheck(app); break;
   }
 }
 
@@ -4726,6 +4728,358 @@ function showToast(msg) {
 
 function fmtEur(v) {
   return (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", minimumFractionDigits:2 });
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// CONTRÔLE LIVRAISON (serveur + direction, flux 2-étapes)
+// ══════════════════════════════════════════════════════════════════════════
+
+async function renderDeliveryCheck(el) {
+  const isManager = userRole === "manager";
+  el.innerHTML = `<div class="dc-wrap">
+    <div class="dc-header">
+      <div>
+        <h2 class="dc-title">✅ Contrôle livraison</h2>
+        <p class="dc-sub">${isManager
+          ? "Validez les comptages serveurs et saisissez le BL. Le stock n'est mis à jour qu'après votre validation."
+          : "Comptez ce qui est physiquement dans les cartons. La direction validera ensuite."}</p>
+      </div>
+      ${isManager ? `<button class="btn btn-primary" onclick="openNewDeliveryCheckModal()">+ Nouveau contrôle</button>` : ``}
+    </div>
+    <div id="dc-list">Chargement…</div>
+  </div>`;
+  loadDeliveryChecks();
+}
+
+async function loadDeliveryChecks() {
+  const isManager = userRole === "manager";
+  const role = isManager ? "manager" : "service";
+  const container = document.getElementById("dc-list");
+  if (!container) return;
+  try {
+    const checks = await api(`/api/delivery-checks?role=${role}`);
+    if (!isManager) {
+      const pending = checks.filter(c => c.status === "pending_count");
+      if (pending.length === 0) {
+        container.innerHTML = `<div class="dc-empty">🎉 Aucun contrôle en attente. Tu seras notifié quand un camion arrive.</div>`;
+        return;
+      }
+      container.innerHTML = pending.map(c => renderDcRow(c, "service")).join("");
+    } else {
+      if (checks.length === 0) {
+        container.innerHTML = `<div class="dc-empty">Aucun contrôle enregistré. Crée-en un quand un camion arrive.</div>`;
+        return;
+      }
+      // Groupe par statut
+      const buckets = {
+        pending_count: { label: "⏳ En attente comptage serveur", rows: [] },
+        counted:       { label: "🔎 À valider (compté, en attente direction)", rows: [] },
+        validated:     { label: "✅ Validés (stock mis à jour)", rows: [] },
+      };
+      checks.forEach(c => { (buckets[c.status] || buckets.validated).rows.push(c); });
+      let html = "";
+      Object.values(buckets).forEach(b => {
+        if (b.rows.length === 0) return;
+        html += `<div class="dc-bucket">
+          <h3 class="dc-bucket-title">${b.label} <span class="dc-bucket-count">${b.rows.length}</span></h3>
+          ${b.rows.map(c => renderDcRow(c, "manager")).join("")}
+        </div>`;
+      });
+      container.innerHTML = html;
+    }
+  } catch (e) {
+    container.innerHTML = `<div class="dc-empty" style="color:#DC2626">Erreur : ${esc(e.message)}</div>`;
+  }
+}
+
+function renderDcRow(c, role) {
+  const d = new Date(c.created_at);
+  const dStr = d.toLocaleDateString("fr-FR", { day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" });
+  const statusColor = c.status === "pending_count" ? "#f59e0b"
+                    : c.status === "counted"       ? "#3b82f6"
+                    : c.status === "validated"     ? "#16a34a" : "#6b7280";
+  const action = (role === "service" && c.status === "pending_count")
+    ? `<button class="btn btn-primary btn-sm" onclick="openServerCountingForm(${c.id})">🔎 Compter</button>`
+    : (role === "manager" && c.status === "counted")
+      ? `<button class="btn btn-primary btn-sm" onclick="openManagerValidationForm(${c.id})">✅ Valider</button>`
+      : (role === "manager" && c.status === "pending_count")
+        ? `<button class="btn btn-outline btn-sm" onclick="openManagerValidationForm(${c.id})">Voir / compter moi-même</button>`
+        : `<button class="btn btn-outline btn-sm" onclick="openManagerValidationForm(${c.id})">Détails</button>`;
+  return `<div class="dc-row">
+    <div class="dc-row-head">
+      <div>
+        <div class="dc-row-sup">${esc(c.supplier_name)}</div>
+        <div class="dc-row-meta">
+          ${c.order_reference ? `📋 Cmd ${esc(c.order_reference)} · ` : ""}
+          ${c.bl_reference ? `BL ${esc(c.bl_reference)} · ` : ""}
+          créé ${dStr}
+          ${c.checked_by ? ` · 🔎 compté par ${esc(c.checked_by)}` : ""}
+          ${c.validated_by ? ` · ✅ validé par ${esc(c.validated_by)}` : ""}
+        </div>
+      </div>
+      <span class="dc-status-badge" style="background:${statusColor}20;color:${statusColor};border:1px solid ${statusColor}40">
+        ${c.status === "pending_count" ? "À compter"
+         : c.status === "counted" ? "À valider"
+         : c.status === "validated" ? "Validé" : c.status}
+      </span>
+    </div>
+    <div class="dc-row-footer">
+      <span style="font-size:12px;color:var(--text-muted)">${(c.items || []).length} produit(s)</span>
+      ${action}
+    </div>
+  </div>`;
+}
+
+// ─────────── SERVEUR : comptage aveugle ─────────────────────────────────
+async function openServerCountingForm(cid) {
+  const c = await api(`/api/delivery-checks/${cid}?role=service`);
+  const name = prompt("Ton prénom (pour traçabilité) :", "");
+  if (!name) return;
+
+  // État local — on NE voit PAS les qty_expected / qty_bl (backend a mis null)
+  __dcState = { id: c.id, checked_by: name, items: c.items.map(it => ({
+    id: it.id, product_name: it.product_name, unit: it.unit,
+    qty_physical: it.qty_physical || 0, notes: it.notes || "",
+  })) };
+
+  const app = document.getElementById("app");
+  app.innerHTML = `<div class="dc-wrap">
+    <div class="dc-count-header">
+      <button class="btn btn-outline" onclick="switchView('delivery_check')">← Retour</button>
+      <div>
+        <h2 class="dc-title">🔎 Comptage — ${esc(c.supplier_name)}</h2>
+        <p class="dc-sub">Compte ce qui est physiquement dans les cartons. Tu ne vois pas ce qui a été commandé — c'est volontaire.</p>
+      </div>
+    </div>
+    <div class="dc-count-list" id="dc-count-list"></div>
+    <div class="dc-count-footer">
+      <button class="btn btn-primary" onclick="submitServerCounts()">✅ Valider mon comptage</button>
+    </div>
+  </div>`;
+  _renderServerCountingRows();
+}
+
+function _renderServerCountingRows() {
+  const list = document.getElementById("dc-count-list");
+  if (!list) return;
+  list.innerHTML = __dcState.items.map((it, i) => `
+    <div class="dc-count-row">
+      <div class="dc-count-name">${esc(it.product_name)}</div>
+      <div class="dc-count-controls">
+        <button class="dc-qty-btn" onclick="adjustDcCount(${i},-1)">−</button>
+        <input type="number" class="dc-qty-input" min="0" step="1" value="${it.qty_physical}"
+               oninput="setDcCount(${i}, this.value)" onclick="this.select()"/>
+        <button class="dc-qty-btn" onclick="adjustDcCount(${i},1)">+</button>
+        <span class="dc-count-unit">${esc(it.unit)}</span>
+      </div>
+      <input type="text" class="dc-count-notes" placeholder="Note (bouteille cassée, etc.)"
+             value="${esc(it.notes)}" oninput="setDcNote(${i}, this.value)"/>
+    </div>
+  `).join("");
+}
+
+function adjustDcCount(i, delta) {
+  __dcState.items[i].qty_physical = Math.max(0, (parseFloat(__dcState.items[i].qty_physical) || 0) + delta);
+  _renderServerCountingRows();
+}
+function setDcCount(i, v) { __dcState.items[i].qty_physical = Math.max(0, parseFloat(v) || 0); }
+function setDcNote(i, v)  { __dcState.items[i].notes = v; }
+
+async function submitServerCounts() {
+  if (!confirm("Confirmer le comptage ? Une fois validé tu ne pourras plus le modifier.")) return;
+  try {
+    await api(`/api/delivery-checks/${__dcState.id}/counts`, {
+      method: "PUT", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        checked_by: __dcState.checked_by,
+        counts: __dcState.items.map(it => ({ item_id: it.id, qty_physical: it.qty_physical, notes: it.notes })),
+      })
+    });
+    alert("✅ Comptage enregistré. La direction sera notifiée.");
+    switchView("delivery_check");
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+let __dcState = null;
+
+// ─────────── DIRECTION : validation 3 colonnes ───────────────────────────
+async function openManagerValidationForm(cid) {
+  const c = await api(`/api/delivery-checks/${cid}?role=manager`);
+  __dcState = {
+    id: c.id, status: c.status,
+    bl_reference: c.bl_reference || "",
+    items: c.items.map(it => ({ ...it })),
+  };
+  const app = document.getElementById("app");
+  app.innerHTML = `<div class="dc-wrap">
+    <div class="dc-count-header">
+      <button class="btn btn-outline" onclick="switchView('delivery_check')">← Retour</button>
+      <div>
+        <h2 class="dc-title">✅ Validation — ${esc(c.supplier_name)}</h2>
+        <p class="dc-sub">${c.checked_by ? `Compté par <strong>${esc(c.checked_by)}</strong> le ${new Date(c.counted_at).toLocaleString("fr-FR")}` : "Pas encore compté par un serveur."}</p>
+      </div>
+    </div>
+    <div class="dc-form-meta">
+      <label>N° BL papier : <input type="text" id="dc-bl-ref" value="${esc(c.bl_reference)}" placeholder="ex: BL-20260501-123"/></label>
+    </div>
+    <div class="table-wrap">
+      <table class="dc-val-table">
+        <thead><tr>
+          <th>Produit</th>
+          <th>Commandé</th>
+          <th>Compté (serveur)</th>
+          <th>BL (fournisseur)</th>
+          <th>Écart</th>
+          <th>Qté à valider</th>
+        </tr></thead>
+        <tbody id="dc-val-tbody"></tbody>
+      </table>
+    </div>
+    <div class="dc-count-footer" style="gap:10px">
+      ${c.status !== "validated" ? `<button class="btn btn-danger btn-sm" onclick="rejectDeliveryCheck()">↩️ Rejeter (faire recompter)</button>` : ""}
+      ${c.status !== "validated" ? `<button class="btn btn-primary" onclick="validateDeliveryCheck()">✅ Valider et mettre à jour le stock</button>` : `<span style="color:#16a34a;font-weight:700">✅ Déjà validé</span>`}
+    </div>
+  </div>`;
+  _renderManagerValidationRows();
+}
+
+function _renderManagerValidationRows() {
+  const tbody = document.getElementById("dc-val-tbody");
+  if (!tbody) return;
+  tbody.innerHTML = __dcState.items.map((it, i) => {
+    const phys = it.qty_physical;
+    const bl   = it.qty_bl;
+    const exp  = it.qty_expected;
+    const final = (it.qty_validated != null) ? it.qty_validated
+                : (phys != null ? phys : (bl != null ? bl : 0));
+
+    // Écarts
+    const diffPhysBl = (phys != null && bl != null) ? (phys - bl) : null;
+    const diffExpBl  = (exp != null && bl != null && exp > 0) ? (bl - exp) : null;
+    const ecartBadge = (diffPhysBl != null && diffPhysBl !== 0)
+      ? `<span class="dc-ecart ${diffPhysBl < 0 ? 'dc-ecart-neg' : 'dc-ecart-pos'}" title="Serveur vs BL">🔴 ${diffPhysBl > 0 ? '+' : ''}${diffPhysBl}</span>`
+      : (diffExpBl != null && diffExpBl !== 0)
+        ? `<span class="dc-ecart dc-ecart-warn" title="BL vs Commande">🟠 ${diffExpBl > 0 ? '+' : ''}${diffExpBl}</span>`
+        : ((phys != null || bl != null) ? `<span class="dc-ecart dc-ecart-ok">✓</span>` : `—`);
+
+    return `<tr>
+      <td><strong>${esc(it.product_name)}</strong>${it.notes ? `<br><span style="font-size:11px;color:var(--text-muted)">📝 ${esc(it.notes)}</span>` : ""}</td>
+      <td>${exp != null && exp > 0 ? exp : "—"}</td>
+      <td class="${phys == null ? 'dc-muted' : ''}">${phys != null ? phys + " " + esc(it.unit) : "—"}</td>
+      <td>
+        <input type="number" class="dc-bl-input" min="0" step="1" value="${bl != null ? bl : ''}"
+               placeholder="qté BL"
+               oninput="setDcBl(${i}, this.value)"/>
+      </td>
+      <td>${ecartBadge}</td>
+      <td>
+        <input type="number" class="dc-final-input" min="0" step="1" value="${final}"
+               oninput="setDcFinal(${i}, this.value)"/>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+function setDcBl(i, v)    { __dcState.items[i].qty_bl = v === "" ? null : parseFloat(v); _renderManagerValidationRows(); }
+function setDcFinal(i, v) { __dcState.items[i].qty_validated = v === "" ? 0 : parseFloat(v); }
+
+async function validateDeliveryCheck() {
+  const name = prompt("Votre nom (pour traçabilité) :", userName || "Direction");
+  if (!name) return;
+  if (!confirm("Valider le contrôle ? Le stock sera mis à jour avec les quantités indiquées dans la colonne 'Qté à valider'. Action irréversible.")) return;
+
+  // D'abord sauvegarder les qty_bl saisies
+  const blRef = document.getElementById("dc-bl-ref")?.value || "";
+  try {
+    await api(`/api/delivery-checks/${__dcState.id}/bl`, {
+      method: "PUT", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        bl_reference: blRef,
+        bls: __dcState.items.map(it => ({ item_id: it.id, qty_bl: it.qty_bl })),
+      }),
+    });
+    // Puis valider
+    await api(`/api/delivery-checks/${__dcState.id}/validate`, {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        validated_by: name,
+        overrides: __dcState.items.map(it => ({ item_id: it.id, qty_validated: it.qty_validated })),
+      }),
+    });
+    alert("✅ Contrôle validé. Stock mis à jour.");
+    allProducts = await api("/api/produits");
+    switchView("delivery_check");
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function rejectDeliveryCheck() {
+  if (!confirm("Rejeter le comptage et demander au serveur de recompter ?")) return;
+  try {
+    await api(`/api/delivery-checks/${__dcState.id}/reject`, { method: "POST" });
+    alert("Comptage rejeté — il faudra recompter.");
+    switchView("delivery_check");
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+// ─────────── Direction : création nouveau contrôle ───────────────────────
+async function openNewDeliveryCheckModal() {
+  // Liste des commandes envoyées non encore contrôlées
+  let sentOrders = [];
+  try {
+    const all = await api("/api/orders");
+    sentOrders = all.filter(o => o.status === "sent" || o.status === "partial");
+  } catch(_) {}
+
+  openModal(`
+    <h3 style="margin-bottom:12px">📦 Nouveau contrôle de livraison</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
+      Choisissez une commande en cours (livraison attendue), ou créez un contrôle libre (livraison spontanée sans commande).
+    </p>
+    <div class="form-group">
+      <label>Commande à réceptionner (optionnel)</label>
+      <select id="dc-new-order">
+        <option value="">— Livraison spontanée (sans commande préalable) —</option>
+        ${sentOrders.map(o => `<option value="${o.id}" data-supplier="${o.supplier_id}" data-name="${esc(o.supplier_name || '')}">
+          ${esc(o.reference)} — ${esc(o.supplier_name || '')} (${(o.items||[]).length} produits)
+        </option>`).join("")}
+      </select>
+    </div>
+    <div class="form-group" id="dc-new-supplier-wrap">
+      <label>Fournisseur</label>
+      <select id="dc-new-supplier">
+        <option value="">— Choisir —</option>
+        ${(allSuppliers || []).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>N° BL papier (facultatif)</label>
+      <input type="text" id="dc-new-bl" placeholder="ex: BL-12345"/>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="submitNewDeliveryCheck()">Créer</button>
+    </div>`);
+}
+
+async function submitNewDeliveryCheck() {
+  const orderSel = document.getElementById("dc-new-order");
+  const orderId = orderSel?.value ? parseInt(orderSel.value, 10) : null;
+  let supplierId = parseInt(document.getElementById("dc-new-supplier")?.value || "", 10);
+  if (orderId) {
+    const opt = orderSel.options[orderSel.selectedIndex];
+    supplierId = parseInt(opt.dataset.supplier, 10);
+  }
+  if (!supplierId) { alert("Fournisseur requis"); return; }
+  const blRef = document.getElementById("dc-new-bl")?.value || "";
+  try {
+    await api("/api/delivery-checks", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ supplier_id: supplierId, order_id: orderId, bl_reference: blRef }),
+    });
+    closeModal();
+    loadDeliveryChecks();
+  } catch(e) { alert("Erreur : " + e.message); }
 }
 
 

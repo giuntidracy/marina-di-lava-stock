@@ -190,6 +190,47 @@ class AppSetting(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class DeliveryCheck(Base):
+    """
+    Contrôle de réception d'une livraison fournisseur.
+    Flux : le serveur compte en aveugle → le gérant saisit le BL → validation → stock.
+    """
+    __tablename__ = "delivery_checks"
+    id = Column(Integer, primary_key=True, index=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False)
+    order_id = Column(Integer, ForeignKey("supplier_orders.id"), nullable=True)  # optionnel
+    # Statuts : pending_count (serveur doit compter) / counted (en attente validation) /
+    #           validated (stock appliqué) / rejected (refusé par le manager)
+    status = Column(String, default="pending_count")
+    checked_by = Column(String, default="")       # nom du serveur
+    validated_by = Column(String, default="")     # nom du gérant validateur
+    bl_reference = Column(String, default="")     # n° BL papier
+    notes = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    counted_at = Column(DateTime, nullable=True)
+    validated_at = Column(DateTime, nullable=True)
+
+    supplier = relationship("Supplier")
+    order = relationship("SupplierOrder")
+    items = relationship("DeliveryCheckItem", back_populates="check", cascade="all, delete-orphan")
+
+
+class DeliveryCheckItem(Base):
+    __tablename__ = "delivery_check_items"
+    id = Column(Integer, primary_key=True, index=True)
+    check_id = Column(Integer, ForeignKey("delivery_checks.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    product_name = Column(String, default="")     # snapshot
+    qty_expected = Column(Float, default=0)       # depuis la commande (null si spontané)
+    qty_bl = Column(Float, nullable=True)         # saisi par le gérant (lecture BL)
+    qty_physical = Column(Float, nullable=True)   # saisi par le serveur (comptage aveugle)
+    qty_validated = Column(Float, nullable=True)  # quantité finale validée = entrée en stock
+    notes = Column(String, default="")            # "bouteille cassée", etc.
+
+    check = relationship("DeliveryCheck", back_populates="items")
+    product = relationship("Product")
+
+
 class StockSnapshot(Base):
     """Photo du stock d'un produit à un instant donné (pour démarque auto hebdo)."""
     __tablename__ = "stock_snapshots"

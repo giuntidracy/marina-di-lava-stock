@@ -37,7 +37,7 @@ from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
     CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
     SupplierOrder, SupplierOrderItem, Event, EventRequirement, ManualLoss, AppSetting, ServiceAlert,
-    StockSnapshot
+    StockSnapshot, DeliveryCheck, DeliveryCheckItem
 )
 
 Base.metadata.create_all(bind=engine)
@@ -985,6 +985,279 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
         "to": to_email,
         "subject": subject,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# CONTRÔLE DE LIVRAISON — flux 2-étapes anti-triche
+# ══════════════════════════════════════════════════════════════════════════
+# 1) serveur compte en aveugle      (POST counts)
+# 2) direction saisit le BL + valide (PUT bl, POST validate)
+# Le stock n'est mis à jour QU'à la validation (un seul point d'entrée).
+
+class DeliveryCheckCreateIn(BaseModel):
+    supplier_id: int
+    order_id: Optional[int] = None
+    bl_reference: Optional[str] = ""
+    items: Optional[List[dict]] = None  # [{product_id, product_name, qty_expected}]
+
+
+class DeliveryCheckCountsIn(BaseModel):
+    checked_by: str
+    counts: List[dict]   # [{item_id, qty_physical, notes}]
+
+
+class DeliveryCheckBlIn(BaseModel):
+    bl_reference: Optional[str] = ""
+    bls: List[dict]      # [{item_id, qty_bl}]
+
+
+class DeliveryCheckValidateIn(BaseModel):
+    validated_by: str
+    overrides: Optional[List[dict]] = None  # [{item_id, qty_validated, notes}]
+
+
+def _delivery_check_dict(c: DeliveryCheck, for_role: str = "manager") -> dict:
+    """
+    Sérialise un DeliveryCheck. En mode 'service' (comptage aveugle),
+    on MASQUE qty_expected, qty_bl, qty_validated pour éviter la triche.
+    """
+    hide_details = (for_role == "service" and c.status == "pending_count")
+    return {
+        "id":            c.id,
+        "supplier_id":   c.supplier_id,
+        "supplier_name": c.supplier.name if c.supplier else "",
+        "order_id":      c.order_id,
+        "order_reference": c.order.reference if c.order else "",
+        "status":        c.status,
+        "checked_by":    c.checked_by or "",
+        "validated_by":  c.validated_by or "",
+        "bl_reference":  c.bl_reference or "",
+        "notes":         c.notes or "",
+        "created_at":    c.created_at.isoformat() + "Z" if c.created_at else None,
+        "counted_at":    c.counted_at.isoformat() + "Z" if c.counted_at else None,
+        "validated_at":  c.validated_at.isoformat() + "Z" if c.validated_at else None,
+        "items": [
+            {
+                "id":           it.id,
+                "product_id":   it.product_id,
+                "product_name": it.product_name,
+                "unit":         it.product.unit if it.product else "u",
+                "qty_expected": None if hide_details else it.qty_expected,
+                "qty_bl":       None if hide_details else it.qty_bl,
+                "qty_physical": it.qty_physical,
+                "qty_validated": None if hide_details else it.qty_validated,
+                "notes":        it.notes or "",
+            }
+            for it in (c.items or [])
+        ],
+    }
+
+
+@app.get("/api/delivery-checks")
+def list_delivery_checks(
+    role: str = "manager",
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Liste les contrôles. role=service → vue aveugle (pour compter).
+    status filtre optionnel.
+    """
+    q = db.query(DeliveryCheck).order_by(DeliveryCheck.created_at.desc())
+    if status:
+        q = q.filter(DeliveryCheck.status == status)
+    return [_delivery_check_dict(c, for_role=role) for c in q.all()]
+
+
+@app.get("/api/delivery-checks/{cid}")
+def get_delivery_check(cid: int, role: str = "manager", db: Session = Depends(get_db)):
+    c = db.query(DeliveryCheck).get(cid)
+    if not c:
+        raise HTTPException(404)
+    return _delivery_check_dict(c, for_role=role)
+
+
+@app.post("/api/delivery-checks")
+def create_delivery_check(body: DeliveryCheckCreateIn, db: Session = Depends(get_db)):
+    """
+    Crée un contrôle en attente de comptage.
+    Si order_id fourni : les items sont copiés depuis la commande (qty_expected = qty_ordered).
+    Sinon : items libres (saisie spontanée direction).
+    """
+    supplier = db.query(Supplier).get(body.supplier_id)
+    if not supplier:
+        raise HTTPException(404, "Fournisseur introuvable")
+
+    c = DeliveryCheck(
+        supplier_id=body.supplier_id,
+        order_id=body.order_id,
+        bl_reference=body.bl_reference or "",
+        status="pending_count",
+    )
+    db.add(c)
+    db.flush()
+
+    if body.order_id:
+        order = db.query(SupplierOrder).get(body.order_id)
+        if order:
+            for it in order.items:
+                db.add(DeliveryCheckItem(
+                    check_id=c.id,
+                    product_id=it.product_id,
+                    product_name=it.product_name,
+                    qty_expected=it.qty_ordered,
+                ))
+    elif body.items:
+        for it in body.items:
+            p = db.query(Product).get(it.get("product_id")) if it.get("product_id") else None
+            db.add(DeliveryCheckItem(
+                check_id=c.id,
+                product_id=it.get("product_id"),
+                product_name=it.get("product_name") or (p.name if p else ""),
+                qty_expected=float(it.get("qty_expected") or 0),
+            ))
+    db.commit()
+    db.refresh(c)
+    return _delivery_check_dict(c, for_role="manager")
+
+
+@app.put("/api/delivery-checks/{cid}/counts")
+def submit_physical_counts(cid: int, body: DeliveryCheckCountsIn, db: Session = Depends(get_db)):
+    """Serveur → saisit les quantités physiques (comptage aveugle)."""
+    c = db.query(DeliveryCheck).get(cid)
+    if not c:
+        raise HTTPException(404)
+    if c.status not in ("pending_count",):
+        raise HTTPException(400, f"Contrôle déjà en statut {c.status}, comptage impossible.")
+
+    item_map = {it.id: it for it in c.items}
+    for row in body.counts:
+        iid = row.get("item_id")
+        it = item_map.get(iid)
+        if not it:
+            continue
+        try:
+            it.qty_physical = float(row.get("qty_physical") or 0)
+        except Exception:
+            it.qty_physical = 0
+        it.notes = (row.get("notes") or "")[:500]
+
+    c.checked_by = body.checked_by or c.checked_by or ""
+    c.counted_at = datetime.utcnow()
+    c.status = "counted"
+    db.commit()
+    return _delivery_check_dict(c, for_role="manager")
+
+
+@app.put("/api/delivery-checks/{cid}/bl")
+def submit_bl_quantities(cid: int, body: DeliveryCheckBlIn, db: Session = Depends(get_db)):
+    """Direction → saisit les quantités du BL papier."""
+    c = db.query(DeliveryCheck).get(cid)
+    if not c:
+        raise HTTPException(404)
+    if c.status == "validated":
+        raise HTTPException(400, "Contrôle déjà validé, BL figé.")
+
+    item_map = {it.id: it for it in c.items}
+    for row in body.bls:
+        iid = row.get("item_id")
+        it = item_map.get(iid)
+        if not it:
+            continue
+        try:
+            it.qty_bl = float(row.get("qty_bl")) if row.get("qty_bl") is not None else None
+        except Exception:
+            pass
+
+    if body.bl_reference is not None:
+        c.bl_reference = body.bl_reference or ""
+    db.commit()
+    return _delivery_check_dict(c, for_role="manager")
+
+
+@app.post("/api/delivery-checks/{cid}/validate")
+def validate_delivery_check(cid: int, body: DeliveryCheckValidateIn, db: Session = Depends(get_db)):
+    """
+    Direction → valide : applique le stock = qty_validated (ou qty_physical par défaut).
+    C'est le SEUL endroit où le stock est augmenté.
+    """
+    c = db.query(DeliveryCheck).get(cid)
+    if not c:
+        raise HTTPException(404)
+    if c.status == "validated":
+        raise HTTPException(400, "Déjà validé.")
+
+    # Appliquer éventuels overrides (qty finale décidée par la direction)
+    override_map = {o.get("item_id"): o for o in (body.overrides or [])}
+    applied = []
+    for it in c.items:
+        # Par défaut on prend le comptage physique, sinon le BL, sinon 0
+        qty_final = None
+        if it.id in override_map and override_map[it.id].get("qty_validated") is not None:
+            try:
+                qty_final = float(override_map[it.id]["qty_validated"])
+            except Exception:
+                qty_final = None
+            if override_map[it.id].get("notes"):
+                it.notes = override_map[it.id]["notes"][:500]
+        if qty_final is None:
+            qty_final = it.qty_physical if it.qty_physical is not None else (it.qty_bl if it.qty_bl is not None else 0)
+        it.qty_validated = qty_final
+
+        # Appliquer au stock
+        if it.product_id and qty_final and qty_final > 0:
+            p = db.query(Product).get(it.product_id)
+            if p:
+                p.stock = (p.stock or 0) + qty_final
+                applied.append({"product_id": p.id, "product_name": p.name, "added": qty_final})
+
+    c.validated_by = body.validated_by or c.validated_by or ""
+    c.validated_at = datetime.utcnow()
+    c.status = "validated"
+
+    # Si lié à une commande → passer celle-ci en "received"
+    if c.order_id:
+        order = db.query(SupplierOrder).get(c.order_id)
+        if order and order.status != "received":
+            order.status = "received"
+            order.received_at = datetime.utcnow()
+
+    log_event(
+        db, "livraison",
+        f"Contrôle livraison validé — {c.supplier.name if c.supplier else ''} ({len(applied)} produits)",
+        {"delivery_check_id": c.id, "bl_reference": c.bl_reference, "items": applied},
+    )
+    db.commit()
+    return _delivery_check_dict(c, for_role="manager")
+
+
+@app.post("/api/delivery-checks/{cid}/reject")
+def reject_delivery_check(cid: int, db: Session = Depends(get_db)):
+    """Direction refuse (erreur manifeste, à recompter) → reset pour nouveau comptage."""
+    c = db.query(DeliveryCheck).get(cid)
+    if not c:
+        raise HTTPException(404)
+    if c.status == "validated":
+        raise HTTPException(400, "Impossible de rejeter un contrôle déjà validé.")
+    c.status = "pending_count"
+    for it in c.items:
+        it.qty_physical = None
+    c.counted_at = None
+    c.checked_by = ""
+    db.commit()
+    return _delivery_check_dict(c, for_role="manager")
+
+
+@app.delete("/api/delivery-checks/{cid}")
+def delete_delivery_check(cid: int, db: Session = Depends(get_db)):
+    c = db.query(DeliveryCheck).get(cid)
+    if not c:
+        raise HTTPException(404)
+    if c.status == "validated":
+        raise HTTPException(400, "Un contrôle validé ne peut pas être supprimé.")
+    db.delete(c)
+    db.commit()
+    return {"ok": True}
 
 
 # ══════════════════════════════════════════════════════════════════════════
