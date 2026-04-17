@@ -2042,8 +2042,8 @@ details[open] .history-details summary::before { content: '▼'; }
 
 .db-greeting {
   background:
-    radial-gradient(circle at 100% 0%, rgba(201,169,97,0.18), transparent 45%),
-    linear-gradient(135deg, var(--primary) 0%, #1a4a2e 100%);
+    radial-gradient(circle at 100% 0%, rgba(201,169,97,0.20), transparent 45%),
+    linear-gradient(180deg, #3A7D5C 0%, #2A6347 50%, #1E5038 100%);
   border-radius: 16px;
   padding: 20px 28px;
   margin-bottom: 16px;
