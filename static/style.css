@@ -77,24 +77,117 @@ html[data-theme="dark"] {
   color-scheme: dark;
 }
 
-/* Corrections ciblées : éléments qui utilisent du blanc en dur */
-html[data-theme="dark"] .btn-outline { background: var(--surface); color: var(--text); }
-html[data-theme="dark"] .btn-outline:hover { background: var(--surface-hover); }
-html[data-theme="dark"] .evf-req-row select,
-html[data-theme="dark"] .evf-req-row input,
+/* ─────────── DARK OVERRIDES : neutraliser les blancs figés ─────────── */
+html[data-theme="dark"] .top-bar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 4px rgba(0,0,0,.4);
+}
+html[data-theme="dark"] .top-bar-title { color: var(--text); }
+
+/* Tables */
+html[data-theme="dark"] thead {
+  background: linear-gradient(to bottom, var(--surface-alt), var(--surface));
+  border-bottom: 1.5px solid var(--border);
+}
+html[data-theme="dark"] th { color: var(--text-muted); }
+html[data-theme="dark"] tbody tr:hover { background: rgba(201,169,97,.07); }
+html[data-theme="dark"] tbody tr:hover td { color: var(--text); }
+html[data-theme="dark"] td { color: var(--text-secondary); border-bottom-color: var(--border); }
+html[data-theme="dark"] .ord-form-table thead th,
+html[data-theme="dark"] .sh-table thead th {
+  background: var(--surface-alt); color: var(--text-muted);
+}
+
+/* Form elements */
+html[data-theme="dark"] .btn-outline { background: var(--surface); color: var(--text); border-color: var(--border); }
+html[data-theme="dark"] .btn-outline:hover { background: var(--surface-hover); border-color: var(--border-strong); }
 html[data-theme="dark"] input[type="text"],
 html[data-theme="dark"] input[type="number"],
 html[data-theme="dark"] input[type="date"],
 html[data-theme="dark"] input[type="time"],
 html[data-theme="dark"] input[type="search"],
+html[data-theme="dark"] input[type="password"],
+html[data-theme="dark"] input[type="email"],
 html[data-theme="dark"] select,
-html[data-theme="dark"] textarea {
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] .evf-req-row select,
+html[data-theme="dark"] .evf-req-row input {
   background: var(--surface-alt);
   color: var(--text);
   border-color: var(--border);
 }
 html[data-theme="dark"] input::placeholder,
 html[data-theme="dark"] textarea::placeholder { color: var(--text-faint); }
+html[data-theme="dark"] .filters { background: transparent; }
+html[data-theme="dark"] .filters select,
+html[data-theme="dark"] .filters input[type="text"] {
+  background: var(--surface); color: var(--text); border-color: var(--border);
+}
+html[data-theme="dark"] .filters select:focus,
+html[data-theme="dark"] .filters input:focus { background: var(--surface-alt); }
+
+/* KPI / Summary cards */
+html[data-theme="dark"] .summary-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+html[data-theme="dark"] .summary-card .s-label { color: var(--text-muted); }
+html[data-theme="dark"] .summary-card .s-value { color: var(--text); }
+html[data-theme="dark"] .summary-card .s-sub { color: var(--text-muted); }
+html[data-theme="dark"] .card-danger .s-value { color: #F87171; }
+html[data-theme="dark"] .card-success .s-value { color: #4ADE80; }
+
+/* Modal */
+html[data-theme="dark"] #modal-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+html[data-theme="dark"] #modal-box h3,
+html[data-theme="dark"] #modal-box label { color: var(--text); }
+html[data-theme="dark"] #modal-close { color: var(--text-muted); }
+
+/* Info / alert boxes */
+html[data-theme="dark"] .info-box {
+  background: rgba(59,130,246,.08);
+  color: var(--text);
+  border: 1px solid rgba(59,130,246,.25);
+}
+
+/* Section headers + cards utilisant white dur */
+html[data-theme="dark"] .section-header { color: var(--text); }
+html[data-theme="dark"] .table-wrap,
+html[data-theme="dark"] .stock-table-wrap,
+html[data-theme="dark"] .panel,
+html[data-theme="dark"] .card,
+html[data-theme="dark"] .box {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+/* Main app bg */
+html[data-theme="dark"] body,
+html[data-theme="dark"] .main-wrapper,
+html[data-theme="dark"] main#app { background: var(--bg); color: var(--text); }
+
+/* Boutons outline / sm qui avaient bg blanc */
+html[data-theme="dark"] .btn-sm.btn-outline,
+html[data-theme="dark"] button.btn-outline,
+html[data-theme="dark"] .ev-btn-edit,
+html[data-theme="dark"] .ev-cancel-btn {
+  background: var(--surface-alt); color: var(--text); border-color: var(--border);
+}
+
+/* Cocktails / generic tables avec spécificités */
+html[data-theme="dark"] .cocktail-name,
+html[data-theme="dark"] .cocktail-row td strong,
+html[data-theme="dark"] tbody strong,
+html[data-theme="dark"] .product-name { color: var(--text); }
+
+/* Dashboard spécifiques */
 html[data-theme="dark"] .db-goal-bar-wrap { background: rgba(255,255,255,.08); }
 html[data-theme="dark"] .db-goal-pct { background: rgba(255,255,255,.08); }
 html[data-theme="dark"] .db-order-days { background: rgba(255,255,255,.06); }
@@ -102,8 +195,38 @@ html[data-theme="dark"] .db-order-row:hover { background: rgba(201,169,97,.09); 
 html[data-theme="dark"] .db-wd-grid {
   background: linear-gradient(180deg, rgba(201,169,97,0.04), transparent 60%);
 }
+html[data-theme="dark"] .kpi-alert-bar {
+  background: rgba(245,158,11,.12);
+  color: #FCD34D;
+  border-color: rgba(245,158,11,.35);
+}
+
+/* Sortie Réserve rows cards blanches */
+html[data-theme="dark"] .reserve-product-card,
+html[data-theme="dark"] .reserve-row,
+html[data-theme="dark"] .res-card,
+html[data-theme="dark"] .res-item {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+/* Generic : tout élément avec bg blanc en dur devient surface */
+html[data-theme="dark"] [style*="background:#fff"],
+html[data-theme="dark"] [style*="background: #fff"],
+html[data-theme="dark"] [style*="background:white"],
+html[data-theme="dark"] [style*="background: white"] {
+  background: var(--surface) !important;
+  color: var(--text);
+}
+
+/* Scrollbar */
 html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #3A4150; }
 html[data-theme="dark"] ::-webkit-scrollbar-track { background: transparent; }
+
+/* Badge / tag */
+html[data-theme="dark"] .estimated-tag { background: rgba(245,158,11,.2); color: #FDE68A; }
+html[data-theme="dark"] .archived-badge { background: #4B5563; }
 
 /* Bouton theme-toggle dans la top bar */
 .theme-toggle-btn {
