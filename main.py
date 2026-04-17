@@ -5776,6 +5776,39 @@ def get_dashboard(db: Session = Depends(get_db)):
         except Exception:
             pass
 
+    # ── Widget : contrôles de livraison en attente ───────────────────────
+    dc_pending_count = (
+        db.query(DeliveryCheck)
+        .filter(DeliveryCheck.status == "counted")
+        .count()
+    )
+    dc_pending_to_count = (
+        db.query(DeliveryCheck)
+        .filter(DeliveryCheck.status == "pending_count")
+        .count()
+    )
+    dc_pending_list = (
+        db.query(DeliveryCheck)
+        .filter(DeliveryCheck.status == "counted")
+        .order_by(DeliveryCheck.counted_at.desc())
+        .limit(5)
+        .all()
+    )
+    delivery_checks_info = {
+        "pending_validation": dc_pending_count,
+        "pending_count":      dc_pending_to_count,
+        "items": [
+            {
+                "id":             c.id,
+                "supplier_name":  c.supplier.name if c.supplier else "",
+                "checked_by":     c.checked_by or "",
+                "counted_at":     c.counted_at.isoformat() + "Z" if c.counted_at else None,
+                "n_items":        len(c.items or []),
+            }
+            for c in dc_pending_list
+        ],
+    }
+
     return {
         "weather":         weather_summary,
         "events_upcoming": events_upcoming,
@@ -5790,6 +5823,7 @@ def get_dashboard(db: Session = Depends(get_db)):
         "pending_orders":  pending_orders,
         "ca_weekday":      ca_weekday,
         "season_goal":     season_goal,
+        "delivery_checks": delivery_checks_info,
     }
 
 

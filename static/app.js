@@ -300,6 +300,30 @@ async function updateAlertBadge() {
       badge.classList.add("hidden");
     }
   } catch {}
+  updateDeliveryCheckBadge();
+}
+
+async function updateDeliveryCheckBadge() {
+  const badge = document.getElementById("dc-badge");
+  if (!badge) return;
+  try {
+    // Pour la direction : contrôles à valider (statut 'counted') + contrôles sans comptage
+    // Pour le service : contrôles à compter (statut 'pending_count')
+    const role = userRole === "manager" ? "manager" : "service";
+    const checks = await api(`/api/delivery-checks?role=${role}`);
+    let count = 0;
+    if (role === "manager") {
+      count = checks.filter(c => c.status === "counted").length;
+    } else {
+      count = checks.filter(c => c.status === "pending_count").length;
+    }
+    if (count > 0) {
+      badge.textContent = count;
+      badge.classList.remove("hidden");
+    } else {
+      badge.classList.add("hidden");
+    }
+  } catch {}
 }
 
 // ── Modal helpers ──────────────────────────────────────────
@@ -4931,6 +4955,7 @@ async function submitServerCounts() {
       })
     });
     alert("✅ Comptage enregistré. La direction sera notifiée.");
+    updateAlertBadge();
     switchView("delivery_check");
   } catch(e) { alert("Erreur : " + e.message); }
 }
@@ -5112,6 +5137,7 @@ async function validateDeliveryCheck() {
     });
     alert("✅ Contrôle validé. Stock mis à jour.");
     allProducts = await api("/api/produits");
+    updateAlertBadge();
     switchView("delivery_check");
   } catch(e) { alert("Erreur : " + e.message); }
 }
@@ -6157,6 +6183,42 @@ function renderLastSyncCard(sync) {
   </div>`;
 }
 
+function renderDeliveryChecksCard(info) {
+  if (!info) return "";
+  const pv = info.pending_validation || 0;
+  const pc = info.pending_count || 0;
+  if (pv === 0 && pc === 0) {
+    return `<div class="db-card db-card-clickable" onclick="switchView('delivery_check')" title="Ouvrir contrôle livraison">
+      <div class="db-card-title">✅ Contrôles livraison</div>
+      <div class="db-sync-row">
+        <span class="db-sync-icon">✅</span>
+        <div>
+          <div class="db-sync-label">Tout est validé</div>
+          <div class="db-sync-date">Aucun contrôle en attente</div>
+        </div>
+      </div>
+    </div>`;
+  }
+  const rows = (info.items || []).slice(0, 4).map(it => {
+    const d = it.counted_at ? new Date(it.counted_at) : null;
+    const dStr = d ? d.toLocaleDateString("fr-FR", {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"}) : "—";
+    return `<div class="db-dc-row">
+      <div class="db-dc-main">
+        <span class="db-dc-sup">${esc(it.supplier_name)}</span>
+        <span class="db-dc-sub">${it.n_items} produit(s) · compté par ${esc(it.checked_by || '—')}</span>
+      </div>
+      <span class="db-dc-date">${dStr}</span>
+    </div>`;
+  }).join("");
+  return `<div class="db-card db-card-clickable db-dc-card" onclick="switchView('delivery_check')" title="Valider les contrôles">
+    <div class="db-card-title">✅ Contrôles livraison
+      ${pv > 0 ? `<span class="db-card-badge">${pv} à valider</span>` : ""}
+      ${pc > 0 ? `<span class="db-card-sub">· ${pc} à compter</span>` : ""}
+    </div>
+    ${rows || '<p class="db-empty">Rien à valider pour l\'instant</p>'}
+  </div>`;
+}
+
 function renderPendingOrdersCard(orders) {
   orders = orders || [];
   if (orders.length === 0) {
@@ -6523,6 +6585,7 @@ async function renderDashboard(el) {
           <div class="db-events-scroll">${eventsHtml}</div>
         </div>
 
+        ${renderDeliveryChecksCard(data.delivery_checks)}
         ${renderLastSyncCard(data.last_sync)}
         ${renderPendingOrdersCard(data.pending_orders)}
         ${renderSeasonGoalCard(data.season_goal)}

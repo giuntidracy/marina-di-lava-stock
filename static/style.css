@@ -1935,6 +1935,24 @@ html[data-theme="dark"] .pred-card-factor { background: rgba(201,169,97,0.18); c
   background: var(--surface); color: var(--text);
 }
 .dc-phys-input { background: rgba(59,130,246,0.06); }
+
+/* Dashboard card : contrôles livraison */
+.db-dc-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 9px 10px; margin: 2px -10px;
+  border-radius: 8px; gap: 10px;
+  transition: background .15s;
+}
+.db-dc-row:hover { background: rgba(201,169,97,0.06); }
+.db-dc-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.db-dc-sup { font-weight: 700; font-size: 13px; color: var(--text); }
+.db-dc-sub { font-size: 11px; color: var(--text-muted); }
+.db-dc-date {
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+  padding: 3px 9px; border-radius: 999px;
+  background: rgba(0,0,0,.04); color: var(--text-muted);
+}
+.db-dc-card { border-left: 3px solid #3b82f6; }
 .dc-final-input { background: rgba(201,169,97,0.08); font-weight: 700; }
 .dc-ecart { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
 .dc-ecart-ok   { background: rgba(22,163,74,0.12); color: #15803D; }
