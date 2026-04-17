@@ -4032,10 +4032,9 @@ async function submitImportRequest() {
     const fd = new FormData();
     if (file) fd.append("file", file);
     if (textVal) fd.append("text", textVal);
-    const token = localStorage.getItem("auth_token") || "";
     const r = await fetch("/api/events/parse-request", {
       method: "POST",
-      headers: token ? { "Authorization": `Bearer ${token}` } : {},
+      headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
       body: fd,
     });
     if (!r.ok) {
