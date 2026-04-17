@@ -4400,6 +4400,7 @@ async function renderShrinkage(app) {
     </div>
 
     <div id="sh-auto-area"></div>
+    <div id="sh-reconciliation-area"></div>
     <div id="sh-form-area"></div>
     <div id="sh-kpi-area"><div class="sh-loading">Chargement…</div></div>
     <div id="sh-table-area"></div>
@@ -4409,6 +4410,76 @@ async function renderShrinkage(app) {
 
   loadShrinkage();
   loadDemarqueAuto();
+  loadReconciliation("today");
+}
+
+let _reconciliationPeriod = "today";
+async function loadReconciliation(period) {
+  _reconciliationPeriod = period || "today";
+  const el = document.getElementById("sh-reconciliation-area");
+  if (!el) return;
+  try {
+    const data = await api(`/api/reconciliation?period=${_reconciliationPeriod}`);
+    const rows = data.rows || [];
+    const tabs = ["today", "yesterday", "week"].map(p => {
+      const labels = {today:"Aujourd'hui", yesterday:"Hier", week:"7 derniers jours"};
+      return `<button class="sh-rec-tab ${_reconciliationPeriod === p ? 'active' : ''}" onclick="loadReconciliation('${p}')">${labels[p]}</button>`;
+    }).join("");
+    if (rows.length === 0) {
+      el.innerHTML = `<div class="sh-auto-card">
+        <div class="sh-auto-header">
+          <div>
+            <div class="sh-auto-title">🔎 Rapprochement Sortie réserve ↔ Cashpad</div>
+            <div class="sh-auto-sub">Détecte les bouteilles sorties de la réserve mais non vendues sur Cashpad</div>
+          </div>
+        </div>
+        <div class="sh-rec-tabs">${tabs}</div>
+        <div class="sh-auto-empty-msg">Aucune sortie réserve ni vente sur la période ${esc(data.period_label)}.</div>
+      </div>`;
+      return;
+    }
+    const anomalies = rows.filter(r => r.severity === "warn" || r.severity === "danger");
+    let body = "";
+    if (anomalies.length > 0) {
+      body = `<table class="sh-auto-table"><thead><tr>
+        <th>Produit</th><th>Sortie réserve</th><th>Vendu Cashpad</th><th>Écart</th><th>Valeur €</th><th>Par</th>
+      </tr></thead><tbody>` +
+        rows.map(r => {
+          const gapClass = r.severity === "danger" ? "sh-auto-ecart-loss"
+                        : r.severity === "warn"   ? "dc-ecart-warn"
+                        : r.severity === "info"   ? "dc-ecart-pos"
+                        : "dc-ecart-ok";
+          const icon = r.severity === "danger" ? "🔴" : r.severity === "warn" ? "🟠" : r.severity === "info" ? "ℹ️" : "✓";
+          return `<tr>
+            <td><strong>${esc(r.product_name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${esc(r.category)}</span></td>
+            <td>${r.sortie_qty} ${esc(r.unit)}</td>
+            <td>${r.ventes_qty} ${esc(r.unit)}</td>
+            <td><span class="dc-ecart ${gapClass}">${icon} ${r.gap > 0 ? '+' : ''}${r.gap} ${esc(r.unit)}</span></td>
+            <td class="sh-auto-loss-eur">${r.loss_eur > 0 ? '€' + r.loss_eur.toFixed(2) : '—'}</td>
+            <td>${(r.sortie_staff || []).map(s => esc(s)).join(", ") || '<span style="color:var(--text-faint)">—</span>'}</td>
+          </tr>`;
+        }).join("") +
+        `</tbody></table>`;
+    } else {
+      body = `<div class="sh-auto-empty-msg">✅ Tout correspond — aucune anomalie détectée sur la période.</div>`;
+    }
+    el.innerHTML = `<div class="sh-auto-card">
+      <div class="sh-auto-header">
+        <div>
+          <div class="sh-auto-title">🔎 Rapprochement Sortie réserve ↔ Cashpad <span class="db-card-sub">· ${esc(data.period_label)}</span></div>
+          <div class="sh-auto-sub">Bouteilles sorties de la cave vs bouteilles vendues sur Cashpad — l'écart = offertes, cassées, volées ou erreur</div>
+        </div>
+        ${anomalies.length > 0 ? `<div class="sh-auto-total">
+          <div class="sh-auto-total-eur">€${data.total_gap_eur.toFixed(2)}</div>
+          <div class="sh-auto-total-label">${data.n_anomalies} anomalie${data.n_anomalies>1?'s':''}</div>
+        </div>` : ''}
+      </div>
+      <div class="sh-rec-tabs">${tabs}</div>
+      ${body}
+    </div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="sh-auto-card"><div class="sh-auto-empty-msg">Erreur : ${esc(e.message)}</div></div>`;
+  }
 }
 
 async function createSnapshotNow() {

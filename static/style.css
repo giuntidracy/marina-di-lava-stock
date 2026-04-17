@@ -2046,6 +2046,21 @@ html[data-theme="dark"] .sh-auto-table th { background: var(--surface-alt); }
 html[data-theme="dark"] .sh-auto-ecart-loss,
 html[data-theme="dark"] .sh-auto-loss-eur { color: #F87171; }
 
+/* Tabs période rapprochement */
+.sh-rec-tabs { display: flex; gap: 6px; margin: 10px 0 12px; flex-wrap: wrap; }
+.sh-rec-tab {
+  padding: 6px 14px; font-size: 12px; font-weight: 600;
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 999px; cursor: pointer; color: var(--text-muted);
+  transition: background .15s, border-color .15s, color .15s;
+}
+.sh-rec-tab:hover { background: var(--surface-alt); color: var(--text); }
+.sh-rec-tab.active {
+  background: linear-gradient(135deg, #D4B46A 0%, #B08F45 100%);
+  color: #fff; border-color: transparent;
+  box-shadow: 0 2px 6px rgba(201,169,97,.3);
+}
+
 .sh-header {
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 16px; margin-bottom: 24px; flex-wrap: wrap;

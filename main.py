@@ -1991,6 +1991,143 @@ def manual_movement(body: ManualMovementIn, db: Session = Depends(get_db)):
     return {"ok": True, "new_stock": p.stock, "history_id": h.id}
 
 
+@app.get("/api/reconciliation")
+def reconciliation(period: str = "today", db: Session = Depends(get_db)):
+    """
+    Rapproche les sorties réserve (mouvement_manuel négatif) avec les ventes
+    Cashpad sur la même période. Un écart = produit parti sans être vendu
+    (offert, cassé, volé, erreur de saisie).
+
+    period: today | yesterday | week (7 jours)
+    """
+    today = datetime.utcnow().date()
+    if period == "yesterday":
+        start_dt = datetime.combine(today - timedelta(days=1), datetime.min.time())
+        end_dt   = datetime.combine(today, datetime.min.time())
+        label    = "hier"
+    elif period == "week":
+        start_dt = datetime.combine(today - timedelta(days=7), datetime.min.time())
+        end_dt   = datetime.utcnow()
+        label    = "7 derniers jours"
+    else:
+        start_dt = datetime.combine(today, datetime.min.time())
+        end_dt   = datetime.utcnow()
+        label    = "aujourd'hui"
+
+    # Sorties réserve (mouvement_manuel quantity < 0) groupées par produit + staff
+    sorties_hist = (
+        db.query(StockHistory)
+        .filter(
+            StockHistory.event_type == "mouvement_manuel",
+            StockHistory.created_at >= start_dt,
+            StockHistory.created_at <  end_dt,
+        )
+        .all()
+    )
+    sorties = {}   # product_id → {qty: float, staff: [names]}
+    for h in sorties_hist:
+        try:
+            d = json.loads(h.data_json or "{}")
+        except Exception:
+            continue
+        qty = float(d.get("quantity") or 0)
+        if qty >= 0:
+            continue  # on ne garde que les sorties (négatifs)
+        pid = d.get("product_id")
+        if not pid:
+            continue
+        note = (d.get("note") or "").lower()
+        if "sortie réserve" not in note and "sortie reserve" not in note:
+            continue   # ignorer les autres mouvements manuels (ajustements)
+        rec = sorties.setdefault(pid, {"qty": 0.0, "staff": set()})
+        rec["qty"] += abs(qty)
+        # Extraire le nom après "par"
+        if " par " in note:
+            try:
+                name = note.split(" par ")[1].split(":")[0].strip().title()
+                if name:
+                    rec["staff"].add(name)
+            except Exception:
+                pass
+
+    # Ventes Cashpad par produit sur la période
+    ventes_hist = (
+        db.query(StockHistory)
+        .filter(
+            StockHistory.event_type.in_(["import_cashpad", "cashpad_sync"]),
+            StockHistory.created_at >= start_dt,
+            StockHistory.created_at <  end_dt,
+        )
+        .all()
+    )
+    ventes = {}   # product_id → qty
+    for h in ventes_hist:
+        # On utilise deductions (quantités effectivement retirées du stock)
+        try:
+            d = json.loads(h.data_json or "{}")
+        except Exception:
+            continue
+        deds = d.get("deductions") if isinstance(d, dict) else []
+        for ded in (deds or []):
+            pid = ded.get("product_id")
+            qty = abs(float(ded.get("quantity", ded.get("deducted", 0)) or 0))
+            if pid and qty > 0:
+                ventes[pid] = ventes.get(pid, 0) + qty
+
+    # Rapprochement
+    all_pids = set(sorties.keys()) | set(ventes.keys())
+    products = {p.id: p for p in db.query(Product).filter(Product.id.in_(all_pids)).all()}
+    rows = []
+    total_gap_eur = 0.0
+    for pid in all_pids:
+        p = products.get(pid)
+        if not p:
+            continue
+        sortie_qty = sorties.get(pid, {}).get("qty", 0)
+        sortie_staff = sorted(sorties.get(pid, {}).get("staff", set()))
+        vente_qty  = ventes.get(pid, 0)
+        gap = sortie_qty - vente_qty
+
+        # Seuil d'ignorance : écart < 5% ou < 1 unité → "normal"
+        is_significant = abs(gap) >= 1 or (sortie_qty > 0 and abs(gap / sortie_qty) >= 0.05)
+
+        severity = "ok"
+        if gap > 0 and is_significant:
+            severity = "warn" if gap < 3 else "danger"
+        elif gap < 0 and abs(gap) >= 2:
+            severity = "info"   # plus vendu que sorti → stock non tracé, anomalie inverse
+
+        loss_eur = 0.0
+        if gap > 0 and p.purchase_price:
+            loss_eur = round(gap * p.purchase_price, 2)
+            if severity != "ok":
+                total_gap_eur += loss_eur
+
+        rows.append({
+            "product_id":    p.id,
+            "product_name":  p.name,
+            "category":      p.category,
+            "unit":          p.unit or "u",
+            "sortie_qty":    round(sortie_qty, 2),
+            "ventes_qty":    round(vente_qty, 2),
+            "gap":           round(gap, 2),
+            "loss_eur":      loss_eur,
+            "severity":      severity,
+            "sortie_staff":  sortie_staff,
+        })
+
+    rows.sort(key=lambda x: -x["loss_eur"] if x["severity"] != "ok" else 1)
+    return {
+        "period":        period,
+        "period_label":  label,
+        "start":         start_dt.isoformat() + "Z",
+        "end":           end_dt.isoformat() + "Z",
+        "rows":          rows,
+        "total_gap_eur": round(total_gap_eur, 2),
+        "n_anomalies":   sum(1 for r in rows if r["severity"] in ("warn", "danger")),
+    }
+
+
 @app.get("/api/sorties/today")
 def sorties_today(staff: str = "", db: Session = Depends(get_db)):
     """Retourne les sorties réserve du jour, filtrées par prénom si fourni."""
