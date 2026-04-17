@@ -16,7 +16,7 @@ let inactivityTimer = null;
 
 // Onglets accessibles par rôle
 const SERVICE_VIEWS = ["inventory","service_alert","delivery_check"];
-const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery","delivery_check","inventory","service_alert","flash","stats","history","suppliers","orders","mapping","events","shrinkage"];
+const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery_check","inventory","service_alert","flash","stats","history","suppliers","orders","mapping","events","shrinkage"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
@@ -231,7 +231,7 @@ function renderView(view) {
     case "cocktails": renderCocktails(app); break;
     case "alerts":    renderAlerts(app); break;
     case "cashpad":   renderCashpad(app); break;
-    case "delivery":  renderDelivery(app); break;
+    case "delivery":  switchView("delivery_check"); return;   // legacy redirect
     case "inventory": renderInventory(app); break;
     case "stats":     renderStats(app); break;
     case "history":   renderHistory(app); break;
@@ -4769,11 +4769,44 @@ async function renderDeliveryCheck(el) {
           ? "Validez les comptages serveurs et saisissez le BL. Le stock n'est mis à jour qu'après votre validation."
           : "Comptez ce qui est physiquement dans les cartons. La direction validera ensuite."}</p>
       </div>
-      ${isManager ? `<button class="btn btn-primary" onclick="openNewDeliveryCheckModal()">+ Nouveau contrôle</button>` : ``}
+      ${isManager ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-gold" onclick="openAiDeliveryModal()">✦ Scanner BL avec IA</button>
+        <button class="btn btn-primary" onclick="openNewDeliveryCheckModal()">+ Nouveau contrôle</button>
+      </div>` : ``}
     </div>
     <div id="dc-list">Chargement…</div>
+
+    ${isManager ? `
+    <details class="dc-history-panel" style="margin-top:30px">
+      <summary><strong>📋 Historique des imports (7 derniers jours)</strong></summary>
+      <div id="recent-imports-list" style="margin-top:10px">Chargement…</div>
+    </details>
+
+    <details class="dc-admin-panel" style="margin-top:20px">
+      <summary style="color:#DC2626"><strong>⚙️ Zone d'administration</strong></summary>
+      <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap">
+        <button class="btn" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA;font-weight:600" onclick="adminResetStocks()">
+          🔄 Remettre tous les stocks à 0
+        </button>
+        <button class="btn" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA;font-weight:600" onclick="adminClearImports()">
+          🗑 Supprimer tous les BL
+        </button>
+      </div>
+      <div style="margin-top:18px;padding:14px;background:linear-gradient(135deg,#7f1d1d,#991b1b);color:#fff;border-radius:10px">
+        <div style="font-weight:800;font-size:14px;margin-bottom:6px">🧹 Réinitialisation saison</div>
+        <div style="font-size:12px;opacity:0.9;margin-bottom:10px;line-height:1.5">
+          Purge toutes les données de rodage avant l'ouverture de la saison.
+          <strong>Conserve</strong> : produits, cocktails, fournisseurs, mappings, événements, objectif saison.
+        </div>
+        <button class="btn" style="background:#fff;color:#991b1b;font-weight:800;border:none" onclick="adminResetSeason()">
+          🚀 Réinitialiser la saison
+        </button>
+      </div>
+    </details>
+    ` : ""}
   </div>`;
   loadDeliveryChecks();
+  if (isManager) loadRecentImports();
 }
 
 async function loadDeliveryChecks() {
@@ -5291,6 +5324,136 @@ async function openNewDeliveryCheckModal() {
       <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
       <button class="btn btn-primary" onclick="submitNewDeliveryCheck()">Créer</button>
     </div>`);
+}
+
+// ─────────── Scanner BL avec IA (Claude) ─────────────────────────────────
+async function openAiDeliveryModal() {
+  openModal(`
+    <h3 style="margin-bottom:12px">✦ Scanner BL avec Claude IA</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
+      Prenez une photo ou uploadez le PDF du bon de livraison. L'IA extraira
+      les produits, quantités et prix automatiquement → création d'un contrôle
+      que vous n'aurez plus qu'à valider.
+    </p>
+    <div class="form-group">
+      <label>Fichier (image ou PDF, max 10 Mo)</label>
+      <input type="file" id="ai-dc-file" accept="image/*,application/pdf,.pdf"/>
+    </div>
+    <div class="form-group">
+      <label>Fournisseur (optionnel — l'IA tentera de le détecter)</label>
+      <select id="ai-dc-supplier">
+        <option value="">— Auto-détection —</option>
+        ${(allSuppliers || []).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}
+      </select>
+    </div>
+    <div id="ai-dc-loading" style="display:none;text-align:center;padding:14px;color:var(--text-muted)">
+      ⏳ Analyse IA en cours (10-20 secondes)…
+    </div>
+    <div id="ai-dc-error" style="color:#DC2626;font-size:13px;margin-bottom:8px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" id="ai-dc-submit" onclick="submitAiDelivery()">✦ Analyser</button>
+    </div>
+  `);
+}
+
+async function submitAiDelivery() {
+  const file = document.getElementById("ai-dc-file")?.files?.[0];
+  const supplierId = parseInt(document.getElementById("ai-dc-supplier")?.value || "", 10) || null;
+  const errEl = document.getElementById("ai-dc-error");
+  if (errEl) errEl.textContent = "";
+  if (!file) { if (errEl) errEl.textContent = "Choisissez un fichier."; return; }
+
+  const loading = document.getElementById("ai-dc-loading");
+  const btn = document.getElementById("ai-dc-submit");
+  if (loading) loading.style.display = "block";
+  if (btn) btn.disabled = true;
+
+  try {
+    // 1) Appel analyse IA
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch("/api/import/livraison", {
+      method: "POST",
+      headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
+      body: fd,
+    });
+    if (!r.ok) throw new Error((await r.json().catch(()=>({detail:r.statusText}))).detail);
+    const parsed = await r.json();
+
+    // 2) Résoudre le fournisseur
+    let resolvedSupplierId = supplierId;
+    if (!resolvedSupplierId && parsed.fournisseur) {
+      const match = (allSuppliers || []).find(s => s.name.toLowerCase() === parsed.fournisseur.toLowerCase());
+      if (match) resolvedSupplierId = match.id;
+    }
+    if (!resolvedSupplierId) {
+      // Fallback : 1er fournisseur, user va pouvoir ajuster
+      if ((allSuppliers || []).length) resolvedSupplierId = allSuppliers[0].id;
+      else throw new Error("Aucun fournisseur disponible. Créez-en un d'abord.");
+    }
+
+    // 3) Matching produits (par nom)
+    const productsByName = {};
+    (allProducts || []).forEach(p => { productsByName[p.name.toLowerCase()] = p; });
+
+    // 4) Créer le contrôle
+    const check = await api("/api/delivery-checks", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        supplier_id: resolvedSupplierId,
+        bl_reference: parsed.products?.[0]?.numero_facture || "",
+      }),
+    });
+
+    // 5) Ajouter chaque produit + pré-remplir qty_bl et prix
+    const items = [];
+    for (const p of (parsed.products || [])) {
+      const qty = parseFloat(p.quantite) || 0;
+      const price = p.prix_unitaire_ht != null ? parseFloat(p.prix_unitaire_ht) : null;
+      if (qty <= 0) continue;
+      const matched = productsByName[(p.nom || "").toLowerCase()];
+      const itemRes = await api(`/api/delivery-checks/${check.id}/items`, {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          product_id: matched ? matched.id : null,
+          product_name: p.nom || "",
+          qty_expected: 0,
+        })
+      });
+      items.push({ ...itemRes.items[itemRes.items.length - 1], qty_bl: qty, unit_price_ht: price });
+    }
+
+    // 6) Sauvegarder les qty_bl + prix
+    const blPayload = items.map(it => ({
+      item_id: it.id, qty_bl: it.qty_bl, unit_price_ht: it.unit_price_ht,
+    }));
+    if (blPayload.length > 0) {
+      await api(`/api/delivery-checks/${check.id}/bl`, {
+        method: "PUT", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ bl_reference: check.bl_reference, bls: blPayload }),
+      });
+    }
+
+    // 7) Attacher le fichier comme photo du BL
+    try {
+      const photoFd = new FormData();
+      photoFd.append("file", file);
+      await fetch(`/api/delivery-checks/${check.id}/photo`, {
+        method: "POST",
+        headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
+        body: photoFd,
+      });
+    } catch(_) {} // non bloquant
+
+    closeModal();
+    alert(`✦ BL analysé — ${items.length} produit(s) extraits.\nLe contrôle est créé, vérifiez puis validez.`);
+    openManagerValidationForm(check.id);
+  } catch (e) {
+    if (errEl) errEl.textContent = "Erreur : " + e.message;
+    if (loading) loading.style.display = "none";
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function submitNewDeliveryCheck() {

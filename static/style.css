@@ -1954,6 +1954,27 @@ html[data-theme="dark"] .pred-card-factor { background: rgba(201,169,97,0.18); c
 }
 html[data-theme="dark"] .dc-applied-pill { background: rgba(22,163,74,0.2); color: #4ADE80; }
 
+/* Panels repliables (historique + admin) dans le contrôle livraison */
+.dc-history-panel, .dc-admin-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+}
+.dc-history-panel summary, .dc-admin-panel summary {
+  cursor: pointer; font-size: 14px;
+  padding: 4px 0; user-select: none;
+  list-style: none;
+}
+.dc-history-panel summary::-webkit-details-marker,
+.dc-admin-panel summary::-webkit-details-marker { display: none; }
+.dc-history-panel summary::before, .dc-admin-panel summary::before {
+  content: "▸ "; transition: transform .15s; display: inline-block;
+}
+.dc-history-panel[open] summary::before, .dc-admin-panel[open] summary::before {
+  content: "▾ ";
+}
+
 /* Dashboard card : contrôles livraison */
 .db-dc-row {
   display: flex; justify-content: space-between; align-items: center;
