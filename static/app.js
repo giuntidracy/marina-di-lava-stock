@@ -5013,10 +5013,16 @@ function _renderManagerValidationRows() {
         ? `<span class="dc-ecart dc-ecart-warn" title="BL vs Commande">🟠 ${diffExpBl > 0 ? '+' : ''}${diffExpBl}</span>`
         : ((phys != null || bl != null) ? `<span class="dc-ecart dc-ecart-ok">✓</span>` : `—`);
 
+    const canEditPhys = __dcState.status !== "validated";
+    const physCell = canEditPhys
+      ? `<input type="number" class="dc-phys-input" min="0" step="1" value="${phys != null ? phys : ''}"
+                placeholder="qté comptée" oninput="setDcPhys(${i}, this.value)"/>`
+      : `<span class="${phys == null ? 'dc-muted' : ''}">${phys != null ? phys + " " + esc(it.unit) : "—"}</span>`;
+
     return `<tr>
       <td><strong>${esc(it.product_name)}</strong>${it.notes ? `<br><span style="font-size:11px;color:var(--text-muted)">📝 ${esc(it.notes)}</span>` : ""}</td>
       <td>${exp != null && exp > 0 ? exp : "—"}</td>
-      <td class="${phys == null ? 'dc-muted' : ''}">${phys != null ? phys + " " + esc(it.unit) : "—"}</td>
+      <td>${physCell}</td>
       <td>
         <input type="number" class="dc-bl-input" min="0" step="1" value="${bl != null ? bl : ''}"
                placeholder="qté BL"
@@ -5064,15 +5070,31 @@ async function removeDcItem(itemId) {
 
 function setDcBl(i, v)    { __dcState.items[i].qty_bl = v === "" ? null : parseFloat(v); _renderManagerValidationRows(); }
 function setDcFinal(i, v) { __dcState.items[i].qty_validated = v === "" ? 0 : parseFloat(v); }
+function setDcPhys(i, v)  { __dcState.items[i].qty_physical = v === "" ? null : parseFloat(v); _renderManagerValidationRows(); }
 
 async function validateDeliveryCheck() {
   const name = prompt("Votre nom (pour traçabilité) :", userName || "Direction");
   if (!name) return;
   if (!confirm("Valider le contrôle ? Le stock sera mis à jour avec les quantités indiquées dans la colonne 'Qté à valider'. Action irréversible.")) return;
 
-  // D'abord sauvegarder les qty_bl saisies
   const blRef = document.getElementById("dc-bl-ref")?.value || "";
   try {
+    // Si le manager a rempli lui-même les quantités physiques (solo), on les sauvegarde d'abord
+    const physFilled = __dcState.items.some(it => it.qty_physical != null && it.qty_physical !== undefined);
+    if (physFilled && __dcState.status === "pending_count") {
+      await api(`/api/delivery-checks/${__dcState.id}/counts`, {
+        method: "PUT", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          checked_by: name + " (solo)",
+          counts: __dcState.items.map(it => ({
+            item_id: it.id,
+            qty_physical: it.qty_physical || 0,
+            notes: it.notes || "",
+          })),
+        })
+      });
+    }
+    // Sauvegarder les qty_bl saisies
     await api(`/api/delivery-checks/${__dcState.id}/bl`, {
       method: "PUT", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({
