@@ -5110,6 +5110,8 @@ async function renderDashboard(el) {
         </div>
       </div>
 
+      <div id="db-service-alerts"></div>
+
       <div class="db-kpi-row" onclick="switchView('stock')">
         <div class="db-kpi">
           <div class="db-kpi-label">💰 Valeur stock</div>
@@ -5180,6 +5182,29 @@ async function renderDashboard(el) {
 
       </div>
     </div>`;
+
+  // Charger les alertes serveur
+  api("/api/service-alerts?status=open").then(alerts => {
+    const el = document.getElementById("db-service-alerts");
+    if (!el || !alerts.length) return;
+    el.innerHTML = `
+      <div class="db-alerts-widget" onclick="switchView('service_alert')">
+        <div class="db-alerts-header">
+          <span>🚨 Signalements service</span>
+          <span class="db-alerts-count">${alerts.length}</span>
+        </div>
+        ${alerts.slice(0, 5).map(a => `
+          <div class="db-alert-item">
+            <span class="db-alert-name">${esc(a.product_name)}</span>
+            ${a.is_rupture
+              ? '<span class="db-alert-tag db-alert-tag-rupture">RUPTURE</span>'
+              : `<span class="db-alert-tag db-alert-tag-low">${a.reported_stock} restant</span>`}
+            <span class="db-alert-by">${esc(a.staff_name)} · ${esc(a.created_at)}</span>
+          </div>
+        `).join("")}
+        ${alerts.length > 5 ? `<div style="text-align:center;font-size:12px;color:var(--text-muted);padding-top:4px">+ ${alerts.length - 5} autre(s)</div>` : ""}
+      </div>`;
+  }).catch(() => {});
 
   // Charger le manque à gagner en parallèle
   api("/api/manque-a-gagner").then(mag => {
