@@ -205,6 +205,8 @@ class DeliveryCheck(Base):
     checked_by = Column(String, default="")       # nom du serveur
     validated_by = Column(String, default="")     # nom du gérant validateur
     bl_reference = Column(String, default="")     # n° BL papier
+    bl_photo = Column(Text, default="")            # base64 du BL photographié
+    bl_photo_type = Column(String, default="")     # mime type (image/jpeg, image/png, application/pdf)
     notes = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     counted_at = Column(DateTime, nullable=True)

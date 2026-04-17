@@ -81,6 +81,17 @@ with engine.connect() as _conn:
         _conn.commit()
     except Exception:
         pass
+    # bl_photo + bl_photo_type sur delivery_checks
+    try:
+        _conn.execute(_text("ALTER TABLE delivery_checks ADD COLUMN bl_photo TEXT DEFAULT ''"))
+        _conn.commit()
+    except Exception:
+        pass
+    try:
+        _conn.execute(_text("ALTER TABLE delivery_checks ADD COLUMN bl_photo_type TEXT DEFAULT ''"))
+        _conn.commit()
+    except Exception:
+        pass
     # vat_rate sur products (0.20 alcool / 0.10 softs)
     try:
         _conn.execute(_text("ALTER TABLE products ADD COLUMN vat_rate REAL DEFAULT 0.20"))
@@ -1047,6 +1058,8 @@ def _delivery_check_dict(c: DeliveryCheck, for_role: str = "manager") -> dict:
         "validated_by":  c.validated_by or "",
         "bl_reference":  c.bl_reference or "",
         "notes":         c.notes or "",
+        "has_photo":     bool(c.bl_photo),
+        "photo_type":    c.bl_photo_type or "",
         "created_at":    c.created_at.isoformat() + "Z" if c.created_at else None,
         "counted_at":    c.counted_at.isoformat() + "Z" if c.counted_at else None,
         "validated_at":  c.validated_at.isoformat() + "Z" if c.validated_at else None,
@@ -1331,6 +1344,55 @@ def reject_delivery_check(cid: int, db: Session = Depends(get_db)):
     c.checked_by = ""
     db.commit()
     return _delivery_check_dict(c, for_role="manager")
+
+
+@app.post("/api/delivery-checks/{cid}/photo")
+async def upload_bl_photo(cid: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Attache une photo / PDF du BL au contrôle."""
+    c = db.query(DeliveryCheck).get(cid)
+    if not c:
+        raise HTTPException(404)
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:   # 5 MB max
+        raise HTTPException(400, "Fichier trop gros (max 5 MB).")
+    ext_map = {
+        "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "png": "image/png", "webp": "image/webp",
+        "heic": "image/jpeg", "gif": "image/gif",
+        "pdf": "application/pdf",
+    }
+    fname = (file.filename or "").lower()
+    ext = fname.rsplit(".", 1)[-1] if "." in fname else "jpg"
+    media_type = file.content_type or ext_map.get(ext, "image/jpeg")
+    c.bl_photo = base64.standard_b64encode(content).decode("utf-8")
+    c.bl_photo_type = media_type
+    db.commit()
+    return {"ok": True, "has_photo": True, "photo_type": media_type}
+
+
+@app.get("/api/delivery-checks/{cid}/photo")
+def get_bl_photo(cid: int, db: Session = Depends(get_db)):
+    """Retourne la photo/PDF du BL (décodé)."""
+    from fastapi.responses import Response
+    c = db.query(DeliveryCheck).get(cid)
+    if not c or not c.bl_photo:
+        raise HTTPException(404)
+    try:
+        data = base64.standard_b64decode(c.bl_photo)
+    except Exception:
+        raise HTTPException(500, "Photo corrompue")
+    return Response(content=data, media_type=c.bl_photo_type or "image/jpeg")
+
+
+@app.delete("/api/delivery-checks/{cid}/photo")
+def delete_bl_photo(cid: int, db: Session = Depends(get_db)):
+    c = db.query(DeliveryCheck).get(cid)
+    if not c:
+        raise HTTPException(404)
+    c.bl_photo = ""
+    c.bl_photo_type = ""
+    db.commit()
+    return {"ok": True}
 
 
 @app.delete("/api/delivery-checks/{cid}")

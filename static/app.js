@@ -4986,6 +4986,16 @@ async function openManagerValidationForm(cid) {
     </div>
     <div class="dc-form-meta">
       <label>N° BL papier : <input type="text" id="dc-bl-ref" value="${esc(c.bl_reference)}" placeholder="ex: BL-20260501-123"/></label>
+      <div class="dc-photo-zone">
+        ${c.has_photo
+          ? `<button class="btn btn-outline btn-sm" onclick="viewBlPhoto(${c.id})">🖼 Voir photo BL</button>
+             <button class="btn btn-outline btn-sm" onclick="deleteBlPhoto(${c.id})" style="color:#DC2626">🗑</button>`
+          : `<label class="btn btn-outline btn-sm" style="cursor:pointer">
+               📷 Joindre photo / PDF du BL
+               <input type="file" accept="image/*,application/pdf" style="display:none"
+                      onchange="uploadBlPhoto(${c.id}, this.files[0])"/>
+             </label>`}
+      </div>
     </div>
     <div class="table-wrap">
       <table class="dc-val-table">
@@ -5101,6 +5111,54 @@ function _renderManagerValidationRows() {
 function setDcPrice(i, v) {
   __dcState.items[i].unit_price_ht = v === "" ? null : parseFloat(v);
   _renderManagerValidationRows();
+}
+
+async function uploadBlPhoto(cid, file) {
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { alert("Fichier trop gros (max 5 MB)"); return; }
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch(`/api/delivery-checks/${cid}/photo`, {
+      method: "POST",
+      headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
+      body: fd,
+    });
+    if (!r.ok) throw new Error((await r.json().catch(()=>({detail:r.statusText}))).detail);
+    alert("✓ Photo jointe au contrôle");
+    openManagerValidationForm(cid);   // recharger pour rafraîchir l'UI
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function viewBlPhoto(cid) {
+  try {
+    const r = await fetch(`/api/delivery-checks/${cid}/photo`, {
+      headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
+    });
+    if (!r.ok) throw new Error("Photo introuvable");
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const isPdf = blob.type === "application/pdf";
+    openModal(`
+      <h3 style="margin-bottom:12px">🖼 Photo du BL</h3>
+      <div style="text-align:center;padding:10px 0;max-height:75vh;overflow:auto">
+        ${isPdf
+          ? `<embed src="${url}" type="application/pdf" style="width:100%;height:70vh"/>`
+          : `<img src="${url}" alt="Photo BL" style="max-width:100%;max-height:70vh;border-radius:8px;box-shadow:var(--shadow-md)"/>`}
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+        <a href="${url}" download="BL-${cid}.${isPdf ? 'pdf' : 'jpg'}" class="btn btn-outline">⬇ Télécharger</a>
+        <button class="btn btn-outline" onclick="closeModal()">Fermer</button>
+      </div>`);
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function deleteBlPhoto(cid) {
+  if (!confirm("Supprimer la photo du BL ?")) return;
+  try {
+    await api(`/api/delivery-checks/${cid}/photo`, { method: "DELETE" });
+    openManagerValidationForm(cid);
+  } catch(e) { alert("Erreur : " + e.message); }
 }
 
 async function addItemToDc(cid) {

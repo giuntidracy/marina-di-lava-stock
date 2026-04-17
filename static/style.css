@@ -1923,8 +1923,13 @@ html[data-theme="dark"] .pred-card-factor { background: rgba(201,169,97,0.18); c
 .dc-count-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 
 /* Direction — validation 3 colonnes */
-.dc-form-meta { padding: 12px 0; margin-bottom: 12px; }
-.dc-form-meta input { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); margin-left: 8px; min-width: 220px; }
+.dc-form-meta {
+  padding: 12px 0; margin-bottom: 12px;
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+}
+.dc-form-meta > label { display: inline-flex; align-items: center; }
+.dc-form-meta input[type="text"] { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); margin-left: 8px; min-width: 220px; }
+.dc-photo-zone { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 .dc-val-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .dc-val-table th { text-align: left; padding: 10px 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: .5px; background: var(--surface-alt); border-bottom: 1.5px solid var(--border); }
 .dc-val-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
