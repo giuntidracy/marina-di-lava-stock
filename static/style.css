@@ -1929,12 +1929,13 @@ html[data-theme="dark"] .pred-card-factor { background: rgba(201,169,97,0.18); c
 .dc-val-table th { text-align: left; padding: 10px 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: .5px; background: var(--surface-alt); border-bottom: 1.5px solid var(--border); }
 .dc-val-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .dc-muted { color: var(--text-faint); }
-.dc-bl-input, .dc-final-input, .dc-phys-input {
+.dc-bl-input, .dc-final-input, .dc-phys-input, .dc-price-input {
   width: 80px; padding: 6px 8px; font-size: 13px;
   border: 1px solid var(--border); border-radius: 6px;
   background: var(--surface); color: var(--text);
 }
 .dc-phys-input { background: rgba(59,130,246,0.06); }
+.dc-price-input { background: rgba(201,169,97,0.06); width: 90px; }
 
 /* Dashboard card : contrôles livraison */
 .db-dc-row {

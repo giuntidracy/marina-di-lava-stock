@@ -69,6 +69,12 @@ with engine.connect() as _conn:
         _conn.commit()
     except Exception:
         pass
+    # unit_price_ht sur delivery_check_items (capture prix depuis BL)
+    try:
+        _conn.execute(_text("ALTER TABLE delivery_check_items ADD COLUMN unit_price_ht REAL"))
+        _conn.commit()
+    except Exception:
+        pass
     # vat_rate sur products (0.20 alcool / 0.10 softs)
     try:
         _conn.execute(_text("ALTER TABLE products ADD COLUMN vat_rate REAL DEFAULT 0.20"))
@@ -1008,12 +1014,13 @@ class DeliveryCheckCountsIn(BaseModel):
 
 class DeliveryCheckBlIn(BaseModel):
     bl_reference: Optional[str] = ""
-    bls: List[dict]      # [{item_id, qty_bl}]
+    bls: List[dict]      # [{item_id, qty_bl, unit_price_ht}]
 
 
 class DeliveryCheckValidateIn(BaseModel):
     validated_by: str
     overrides: Optional[List[dict]] = None  # [{item_id, qty_validated, notes}]
+    apply_prices: bool = True   # mettre à jour Product.purchase_price depuis unit_price_ht
 
 
 def _delivery_check_dict(c: DeliveryCheck, for_role: str = "manager") -> dict:
@@ -1042,10 +1049,12 @@ def _delivery_check_dict(c: DeliveryCheck, for_role: str = "manager") -> dict:
                 "product_id":   it.product_id,
                 "product_name": it.product_name,
                 "unit":         it.product.unit if it.product else "u",
+                "current_purchase_price": it.product.purchase_price if it.product else None,
                 "qty_expected": None if hide_details else it.qty_expected,
                 "qty_bl":       None if hide_details else it.qty_bl,
                 "qty_physical": it.qty_physical,
                 "qty_validated": None if hide_details else it.qty_validated,
+                "unit_price_ht": None if hide_details else it.unit_price_ht,
                 "notes":        it.notes or "",
             }
             for it in (c.items or [])
@@ -1168,6 +1177,11 @@ def submit_bl_quantities(cid: int, body: DeliveryCheckBlIn, db: Session = Depend
             it.qty_bl = float(row.get("qty_bl")) if row.get("qty_bl") is not None else None
         except Exception:
             pass
+        if row.get("unit_price_ht") is not None and row.get("unit_price_ht") != "":
+            try:
+                it.unit_price_ht = float(row["unit_price_ht"])
+            except Exception:
+                pass
 
     if body.bl_reference is not None:
         c.bl_reference = body.bl_reference or ""
@@ -1210,6 +1224,13 @@ def validate_delivery_check(cid: int, body: DeliveryCheckValidateIn, db: Session
             if p:
                 p.stock = (p.stock or 0) + qty_final
                 applied.append({"product_id": p.id, "product_name": p.name, "added": qty_final})
+                # Mise à jour du prix d'achat si un prix a été saisi sur le BL
+                if body.apply_prices and it.unit_price_ht is not None and it.unit_price_ht > 0:
+                    old_price = p.purchase_price
+                    new_price = float(it.unit_price_ht)
+                    if old_price is None or abs(old_price - new_price) > 0.001:
+                        p.purchase_price = new_price
+                        p.is_estimated = False  # on a un vrai prix BL maintenant
 
     c.validated_by = body.validated_by or c.validated_by or ""
     c.validated_at = datetime.utcnow()

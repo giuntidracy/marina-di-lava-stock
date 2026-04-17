@@ -4989,6 +4989,7 @@ async function openManagerValidationForm(cid) {
           <th>Commandé</th>
           <th>Compté (serveur)</th>
           <th>BL (fournisseur)</th>
+          <th>Prix u. HT</th>
           <th>Écart</th>
           <th>Qté à valider</th>
           <th></th>
@@ -5044,6 +5045,15 @@ function _renderManagerValidationRows() {
                 placeholder="qté comptée" oninput="setDcPhys(${i}, this.value)"/>`
       : `<span class="${phys == null ? 'dc-muted' : ''}">${phys != null ? phys + " " + esc(it.unit) : "—"}</span>`;
 
+    // Indicateur si nouveau prix diffère du prix catalogue
+    const curPrice = it.current_purchase_price;
+    const priceChanged = (it.unit_price_ht != null && curPrice != null && Math.abs(it.unit_price_ht - curPrice) > 0.01);
+    const priceHint = priceChanged
+      ? `<div style="font-size:10px;color:#C9A84C;font-weight:600">actuel €${curPrice.toFixed(3)}</div>`
+      : (curPrice != null && (it.unit_price_ht == null || it.unit_price_ht === "")
+          ? `<div style="font-size:10px;color:var(--text-faint)">actuel €${curPrice.toFixed(3)}</div>`
+          : "");
+
     return `<tr>
       <td><strong>${esc(it.product_name)}</strong>${it.notes ? `<br><span style="font-size:11px;color:var(--text-muted)">📝 ${esc(it.notes)}</span>` : ""}</td>
       <td>${exp != null && exp > 0 ? exp : "—"}</td>
@@ -5052,6 +5062,12 @@ function _renderManagerValidationRows() {
         <input type="number" class="dc-bl-input" min="0" step="1" value="${bl != null ? bl : ''}"
                placeholder="qté BL"
                oninput="setDcBl(${i}, this.value)"/>
+      </td>
+      <td>
+        <input type="number" class="dc-price-input" min="0" step="0.001" value="${it.unit_price_ht != null ? it.unit_price_ht : ''}"
+               placeholder="€ HT/u"
+               oninput="setDcPrice(${i}, this.value)"/>
+        ${priceHint}
       </td>
       <td>${ecartBadge}</td>
       <td>
@@ -5065,8 +5081,13 @@ function _renderManagerValidationRows() {
   }).join("");
   if (__dcState.items.length === 0) {
     const tbody = document.getElementById("dc-val-tbody");
-    if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted);font-style:italic">Aucun produit dans ce contrôle — ajoutez-en ci-dessous</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-muted);font-style:italic">Aucun produit dans ce contrôle — ajoutez-en ci-dessous</td></tr>`;
   }
+}
+
+function setDcPrice(i, v) {
+  __dcState.items[i].unit_price_ht = v === "" ? null : parseFloat(v);
+  _renderManagerValidationRows();
 }
 
 async function addItemToDc(cid) {
@@ -5119,12 +5140,16 @@ async function validateDeliveryCheck() {
         })
       });
     }
-    // Sauvegarder les qty_bl saisies
+    // Sauvegarder les qty_bl + prix unitaires saisis
     await api(`/api/delivery-checks/${__dcState.id}/bl`, {
       method: "PUT", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({
         bl_reference: blRef,
-        bls: __dcState.items.map(it => ({ item_id: it.id, qty_bl: it.qty_bl })),
+        bls: __dcState.items.map(it => ({
+          item_id: it.id,
+          qty_bl: it.qty_bl,
+          unit_price_ht: it.unit_price_ht,
+        })),
       }),
     });
     // Puis valider
