@@ -3559,6 +3559,165 @@ def delete_event(eid: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+# ── Analyse IA d'une demande client (PDF / email) ─────────────────────────
+@app.post("/api/events/parse-request")
+async def parse_event_request(
+    file: Optional[UploadFile] = File(None),
+    text: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Reçoit un PDF (bon de commande, devis client) ou un texte (email collé).
+    Utilise Claude pour extraire la liste des boissons demandées et les
+    associer aux produits du catalogue.
+    Retourne: [{product_id, product_name, quantity, matched, raw_name}]
+    """
+    # ── 1. Extraire le texte ──────────────────────────────────────────────
+    extracted_text = (text or "").strip()
+    pdf_bytes = None
+
+    if file is not None:
+        content = await file.read()
+        fname = (file.filename or "").lower()
+        if fname.endswith(".pdf") or (file.content_type and "pdf" in file.content_type):
+            pdf_bytes = content
+            try:
+                import pdfplumber
+                with pdfplumber.open(io.BytesIO(content)) as pdf:
+                    pages = []
+                    for page in pdf.pages:
+                        t = page.extract_text() or ""
+                        if t.strip():
+                            pages.append(t)
+                    pdf_text = "\n".join(pages).strip()
+                if pdf_text:
+                    extracted_text = (extracted_text + "\n" + pdf_text).strip()
+            except Exception:
+                pass
+        else:
+            try:
+                extracted_text = (extracted_text + "\n" + content.decode("utf-8", errors="ignore")).strip()
+            except Exception:
+                pass
+
+    if not extracted_text and not pdf_bytes:
+        raise HTTPException(400, detail="Aucun contenu à analyser (PDF vide ou texte manquant).")
+
+    # ── 2. Préparer le catalogue (pour que l'IA fasse le matching) ─────────
+    products = db.query(Product).filter(
+        (Product.archived == False) | (Product.archived == None)
+    ).all()
+    catalogue_lines = [
+        f"- id={p.id} | {p.name} ({p.category}, {p.unit})"
+        for p in products
+    ]
+    catalogue_str = "\n".join(catalogue_lines)
+
+    # ── 3. Appel Claude ───────────────────────────────────────────────────
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(400, detail="Clé API Anthropic non configurée (ANTHROPIC_API_KEY).")
+
+    import anthropic as _anthropic
+    client = _anthropic.Anthropic(api_key=api_key)
+
+    system_prompt = (
+        "Tu es un assistant qui analyse des demandes de boissons pour un événement "
+        "(anniversaire, mariage, soirée privée, tournoi…). "
+        "Tu reçois un catalogue de produits disponibles et la demande du client "
+        "(email ou bon de commande PDF). "
+        "Extrait chaque boisson demandée avec sa quantité, et associe-la à un produit "
+        "du catalogue si possible (matching sémantique, tolérer fautes de frappe, synonymes "
+        "ex: « Deutz » → « Champagne Deutz », « bière Pietra » → « Fût Pietra Blonde 30L » ou "
+        "variante selon contexte). "
+        "Si aucun produit du catalogue ne correspond, retourne product_id=null et mets le "
+        "nom brut dans raw_name. "
+        "Réponds UNIQUEMENT en JSON valide, sans texte avant ou après."
+    )
+
+    user_text = (
+        "CATALOGUE PRODUITS (id | nom | catégorie | unité) :\n"
+        f"{catalogue_str}\n\n"
+        "FORMAT DE RÉPONSE (JSON strict) :\n"
+        '{"items": [{"product_id": 42 | null, "raw_name": "Champagne Deutz Brut", '
+        '"quantity": 20, "unit": "bouteille"}]}\n\n'
+        "DEMANDE DU CLIENT :\n"
+        "────────────────────\n"
+        f"{extracted_text if extracted_text else '(voir le PDF joint)'}"
+    )
+
+    try:
+        content_blocks: list = []
+        if pdf_bytes and not extracted_text:
+            b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+            content_blocks.append({
+                "type": "document",
+                "source": {"type": "base64", "media_type": "application/pdf", "data": b64},
+            })
+        content_blocks.append({"type": "text", "text": user_text})
+
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=2048,
+            system=system_prompt,
+            messages=[{"role": "user", "content": content_blocks}],
+        )
+    except _anthropic.AuthenticationError:
+        raise HTTPException(401, detail="Clé API Anthropic invalide.")
+    except _anthropic.BadRequestError as e:
+        raise HTTPException(400, detail=f"Demande non lisible : {str(e)}")
+    except Exception as e:
+        raise HTTPException(500, detail=f"Erreur d'analyse IA : {str(e)}")
+
+    raw = message.content[0].text.strip() if message.content else ""
+    # Récupérer le JSON
+    start = raw.find("{")
+    end = raw.rfind("}") + 1
+    if start < 0 or end <= start:
+        raise HTTPException(500, detail=f"Réponse IA invalide : {raw[:200]}")
+    try:
+        parsed = json.loads(raw[start:end])
+    except json.JSONDecodeError as e:
+        raise HTTPException(500, detail=f"JSON IA invalide : {e}")
+
+    # ── 4. Normaliser la réponse et enrichir avec info produit ────────────
+    products_by_id = {p.id: p for p in products}
+    items = []
+    for it in parsed.get("items", []):
+        pid = it.get("product_id")
+        raw_name = (it.get("raw_name") or "").strip()
+        qty = it.get("quantity") or 0
+        try:
+            qty = float(qty)
+        except Exception:
+            qty = 0
+        if qty <= 0:
+            continue
+        if pid and pid in products_by_id:
+            p = products_by_id[pid]
+            items.append({
+                "product_id": p.id,
+                "product_name": p.name,
+                "raw_name": raw_name,
+                "quantity": qty,
+                "unit": p.unit or "",
+                "stock": p.stock,
+                "matched": True,
+            })
+        else:
+            items.append({
+                "product_id": None,
+                "product_name": raw_name,
+                "raw_name": raw_name,
+                "quantity": qty,
+                "unit": it.get("unit") or "",
+                "stock": 0,
+                "matched": False,
+            })
+
+    return {"ok": True, "items": items, "raw_text_preview": extracted_text[:500]}
+
+
 @app.get("/api/events/analysis")
 def get_events_analysis(db: Session = Depends(get_db)):
     """

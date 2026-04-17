@@ -1486,10 +1486,16 @@ details[open] .history-details summary::before { content: '▼'; }
   padding: 3px 8px; border-radius: 6px; }
 .evf-req-ok { background: #D1FAE5; color: #065F46; font-size: 11px; font-weight: 600;
   padding: 3px 8px; border-radius: 6px; }
+.evf-req-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .evf-req-add { background: transparent; border: 1px dashed var(--border); border-radius: 8px;
   padding: 8px 14px; font-size: 12px; font-weight: 600; color: var(--text-muted);
-  cursor: pointer; width: 100%; }
+  cursor: pointer; flex: 1 1 200px; }
 .evf-req-add:hover { background: var(--input-bg, rgba(255,255,255,.05)); color: var(--text); }
+.evf-req-import { background: linear-gradient(135deg, #8B5CF6, #6366F1); color: #fff;
+  border: none; border-radius: 8px; padding: 8px 14px; font-size: 12px; font-weight: 700;
+  cursor: pointer; flex: 1 1 200px; transition: opacity .15s; }
+.evf-req-import:hover { opacity: 0.9; }
+.evf-req-import:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Event list requirement pills */
 .ev-req-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }

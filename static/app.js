@@ -3923,7 +3923,10 @@ function openEventForm(id=null, name="", type="Concert", date="", notes="", endD
       <div class="ev-field ev-field-full">
         <label>Besoins spécifiques (boissons demandées par le client)</label>
         <div id="evf-req-list" class="evf-req-list"></div>
-        <button type="button" class="evf-req-add" onclick="addEventRequirement()">+ Ajouter un besoin</button>
+        <div class="evf-req-actions">
+          <button type="button" class="evf-req-add" onclick="addEventRequirement()">+ Ajouter un besoin</button>
+          <button type="button" class="evf-req-import" onclick="openImportRequestModal()">📄 Importer demande client (PDF / email)</button>
+        </div>
       </div>
     </div>
     <div class="ev-form-footer">
@@ -3988,6 +3991,93 @@ function updateEventRequirement(i, field, value) {
 function removeEventRequirement(i) {
   __evReqState.splice(i, 1);
   renderEventRequirements();
+}
+
+function openImportRequestModal() {
+  openModal(`
+    <h3 style="margin-bottom:12px">📄 Importer demande client</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
+      Déposez un PDF (bon de commande, devis) <strong>ou</strong> collez le texte de l'email du client.
+      L'IA repérera les boissons demandées et les ajoutera automatiquement à la liste des besoins.
+    </p>
+    <div class="form-group">
+      <label>PDF (optionnel)</label>
+      <input type="file" id="import-req-file" accept="application/pdf,.pdf"/>
+    </div>
+    <div class="form-group">
+      <label>Ou texte de l'email / demande</label>
+      <textarea id="import-req-text" rows="8" placeholder="Ex: Bonjour, pour l'anniversaire du 25 avril nous souhaitons 20 bouteilles de Champagne Deutz, 6 bouteilles de rosé Santini, et 2 fûts de Pietra Blonde. Merci."></textarea>
+    </div>
+    <div id="import-req-loading" style="display:none;text-align:center;padding:12px;color:var(--text-muted)">
+      ⏳ Analyse en cours… (quelques secondes)
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" id="import-req-submit" onclick="submitImportRequest()">🤖 Analyser</button>
+    </div>`);
+}
+
+async function submitImportRequest() {
+  const fileInput = document.getElementById("import-req-file");
+  const textVal = document.getElementById("import-req-text").value.trim();
+  const file = fileInput && fileInput.files && fileInput.files[0];
+  if (!file && !textVal) { alert("Ajoutez un PDF ou collez du texte."); return; }
+
+  const loading = document.getElementById("import-req-loading");
+  const btn = document.getElementById("import-req-submit");
+  if (loading) loading.style.display = "block";
+  if (btn) btn.disabled = true;
+
+  try {
+    const fd = new FormData();
+    if (file) fd.append("file", file);
+    if (textVal) fd.append("text", textVal);
+    const token = localStorage.getItem("auth_token") || "";
+    const r = await fetch("/api/events/parse-request", {
+      method: "POST",
+      headers: token ? { "Authorization": `Bearer ${token}` } : {},
+      body: fd,
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({detail: r.statusText}));
+      throw new Error(err.detail || `Erreur ${r.status}`);
+    }
+    const data = await r.json();
+    const items = data.items || [];
+    if (items.length === 0) {
+      alert("Aucune boisson détectée dans ce document. Ajoute-les manuellement.");
+      return;
+    }
+    // Fusionner dans __evReqState
+    let added = 0, unmatched = 0;
+    items.forEach(it => {
+      if (!it.product_id) { unmatched++; return; }
+      // Éviter doublons : si produit déjà dans state, on cumule
+      const existing = __evReqState.find(r => String(r.product_id) === String(it.product_id));
+      if (existing) {
+        existing.quantity = Number(existing.quantity || 0) + Number(it.quantity || 0);
+      } else {
+        __evReqState.push({
+          product_id: it.product_id,
+          quantity: it.quantity,
+          notes: it.raw_name && it.raw_name !== it.product_name ? `Demandé: ${it.raw_name}` : "",
+        });
+      }
+      added++;
+    });
+    closeModal();
+    renderEventRequirements();
+    let msg = `✅ ${added} boisson${added>1?'s':''} ajoutée${added>1?'s':''} à la liste.`;
+    if (unmatched > 0) {
+      msg += `\n\n⚠️ ${unmatched} produit${unmatched>1?'s':''} non reconnu${unmatched>1?'s':''} dans le catalogue (ajoute-les manuellement si besoin).`;
+    }
+    alert(msg);
+  } catch (e) {
+    alert("Erreur : " + e.message);
+  } finally {
+    if (loading) loading.style.display = "none";
+    if (btn) btn.disabled = false;
+  }
 }
 
 function cancelEventForm() {
