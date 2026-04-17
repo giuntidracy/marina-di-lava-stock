@@ -5894,22 +5894,18 @@ async function renderDashboard(el) {
       </div>
     </div>`;
 
-  // Horloge temps réel (mise à jour chaque minute)
+  // Horloge temps réel (mise à jour chaque seconde)
   const tickClock = () => {
     const el = document.getElementById("db-greeting-clock");
     if (!el) { if (window.__dashClockTimer) { clearInterval(window.__dashClockTimer); window.__dashClockTimer = null; } return; }
     const d = new Date();
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
-    el.textContent = `· ${hh}h${mm}`;
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    el.textContent = `· ${hh}:${mm}:${ss}`;
   };
   tickClock();
-  // aligne le prochain tick sur la prochaine minute pile
-  const msToNextMinute = 60000 - (Date.now() % 60000);
-  setTimeout(() => {
-    tickClock();
-    window.__dashClockTimer = setInterval(tickClock, 60000);
-  }, msToNextMinute);
+  window.__dashClockTimer = setInterval(tickClock, 1000);
 
   // Charger les alertes serveur
   api("/api/service-alerts?status=open").then(alerts => {
