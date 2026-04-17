@@ -355,6 +355,164 @@ def log_event(db: Session, event_type: str, description: str, data: dict = None)
     return h
 
 
+def _send_mailjet_email(subject: str, html_body: str, to_emails: list, from_name: str = "Marina di Lava Alertes") -> bool:
+    """
+    Envoie un email via Mailjet. Retourne True si ok, False sinon.
+    Ne lève pas d'exception — les alertes ne doivent jamais bloquer le flux principal.
+    """
+    import urllib.request as _urllib
+    mailjet_key    = os.getenv("MAILJET_API_KEY", "").strip()
+    mailjet_secret = os.getenv("MAILJET_SECRET_KEY", "").strip()
+    if not mailjet_key or not mailjet_secret or not to_emails:
+        return False
+    from_addr = os.getenv("FROM_EMAIL", "marinadilava.commandes@gmail.com").strip()
+    creds = base64.b64encode(f"{mailjet_key}:{mailjet_secret}".encode()).decode()
+    recipients = [{"Email": e.strip()} for e in to_emails if e.strip()]
+    if not recipients:
+        return False
+    payload = json.dumps({
+        "Messages": [{
+            "From":     {"Email": from_addr, "Name": from_name},
+            "To":       recipients,
+            "Subject":  subject,
+            "HTMLPart": html_body,
+        }]
+    }).encode("utf-8")
+    try:
+        req = _urllib.Request(
+            "https://api.mailjet.com/v3.1/send",
+            data=payload,
+            headers={"Authorization": f"Basic {creds}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with _urllib.urlopen(req, timeout=10) as resp:
+            return 200 <= resp.status < 300
+    except Exception as e:
+        print(f"[Alert email] ❌ {e}")
+        return False
+
+
+def _trigger_rupture_alerts(db: Session, context: str = ""):
+    """
+    Scanne les produits actifs. Pour ceux qui viennent de passer sous le seuil,
+    envoie un email (cool-down 6h pour éviter le spam).
+    Appelé après les opérations qui baissent le stock (Cashpad, sorties).
+    """
+    recipients_raw = _get_setting(db, "alert_emails", "").strip()
+    if not recipients_raw:
+        return   # pas configuré → skip
+    recipients = [e.strip() for e in recipients_raw.split(",") if e.strip()]
+    if not recipients:
+        return
+
+    threshold_mode = _get_setting(db, "alert_mode", "rupture")   # "rupture" | "low_stock"
+    cooldown_hours = 6
+    now = datetime.utcnow()
+
+    products = db.query(Product).filter(
+        (Product.archived == False) | (Product.archived == None)
+    ).all()
+
+    to_alert = []
+    for p in products:
+        is_rupture = (p.stock or 0) <= 0
+        is_low     = not is_rupture and (p.stock or 0) <= (p.alert_threshold or 0)
+        triggered  = (is_rupture or (threshold_mode == "low_stock" and is_low))
+        if not triggered:
+            continue
+
+        key = f"last_alert_{p.id}"
+        last_raw = _get_setting(db, key, "")
+        if last_raw:
+            try:
+                last_dt = datetime.fromisoformat(last_raw)
+                if (now - last_dt).total_seconds() < cooldown_hours * 3600:
+                    continue   # cooldown pas encore écoulé
+            except Exception:
+                pass
+
+        to_alert.append({
+            "id": p.id, "name": p.name, "stock": p.stock or 0,
+            "threshold": p.alert_threshold or 0, "unit": p.unit or "u",
+            "is_rupture": is_rupture,
+        })
+        _set_setting(db, key, now.isoformat())
+
+    if not to_alert:
+        return
+
+    # Construire l'email
+    rupture_rows = "".join(
+        f'<tr><td style="padding:8px;border-bottom:1px solid #eee"><strong>{a["name"]}</strong></td>'
+        f'<td style="padding:8px;border-bottom:1px solid #eee;color:#DC2626;font-weight:700">RUPTURE</td>'
+        f'<td style="padding:8px;border-bottom:1px solid #eee">{a["unit"]}</td></tr>'
+        for a in to_alert if a["is_rupture"]
+    )
+    low_rows = "".join(
+        f'<tr><td style="padding:8px;border-bottom:1px solid #eee"><strong>{a["name"]}</strong></td>'
+        f'<td style="padding:8px;border-bottom:1px solid #eee;color:#F59E0B;font-weight:700">{a["stock"]:.1f} {a["unit"]} (seuil {a["threshold"]})</td>'
+        f'<td style="padding:8px;border-bottom:1px solid #eee">Stock bas</td></tr>'
+        for a in to_alert if not a["is_rupture"]
+    )
+    n_rup = sum(1 for a in to_alert if a["is_rupture"])
+    n_low = sum(1 for a in to_alert if not a["is_rupture"])
+    subject = f"🔴 Marina di Lava — {n_rup} rupture(s)" + (f" + {n_low} stock bas" if n_low else "")
+    html = f"""<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;background:#f7f7f7">
+        <div style="background:linear-gradient(135deg,#0D2818,#14532D);color:#fff;padding:18px 22px;border-radius:10px 10px 0 0">
+          <h2 style="margin:0;font-size:20px;font-weight:700">🔴 Alerte stock — Marina di Lava</h2>
+          <p style="margin:4px 0 0;opacity:0.85;font-size:13px">{context or 'Suite à un mouvement de stock'}</p>
+        </div>
+        <div style="background:#fff;padding:20px;border-radius:0 0 10px 10px">
+          <p style="margin:0 0 12px">Les produits suivants nécessitent une action :</p>
+          <table style="width:100%;border-collapse:collapse;font-size:14px">
+            <thead><tr style="background:#f3f4f6"><th style="padding:8px;text-align:left">Produit</th><th style="padding:8px;text-align:left">Niveau</th><th style="padding:8px;text-align:left">Action</th></tr></thead>
+            <tbody>{rupture_rows}{low_rows}</tbody>
+          </table>
+          <p style="margin:16px 0 0;font-size:12px;color:#666">Cet email est envoyé automatiquement. Pour désactiver, videz la liste des destinataires dans les paramètres de l'application.</p>
+        </div></div>"""
+    _send_mailjet_email(subject, html, recipients, from_name="Marina di Lava Alertes")
+    db.commit()
+
+
+class AlertSettingsIn(BaseModel):
+    emails: str                         # liste CSV
+    mode: str = "rupture"               # rupture | low_stock
+
+
+@app.get("/api/alert-settings")
+def get_alert_settings(db: Session = Depends(get_db)):
+    return {
+        "emails": _get_setting(db, "alert_emails", ""),
+        "mode":   _get_setting(db, "alert_mode", "rupture"),
+    }
+
+
+@app.post("/api/alert-settings")
+def set_alert_settings(body: AlertSettingsIn, db: Session = Depends(get_db)):
+    _set_setting(db, "alert_emails", (body.emails or "").strip())
+    _set_setting(db, "alert_mode", body.mode if body.mode in ("rupture", "low_stock") else "rupture")
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/alert-settings/test")
+def test_alert_email(db: Session = Depends(get_db)):
+    """Envoie un email de test aux destinataires configurés."""
+    recipients_raw = _get_setting(db, "alert_emails", "").strip()
+    recipients = [e.strip() for e in recipients_raw.split(",") if e.strip()]
+    if not recipients:
+        raise HTTPException(400, "Aucun destinataire configuré")
+    html = """<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px">
+      <h2 style="color:#14532D">✓ Email de test — Marina di Lava</h2>
+      <p>Cet email confirme que les alertes de rupture sont bien configurées.</p>
+      <p style="color:#666;font-size:12px">Tu recevras automatiquement un email à chaque rupture ou stock bas détecté.</p>
+    </div>"""
+    ok = _send_mailjet_email("Test alertes Marina di Lava", html, recipients)
+    if not ok:
+        raise HTTPException(500, "Échec de l'envoi — vérifiez MAILJET_API_KEY et MAILJET_SECRET_KEY sur Railway.")
+    return {"ok": True, "sent_to": recipients}
+
+
 def record_price_change(db: Session, product, new_price: float, source: str = "",
                         supplier_id: Optional[int] = None, reference: str = ""):
     """Enregistre une variation de prix d'achat si différente de l'ancienne."""
@@ -2019,6 +2177,10 @@ def manual_movement(body: ManualMovementIn, db: Session = Depends(get_db)):
             "quantity": body.quantity, "note": body.note or ""}
     h = log_event(db, "mouvement_manuel", f"Mouvement manuel : {p.name} ({'+' if body.quantity >= 0 else ''}{body.quantity})", data)
     db.commit()
+    # Alerte email si le stock a baissé (sortie réserve, ajustement négatif)
+    if body.quantity < 0:
+        try: _trigger_rupture_alerts(db, context=f"Sortie réserve : {p.name}")
+        except Exception as _e: print(f"[Alert email] skipped : {_e}")
     return {"ok": True, "new_stock": p.stock, "history_id": h.id}
 
 
@@ -2608,6 +2770,9 @@ async def import_cashpad(
         }
     )
     db.commit()
+    # Alerte email (non bloquante)
+    try: _trigger_rupture_alerts(db, context=f"Import Cashpad {ref}")
+    except Exception as _e: print(f"[Alert email] skipped : {_e}")
 
     return {
         "ok": True,

@@ -5013,7 +5013,13 @@ async function renderDeliveryCheck(el) {
 
     <details class="dc-admin-panel" style="margin-top:20px">
       <summary style="color:#DC2626"><strong>⚙️ Zone d'administration</strong></summary>
-      <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap">
+
+      <div style="margin-top:14px;padding:14px;background:var(--surface-alt);border-radius:10px;border:1px solid var(--border)">
+        <div style="font-weight:800;font-size:13px;margin-bottom:6px">📧 Alertes rupture par email</div>
+        <div id="alert-settings-area" style="font-size:12px;color:var(--text-muted)">Chargement…</div>
+      </div>
+
+      <div style="margin-top:14px;display:flex;gap:12px;flex-wrap:wrap">
         <button class="btn" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA;font-weight:600" onclick="adminResetStocks()">
           🔄 Remettre tous les stocks à 0
         </button>
@@ -5035,7 +5041,57 @@ async function renderDeliveryCheck(el) {
     ` : ""}
   </div>`;
   loadDeliveryChecks();
-  if (isManager) loadRecentImports();
+  if (isManager) { loadRecentImports(); loadAlertSettings(); }
+}
+
+async function loadAlertSettings() {
+  const el = document.getElementById("alert-settings-area");
+  if (!el) return;
+  try {
+    const s = await api("/api/alert-settings");
+    el.innerHTML = `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:1 1 300px">
+          <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin-bottom:4px">Emails (séparés par ,)</label>
+          <input type="text" id="alert-emails-input" value="${esc(s.emails || '')}" placeholder="jm@marinadilava.fr, gerant@..."
+                 style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px"/>
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin-bottom:4px">Mode</label>
+          <select id="alert-mode-input" style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)">
+            <option value="rupture" ${s.mode === 'rupture' ? 'selected' : ''}>Rupture uniquement</option>
+            <option value="low_stock" ${s.mode === 'low_stock' ? 'selected' : ''}>Rupture + stock bas</option>
+          </select>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="saveAlertSettings()">💾 Sauver</button>
+        <button class="btn btn-outline btn-sm" onclick="testAlertEmail()">✉️ Test</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
+        Un email est envoyé automatiquement (cooldown 6h/produit) après imports Cashpad et sorties réserve quand un stock passe sous le seuil.
+      </div>
+    `;
+  } catch(e) {
+    el.innerHTML = `Erreur : ${esc(e.message)}`;
+  }
+}
+
+async function saveAlertSettings() {
+  const emails = document.getElementById("alert-emails-input")?.value || "";
+  const mode = document.getElementById("alert-mode-input")?.value || "rupture";
+  try {
+    await api("/api/alert-settings", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ emails, mode }),
+    });
+    alert("✓ Paramètres enregistrés");
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function testAlertEmail() {
+  try {
+    const r = await api("/api/alert-settings/test", { method: "POST" });
+    alert("✓ Email test envoyé à : " + r.sent_to.join(", "));
+  } catch(e) { alert("Erreur : " + e.message); }
 }
 
 async function loadDeliveryChecks() {
