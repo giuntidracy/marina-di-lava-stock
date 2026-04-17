@@ -5024,11 +5024,11 @@ async function rejectDeliveryCheck() {
 
 // ─────────── Direction : création nouveau contrôle ───────────────────────
 async function openNewDeliveryCheckModal() {
-  // Liste des commandes envoyées non encore contrôlées
+  // Toutes les commandes pas encore reçues (brouillon / envoyée / partielle)
   let sentOrders = [];
   try {
     const all = await api("/api/orders");
-    sentOrders = all.filter(o => o.status === "sent" || o.status === "partial");
+    sentOrders = all.filter(o => o.status !== "received");
   } catch(_) {}
 
   openModal(`
