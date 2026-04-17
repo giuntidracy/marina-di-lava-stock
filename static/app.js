@@ -5482,6 +5482,7 @@ async function renderDashboard(el) {
   const ruptureColor = ruptures > 0 ? "#dc2626" : "#16a34a";
 
   // ── Greeting ───────────────────────────────────────────────────────────
+  if (window.__dashClockTimer) { clearInterval(window.__dashClockTimer); window.__dashClockTimer = null; }
   const now = new Date();
   const hour = now.getHours();
   let greeting = "Bonne journée";
@@ -5583,7 +5584,7 @@ async function renderDashboard(el) {
           ${userPhoto ? `<img src="${userPhoto}" class="db-greeting-avatar" onclick="flashOpenAvatarUpload()"/>` : ""}
           <div>
             <div class="db-greeting-hello">${esc(greeting)}${userName ? ` ${esc(userName)}` : ""} 👋</div>
-            <div class="db-greeting-date">${dateCap}</div>
+            <div class="db-greeting-date">${dateCap} <span class="db-greeting-clock" id="db-greeting-clock"></span></div>
           </div>
           <div class="db-countdown">
             <div class="db-countdown-num">${countdownEmoji} ${daysLeft}</div>
@@ -5680,6 +5681,23 @@ async function renderDashboard(el) {
 
       </div>
     </div>`;
+
+  // Horloge temps réel (mise à jour chaque minute)
+  const tickClock = () => {
+    const el = document.getElementById("db-greeting-clock");
+    if (!el) { if (window.__dashClockTimer) { clearInterval(window.__dashClockTimer); window.__dashClockTimer = null; } return; }
+    const d = new Date();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    el.textContent = `· ${hh}h${mm}`;
+  };
+  tickClock();
+  // aligne le prochain tick sur la prochaine minute pile
+  const msToNextMinute = 60000 - (Date.now() % 60000);
+  setTimeout(() => {
+    tickClock();
+    window.__dashClockTimer = setInterval(tickClock, 60000);
+  }, msToNextMinute);
 
   // Charger les alertes serveur
   api("/api/service-alerts?status=open").then(alerts => {

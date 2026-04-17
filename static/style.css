@@ -2006,6 +2006,7 @@ details[open] .history-details summary::before { content: '▼'; }
   color: rgba(255,255,255,.65);
   text-transform: capitalize;
 }
+.db-greeting-clock { font-variant-numeric: tabular-nums; font-weight: 600; color: rgba(255,255,255,.8); margin-left: 4px; }
 
 .db-kpi-row {
   display: flex;
