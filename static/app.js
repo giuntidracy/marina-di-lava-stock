@@ -639,12 +639,14 @@ function renderStock(el) {
   const categories = [...new Set(allProducts.map(p => p.category))].sort();
   const supplierNames = [...new Set(allProducts.map(p => p.supplier_name).filter(Boolean))].sort();
 
-  // Summary stats
-  const withVal = allProducts.filter(p => p.valeur_stock !== null);
+  // Summary stats (excl. archivés pour les KPI actifs)
+  const activeProducts = allProducts.filter(p => !p.archived);
+  const withVal = activeProducts.filter(p => p.valeur_stock !== null);
   const totalVal = withVal.reduce((s, p) => s + p.valeur_stock, 0);
-  const ruptures = allProducts.filter(p => p.stock === 0).length;
-  const stockBas = allProducts.filter(p => p.stock > 0 && p.stock <= p.alert_threshold).length;
-  const margesOk = allProducts.filter(p => p.marge_color === "green").length;
+  const ruptures = activeProducts.filter(p => p.stock === 0).length;
+  const stockBas = activeProducts.filter(p => p.stock > 0 && p.stock <= p.alert_threshold).length;
+  const margesOk = activeProducts.filter(p => p.marge_color === "green").length;
+  const archivedCount = allProducts.filter(p => p.archived).length;
 
   el.innerHTML = `
     <div class="section-header">
@@ -676,7 +678,7 @@ function renderStock(el) {
       <div class="summary-card card-success kpi-clickable" style="--card-icon:'📈'" onclick="showMargeDetail()">
         <div class="s-label">Marge ≥ 70%</div>
         <div class="s-value">${margesOk}</div>
-        <div class="s-sub">sur ${allProducts.filter(p => p.marge !== null).length} valorisés</div>
+        <div class="s-sub">sur ${activeProducts.filter(p => p.marge !== null).length} valorisés</div>
         <div class="kpi-hint">Voir détail →</div>
       </div>
     </div>
@@ -701,12 +703,24 @@ function renderStock(el) {
         <option value="zero">Rupture</option>
         <option value="low">Stock bas</option>
       </select>
+      <select id="f-arch" onchange="filterStock()">
+        <option value="active">Actifs (${allProducts.length - archivedCount})</option>
+        <option value="archived">Archivés (${archivedCount})</option>
+        <option value="all">Tous</option>
+      </select>
       <input type="text" id="f-search" placeholder="Rechercher…" oninput="filterStock()"/>
+    </div>
+    <div id="stock-bulk-toolbar" class="stock-bulk-toolbar hidden">
+      <strong><span id="stock-selected-count">0</span> produit(s) sélectionné(s)</strong>
+      <button class="btn btn-primary btn-sm" onclick="archiveSelectedStock(true)">📦 Archiver</button>
+      <button class="btn btn-outline btn-sm" onclick="archiveSelectedStock(false)">↩️ Désarchiver</button>
+      <button class="btn btn-outline btn-sm" onclick="clearStockSelection()">Annuler</button>
     </div>
     <div class="table-wrap">
       <table id="stock-table">
         <thead>
           <tr>
+            <th style="width:36px"><input type="checkbox" id="stock-select-all-cb" class="stock-cb" onchange="toggleAllStock(this.checked)"/></th>
             <th class="sortable" onclick="sortStock('name')">Produit</th>
             <th class="sortable" onclick="sortStock('category')">Catégorie</th>
             <th class="sortable" onclick="sortStock('stock')">Stock</th>
@@ -788,9 +802,12 @@ function filterStock() {
   const sup    = document.getElementById("f-sup")?.value    || "";
   const marge  = document.getElementById("f-marge")?.value  || "";
   const alert  = document.getElementById("f-alert")?.value  || "";
+  const arch   = document.getElementById("f-arch")?.value   || "active";
   const search = (document.getElementById("f-search")?.value || "").toLowerCase();
 
   let rows = allProducts;
+  if (arch === "active")    rows = rows.filter(p => !p.archived);
+  if (arch === "archived")  rows = rows.filter(p => p.archived);
   if (cat)    rows = rows.filter(p => p.category === cat);
   if (sup)    rows = rows.filter(p =>
     p.supplier_name === sup ||
@@ -817,12 +834,14 @@ function filterStock() {
 
   if (rows.length === 0) {
     tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:24px">Aucun produit trouvé.</td></tr>`;
+    updateStockSelection();
     return;
   }
 
   tbody.innerHTML = rows.map(p => `
-    <tr>
-      <td><strong>${esc(p.name)}</strong>${p.is_estimated ? '<span class="estimated-tag">~</span>' : ''}</td>
+    <tr class="${p.archived ? 'row-archived' : ''}">
+      <td><input type="checkbox" class="stock-cb stock-row-cb" data-pid="${p.id}" onchange="updateStockSelection()"/></td>
+      <td><strong>${esc(p.name)}</strong>${p.is_estimated ? '<span class="estimated-tag">~</span>' : ''}${p.archived ? '<span class="archived-badge">ARCHIVÉ</span>' : ''}</td>
       <td>${esc(p.category)}</td>
       <td class="${stockClass(p.stock, p.alert_threshold)}">${fmtStock(p)}</td>
       <td class="col-desktop">${p.cout_unitaire !== null ? "€" + p.cout_unitaire.toFixed(3) : "—"}</td>
@@ -833,9 +852,75 @@ function filterStock() {
       <td style="white-space:nowrap">
         <button class="btn btn-outline btn-sm" onclick="openProductForm(${p.id})">✏️</button>
         <button class="btn btn-outline btn-sm" onclick="openAdjustStock(${p.id})">±</button>
+        ${p.archived
+          ? `<button class="btn btn-outline btn-sm" title="Désarchiver" onclick="toggleArchiveProduct(${p.id}, false)">↩️</button>`
+          : `<button class="btn btn-outline btn-sm" title="Archiver" onclick="toggleArchiveProduct(${p.id}, true)">📦</button>`}
         <button class="btn btn-danger btn-sm" onclick="deleteProduct(${p.id},'${esc(p.name)}')">🗑</button>
       </td>
     </tr>`).join("");
+  updateStockSelection();
+}
+
+function toggleAllStock(checked) {
+  document.querySelectorAll(".stock-row-cb").forEach(cb => { cb.checked = checked; });
+  updateStockSelection();
+}
+
+function clearStockSelection() {
+  document.querySelectorAll(".stock-row-cb").forEach(cb => { cb.checked = false; });
+  const master = document.getElementById("stock-select-all-cb");
+  if (master) { master.checked = false; master.indeterminate = false; }
+  updateStockSelection();
+}
+
+function updateStockSelection() {
+  const all = document.querySelectorAll(".stock-row-cb");
+  const checked = document.querySelectorAll(".stock-row-cb:checked");
+  const toolbar = document.getElementById("stock-bulk-toolbar");
+  const cntEl = document.getElementById("stock-selected-count");
+  if (cntEl) cntEl.textContent = checked.length;
+  if (toolbar) toolbar.classList.toggle("hidden", checked.length === 0);
+  const master = document.getElementById("stock-select-all-cb");
+  if (master) {
+    master.checked = all.length > 0 && checked.length === all.length;
+    master.indeterminate = checked.length > 0 && checked.length < all.length;
+  }
+}
+
+async function toggleArchiveProduct(pid, archive) {
+  const action = archive ? "Archiver" : "Désarchiver";
+  const p = allProducts.find(x => x.id === pid);
+  if (!p) return;
+  if (!confirm(`${action} "${p.name}" ?`)) return;
+  try {
+    await api(`/api/products/${pid}/archive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived: archive }),
+    });
+    allProducts = await api("/api/produits");
+    renderStock(document.getElementById("app"));
+    updateAlertBadge();
+  } catch (e) { alert(e.message); }
+}
+
+async function archiveSelectedStock(archive) {
+  const ids = [...document.querySelectorAll(".stock-row-cb:checked")]
+    .map(cb => parseInt(cb.dataset.pid, 10))
+    .filter(id => !isNaN(id));
+  if (ids.length === 0) return;
+  const action = archive ? "Archiver" : "Désarchiver";
+  if (!confirm(`${action} ${ids.length} produit${ids.length > 1 ? 's' : ''} ?`)) return;
+  try {
+    await api(`/api/products/archive-bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived: archive, product_ids: ids }),
+    });
+    allProducts = await api("/api/produits");
+    renderStock(document.getElementById("app"));
+    updateAlertBadge();
+  } catch (e) { alert(e.message); }
 }
 
 function openAdjustStock(id) {
@@ -1258,15 +1343,37 @@ async function renderAlerts(el) {
         const g = groups[a.type] || groups.rupture;
         g.alerts.push(a);
       });
+
+      const archivable = alerts.filter(a => a.product_id);
+      html += `<div class="alert-toolbar">
+        <label class="alert-select-all">
+          <input type="checkbox" id="alert-select-all-cb" onchange="toggleAllAlerts(this.checked)"/>
+          Tout sélectionner (${archivable.length} archivables)
+        </label>
+        <button class="btn btn-danger btn-sm" id="alert-bulk-archive-btn" onclick="archiveSelectedAlerts()" disabled>
+          📦 Archiver la sélection (<span id="alert-selected-count">0</span>)
+        </button>
+      </div>`;
+
       Object.values(groups).forEach(g => {
         if (g.alerts.length === 0) return;
         html += `<h3 style="margin:20px 0 8px;font-size:15px;font-weight:700">${g.icon} ${esc(g.label)} (${g.alerts.length})</h3>
           <div class="alert-list" style="margin-bottom:8px">
-            ${g.alerts.map(a => `
-              <div class="alert-card alert-${a.severity || 'medium'}">
+            ${g.alerts.map(a => {
+              const pid = a.product_id;
+              const cbHtml = pid
+                ? `<input type="checkbox" class="alert-cb" data-pid="${pid}" onchange="updateAlertSelection()"/>`
+                : `<span style="width:16px;display:inline-block"></span>`;
+              const archBtn = pid
+                ? `<button class="alert-archive-btn" title="Archiver ce produit" onclick="archiveOneProduct(${pid}, '${esc(a.product || '').replace(/'/g, "\\'")}')">📦</button>`
+                : '';
+              return `<div class="alert-card alert-${a.severity || 'medium'}">
+                ${cbHtml}
                 <span class="alert-msg">${esc(a.message)}</span>
                 ${a.date ? `<span style="font-size:11px;color:var(--text-muted);margin-left:auto">${formatDate(a.date)}</span>` : ''}
-              </div>`).join("")}
+                ${archBtn}
+              </div>`;
+            }).join("")}
           </div>`;
       });
     }
@@ -1275,6 +1382,62 @@ async function renderAlerts(el) {
   } catch (e) {
     document.getElementById("alerts-body").innerHTML = `<div class="info-box">Erreur : ${esc(e.message)}</div>`;
   }
+}
+
+function toggleAllAlerts(checked) {
+  document.querySelectorAll(".alert-cb").forEach(cb => { cb.checked = checked; });
+  updateAlertSelection();
+}
+
+function updateAlertSelection() {
+  const checked = document.querySelectorAll(".alert-cb:checked");
+  const count = checked.length;
+  const btn = document.getElementById("alert-bulk-archive-btn");
+  const cntEl = document.getElementById("alert-selected-count");
+  if (cntEl) cntEl.textContent = count;
+  if (btn) btn.disabled = count === 0;
+  // sync master checkbox indeterminate state
+  const all = document.querySelectorAll(".alert-cb");
+  const master = document.getElementById("alert-select-all-cb");
+  if (master) {
+    master.checked = all.length > 0 && count === all.length;
+    master.indeterminate = count > 0 && count < all.length;
+  }
+}
+
+async function archiveOneProduct(pid, name) {
+  if (!confirm(`Archiver "${name}" ?\n\nCe produit sera masqué des alertes et du stock actif. Vous pourrez le restaurer plus tard.`)) return;
+  try {
+    await api(`/api/products/${pid}/archive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived: true }),
+    });
+    allProducts = await api("/api/produits");
+    const el = document.getElementById("app") || document.querySelector("main");
+    // re-render alerts view
+    await renderAlerts(document.getElementById("app"));
+    updateAlertBadge();
+  } catch (e) { alert(e.message); }
+}
+
+async function archiveSelectedAlerts() {
+  const ids = [...document.querySelectorAll(".alert-cb:checked")]
+    .map(cb => parseInt(cb.dataset.pid, 10))
+    .filter(id => !isNaN(id));
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return;
+  if (!confirm(`Archiver ${unique.length} produit${unique.length > 1 ? 's' : ''} ?\n\nIls seront masqués des alertes et du stock actif.`)) return;
+  try {
+    await api(`/api/products/archive-bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived: true, product_ids: unique }),
+    });
+    allProducts = await api("/api/produits");
+    await renderAlerts(document.getElementById("app"));
+    updateAlertBadge();
+  } catch (e) { alert(e.message); }
 }
 
 // ── Widget Météo ────────────────────────────────────────────────────────

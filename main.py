@@ -62,6 +62,12 @@ with engine.connect() as _conn:
         _conn.commit()
     except Exception:
         pass
+    # archived sur products
+    try:
+        _conn.execute(_text("ALTER TABLE products ADD COLUMN archived INTEGER DEFAULT 0"))
+        _conn.commit()
+    except Exception:
+        pass
 
     # app_settings table
     try:
@@ -204,6 +210,7 @@ def calc_product(p: Product) -> dict:
         "prix_estime": p.is_estimated,
         "is_estimated": p.is_estimated,
         "barcode": p.barcode or "",
+        "archived": bool(p.archived),
         "cout_unitaire": round(cout_unitaire, 4) if cout_unitaire is not None else None,
         "marge": round(marge, 1) if marge is not None else None,
         "marge_color": marge_color,
@@ -899,6 +906,34 @@ def delete_product(pid: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+class ArchiveIn(BaseModel):
+    archived: bool = True
+    product_ids: Optional[List[int]] = None
+
+
+@app.post("/api/products/{pid}/archive")
+def archive_product(pid: int, body: ArchiveIn, db: Session = Depends(get_db)):
+    p = db.query(Product).get(pid)
+    if not p:
+        raise HTTPException(404)
+    p.archived = bool(body.archived)
+    db.commit()
+    return {"ok": True, "archived": p.archived}
+
+
+@app.post("/api/products/archive-bulk")
+def archive_products_bulk(body: ArchiveIn, db: Session = Depends(get_db)):
+    if not body.product_ids:
+        return {"ok": True, "updated": 0}
+    count = (
+        db.query(Product)
+        .filter(Product.id.in_(body.product_ids))
+        .update({"archived": bool(body.archived)}, synchronize_session=False)
+    )
+    db.commit()
+    return {"ok": True, "updated": count, "archived": bool(body.archived)}
+
+
 # ── Multi-fournisseurs par produit ─────────────────────────────────────────
 
 class ProductSupplierIn(BaseModel):
@@ -1052,7 +1087,7 @@ def get_predictions(db: Session = Depends(get_db)):
                 consumption[pid] += qty
                 days_seen[pid].add(day)
 
-    products = db.query(Product).all()
+    products = db.query(Product).filter((Product.archived == False) | (Product.archived == None)).all()
     predictions = []
 
     for p in products:
@@ -1098,10 +1133,11 @@ def get_predictions(db: Session = Depends(get_db)):
 @app.get("/api/alerts")
 def get_alerts(db: Session = Depends(get_db)):
     alerts = []
-    for p in db.query(Product).all():
+    for p in db.query(Product).filter((Product.archived == False) | (Product.archived == None)).all():
         if p.stock == 0:
             alerts.append({
                 "type": "rupture",
+                "product_id": p.id,
                 "product": p.name,
                 "message": f"Rupture de stock : {p.name}",
                 "severity": "high"
@@ -1109,6 +1145,7 @@ def get_alerts(db: Session = Depends(get_db)):
         elif p.stock <= p.alert_threshold:
             alerts.append({
                 "type": "stock_bas",
+                "product_id": p.id,
                 "product": p.name,
                 "message": f"Stock bas : {p.name} ({p.stock} {p.unit})",
                 "severity": "medium"
@@ -1121,6 +1158,7 @@ def get_alerts(db: Session = Depends(get_db)):
                 if marge < 50 and not p.is_estimated:
                     alerts.append({
                         "type": "marge",
+                        "product_id": p.id,
                         "product": p.name,
                         "message": f"Marge insuffisante : {p.name} ({marge:.1f}%)",
                         "severity": "medium"
@@ -4353,6 +4391,7 @@ def get_dashboard(db: Session = Depends(get_db)):
     urgent_products = (
         db.query(Product)
         .filter(Product.stock <= Product.alert_threshold)
+        .filter((Product.archived == False) | (Product.archived == None))
         .order_by((Product.stock / (Product.alert_threshold + 0.001)).asc())
         .limit(5)
         .all()

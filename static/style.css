@@ -725,6 +725,42 @@ th.sort-desc::after { content: " ↓"; color: var(--accent); font-size: 11px; }
 }
 .alert-icon { font-size: 18px; flex-shrink: 0; }
 .alert-msg  { font-size: 13px; font-weight: 500; flex: 1; color: var(--text); }
+.alert-cb { width: 16px; height: 16px; cursor: pointer; flex-shrink: 0; accent-color: #EF4444; }
+.alert-archive-btn {
+  background: transparent; border: 1px solid var(--text-muted);
+  border-radius: 6px; padding: 4px 10px; font-size: 14px;
+  cursor: pointer; flex-shrink: 0; transition: all .15s;
+}
+.alert-archive-btn:hover { background: var(--text); color: #fff; border-color: var(--text); }
+.alert-toolbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px; margin: 12px 0;
+  background: var(--bg-card, #fff); border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius); box-shadow: var(--shadow-xs);
+  position: sticky; top: 0; z-index: 5;
+}
+.alert-select-all {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.alert-select-all input { width: 16px; height: 16px; cursor: pointer; accent-color: #EF4444; }
+.alert-bulk-archive-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Stock bulk archive toolbar */
+.stock-bulk-toolbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; margin: 0 0 10px;
+  background: #FEF3C7; border: 1px solid #F59E0B;
+  border-radius: var(--radius); font-size: 13px;
+}
+.stock-bulk-toolbar.hidden { display: none; }
+.stock-cb { width: 16px; height: 16px; cursor: pointer; accent-color: #EF4444; }
+tr.row-archived { opacity: 0.55; font-style: italic; }
+.archived-badge {
+  display: inline-block; background: #9CA3AF; color: #fff;
+  font-size: 10px; font-weight: 700; padding: 2px 6px;
+  border-radius: 4px; margin-left: 6px; vertical-align: middle;
+}
 
 /* ══════════════════════════════════════════════
    FORMS
