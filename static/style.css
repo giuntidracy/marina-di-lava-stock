@@ -1941,6 +1941,12 @@ html[data-theme="dark"] .pred-card-factor { background: rgba(201,169,97,0.18); c
 .dc-ecart-neg  { background: rgba(220,38,38,0.12); color: #991B1B; }
 .dc-ecart-warn { background: rgba(245,158,11,0.12); color: #9A3412; }
 
+.dc-add-product-zone {
+  margin-top: 14px; padding: 12px 14px;
+  background: var(--surface-alt); border-radius: 10px;
+  border: 1px dashed var(--border);
+}
+
 /* Démarque auto (calculée depuis snapshots) */
 .sh-auto-card {
   background: var(--surface);

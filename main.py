@@ -1231,6 +1231,46 @@ def validate_delivery_check(cid: int, body: DeliveryCheckValidateIn, db: Session
     return _delivery_check_dict(c, for_role="manager")
 
 
+class AddDcItemIn(BaseModel):
+    product_id: Optional[int] = None
+    product_name: Optional[str] = ""
+    qty_expected: float = 0
+
+
+@app.post("/api/delivery-checks/{cid}/items")
+def add_delivery_check_item(cid: int, body: AddDcItemIn, db: Session = Depends(get_db)):
+    """Ajoute un produit à un contrôle existant (livraison spontanée, produit oublié...)."""
+    c = db.query(DeliveryCheck).get(cid)
+    if not c:
+        raise HTTPException(404)
+    if c.status == "validated":
+        raise HTTPException(400, "Contrôle déjà validé, impossible de modifier.")
+    p = db.query(Product).get(body.product_id) if body.product_id else None
+    it = DeliveryCheckItem(
+        check_id=c.id,
+        product_id=body.product_id,
+        product_name=body.product_name or (p.name if p else ""),
+        qty_expected=float(body.qty_expected or 0),
+    )
+    db.add(it)
+    db.commit()
+    db.refresh(it)
+    return _delivery_check_dict(c, for_role="manager")
+
+
+@app.delete("/api/delivery-checks/{cid}/items/{iid}")
+def delete_delivery_check_item(cid: int, iid: int, db: Session = Depends(get_db)):
+    c = db.query(DeliveryCheck).get(cid)
+    if not c or c.status == "validated":
+        raise HTTPException(400, "Impossible de modifier.")
+    it = db.query(DeliveryCheckItem).filter(DeliveryCheckItem.id == iid, DeliveryCheckItem.check_id == cid).first()
+    if not it:
+        raise HTTPException(404)
+    db.delete(it)
+    db.commit()
+    return {"ok": True}
+
+
 @app.post("/api/delivery-checks/{cid}/reject")
 def reject_delivery_check(cid: int, db: Session = Depends(get_db)):
     """Direction refuse (erreur manifeste, à recompter) → reset pour nouveau comptage."""

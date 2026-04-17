@@ -4853,11 +4853,45 @@ async function openServerCountingForm(cid) {
       </div>
     </div>
     <div class="dc-count-list" id="dc-count-list"></div>
+    <div class="dc-add-product-zone">
+      <label style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">
+        + Un produit que tu trouves dans le carton mais qui n'est pas listé ?
+      </label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="dc-srv-add-product" style="flex:1;min-width:220px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)">
+          <option value="">— Choisir un produit —</option>
+          ${(allProducts || []).filter(p => !p.archived)
+            .sort((a,b) => a.name.localeCompare(b.name))
+            .map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.unit)})</option>`).join("")}
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="serverAddItemToDc()">+ Ajouter</button>
+      </div>
+    </div>
     <div class="dc-count-footer">
       <button class="btn btn-primary" onclick="submitServerCounts()">✅ Valider mon comptage</button>
     </div>
   </div>`;
   _renderServerCountingRows();
+}
+
+async function serverAddItemToDc() {
+  const sel = document.getElementById("dc-srv-add-product");
+  const pid = sel?.value ? parseInt(sel.value, 10) : null;
+  if (!pid) { alert("Choisis un produit"); return; }
+  try {
+    const updated = await api(`/api/delivery-checks/${__dcState.id}/items`, {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ product_id: pid, qty_expected: 0 })
+    });
+    // Rafraîchir depuis la version aveugle
+    const c = await api(`/api/delivery-checks/${__dcState.id}?role=service`);
+    __dcState.items = c.items.map(it => ({
+      id: it.id, product_name: it.product_name, unit: it.unit,
+      qty_physical: it.qty_physical || 0, notes: it.notes || "",
+    }));
+    _renderServerCountingRows();
+    sel.value = "";
+  } catch(e) { alert("Erreur : " + e.message); }
 }
 
 function _renderServerCountingRows() {
@@ -4932,10 +4966,26 @@ async function openManagerValidationForm(cid) {
           <th>BL (fournisseur)</th>
           <th>Écart</th>
           <th>Qté à valider</th>
+          <th></th>
         </tr></thead>
         <tbody id="dc-val-tbody"></tbody>
       </table>
     </div>
+    ${c.status !== "validated" ? `
+    <div class="dc-add-product-zone">
+      <label style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">
+        + Ajouter un produit à ce contrôle
+      </label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="dc-add-product" style="flex:1;min-width:220px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)">
+          <option value="">— Choisir un produit —</option>
+          ${(allProducts || []).filter(p => !p.archived)
+            .sort((a,b) => a.name.localeCompare(b.name))
+            .map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.unit)})</option>`).join("")}
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="addItemToDc(${c.id})">+ Ajouter</button>
+      </div>
+    </div>` : ""}
     <div class="dc-count-footer" style="gap:10px">
       ${c.status !== "validated" ? `<button class="btn btn-danger btn-sm" onclick="rejectDeliveryCheck()">↩️ Rejeter (faire recompter)</button>` : ""}
       ${c.status !== "validated" ? `<button class="btn btn-primary" onclick="validateDeliveryCheck()">✅ Valider et mettre à jour le stock</button>` : `<span style="color:#16a34a;font-weight:700">✅ Déjà validé</span>`}
@@ -4977,8 +5027,39 @@ function _renderManagerValidationRows() {
         <input type="number" class="dc-final-input" min="0" step="1" value="${final}"
                oninput="setDcFinal(${i}, this.value)"/>
       </td>
+      <td>
+        ${__dcState.status !== "validated" ? `<button class="btn btn-sm" style="background:transparent;color:#DC2626;border:1px solid #FECACA;font-size:11px" onclick="removeDcItem(${it.id})" title="Retirer">✕</button>` : ""}
+      </td>
     </tr>`;
   }).join("");
+  if (__dcState.items.length === 0) {
+    const tbody = document.getElementById("dc-val-tbody");
+    if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted);font-style:italic">Aucun produit dans ce contrôle — ajoutez-en ci-dessous</td></tr>`;
+  }
+}
+
+async function addItemToDc(cid) {
+  const sel = document.getElementById("dc-add-product");
+  const pid = sel?.value ? parseInt(sel.value, 10) : null;
+  if (!pid) { alert("Choisissez un produit"); return; }
+  try {
+    const updated = await api(`/api/delivery-checks/${cid}/items`, {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ product_id: pid, qty_expected: 0 })
+    });
+    __dcState.items = updated.items.map(it => ({ ...it }));
+    _renderManagerValidationRows();
+    sel.value = "";
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function removeDcItem(itemId) {
+  if (!confirm("Retirer ce produit du contrôle ?")) return;
+  try {
+    await api(`/api/delivery-checks/${__dcState.id}/items/${itemId}`, { method: "DELETE" });
+    __dcState.items = __dcState.items.filter(it => it.id !== itemId);
+    _renderManagerValidationRows();
+  } catch(e) { alert("Erreur : " + e.message); }
 }
 
 function setDcBl(i, v)    { __dcState.items[i].qty_bl = v === "" ? null : parseFloat(v); _renderManagerValidationRows(); }
