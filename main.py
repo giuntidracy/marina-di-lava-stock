@@ -36,7 +36,8 @@ from database import get_db, engine
 from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
     CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
-    SupplierOrder, SupplierOrderItem, Event, EventRequirement, ManualLoss, AppSetting, ServiceAlert
+    SupplierOrder, SupplierOrderItem, Event, EventRequirement, ManualLoss, AppSetting, ServiceAlert,
+    StockSnapshot
 )
 
 Base.metadata.create_all(bind=engine)
@@ -2994,6 +2995,199 @@ def admin_clear_imports(body: AdminActionIn, db: Session = Depends(get_db)):
     return {"ok": True, "deleted": count}
 
 
+# ── Snapshots stock (pour démarque auto hebdomadaire) ─────────────────────
+@app.post("/api/stock-snapshots")
+def create_stock_snapshot(label: str = "user", db: Session = Depends(get_db)):
+    """
+    Enregistre une photo du stock actuel de tous les produits non archivés.
+    Appelé manuellement ou par le scheduler hebdo.
+    """
+    products = db.query(Product).filter(
+        (Product.archived == False) | (Product.archived == None)
+    ).all()
+    now = datetime.utcnow()
+    for p in products:
+        db.add(StockSnapshot(
+            product_id=p.id,
+            taken_at=now,
+            stock=p.stock or 0,
+            label=label,
+        ))
+    db.commit()
+    return {"ok": True, "snapshots": len(products), "taken_at": now.isoformat() + "Z"}
+
+
+@app.get("/api/demarque/auto")
+def get_demarque_auto(db: Session = Depends(get_db)):
+    """
+    Calcule la démarque théorique vs réelle depuis le dernier snapshot
+    de type 'weekly_auto' (à défaut, le dernier snapshot tout label).
+
+    perte_théorique = stock_snapshot + livraisons − ventes − pertes_declarées − stock_actuel
+
+    Retourne la liste des produits avec un écart > 0 (perte potentielle non déclarée).
+    """
+    # Trouver le snapshot de référence : weekly_auto le plus récent, ou fallback
+    latest_dt_row = (
+        db.query(StockSnapshot.taken_at)
+        .filter(StockSnapshot.label == "weekly_auto")
+        .order_by(StockSnapshot.taken_at.desc())
+        .first()
+    )
+    if not latest_dt_row:
+        latest_dt_row = (
+            db.query(StockSnapshot.taken_at)
+            .order_by(StockSnapshot.taken_at.desc())
+            .first()
+        )
+    if not latest_dt_row:
+        return {
+            "has_data": False,
+            "message": "Aucun snapshot encore enregistré. Créez-en un pour démarrer le suivi.",
+        }
+
+    snapshot_dt = latest_dt_row[0]
+    # Toutes les lignes de ce snapshot (il y en a plusieurs à la même date)
+    snapshots = (
+        db.query(StockSnapshot)
+        .filter(StockSnapshot.taken_at == snapshot_dt)
+        .all()
+    )
+    stock_at_snapshot = {s.product_id: s.stock for s in snapshots}
+
+    # Ventes entre snapshot_dt et maintenant (via extract_sales sur import_cashpad)
+    sales_hist = (
+        db.query(StockHistory)
+        .filter(
+            StockHistory.event_type.in_(["import_cashpad", "cashpad_sync"]),
+            StockHistory.created_at >= snapshot_dt,
+        )
+        .all()
+    )
+    # On utilise le champ "deductions" (qty_effectivement_déduite du stock)
+    ventes_qty = {}   # product_id → total deduction
+    for h in sales_hist:
+        try:
+            data = json.loads(h.data_json or "{}")
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            for ded in data.get("deductions", []):
+                pid = ded.get("product_id")
+                qty = abs(float(ded.get("quantity", ded.get("deducted", 0)) or 0))
+                if pid:
+                    ventes_qty[pid] = ventes_qty.get(pid, 0) + qty
+
+    # Livraisons (imports BL) depuis le snapshot
+    livraisons_hist = (
+        db.query(StockHistory)
+        .filter(
+            StockHistory.event_type == "livraison",
+            StockHistory.created_at >= snapshot_dt,
+        )
+        .all()
+    )
+    livraisons_qty = {}
+    for h in livraisons_hist:
+        try:
+            data = json.loads(h.data_json or "{}")
+            items = data.get("items") or data.get("lines") or data.get("deductions") or []
+            for it in items:
+                pid = it.get("product_id")
+                qty = float(it.get("qty") or it.get("quantity") or it.get("added") or 0)
+                if pid and qty > 0:
+                    livraisons_qty[pid] = livraisons_qty.get(pid, 0) + qty
+        except Exception:
+            pass
+
+    # Mouvements manuels (+/-)
+    manuel_hist = (
+        db.query(StockHistory)
+        .filter(
+            StockHistory.event_type == "mouvement_manuel",
+            StockHistory.created_at >= snapshot_dt,
+        )
+        .all()
+    )
+    manuel_net = {}   # product_id → delta net (positif = ajout, négatif = retrait)
+    for h in manuel_hist:
+        try:
+            data = json.loads(h.data_json or "{}")
+            pid = data.get("product_id")
+            qty = float(data.get("quantity") or data.get("qty") or 0)
+            if pid:
+                manuel_net[pid] = manuel_net.get(pid, 0) + qty
+        except Exception:
+            pass
+
+    # Pertes déclarées (ManualLoss) depuis le snapshot
+    losses = (
+        db.query(ManualLoss)
+        .filter(ManualLoss.date >= snapshot_dt)
+        .all()
+    )
+    pertes_qty = {}
+    for l in losses:
+        pertes_qty[l.product_id] = pertes_qty.get(l.product_id, 0) + abs(float(l.quantity or 0))
+
+    # Calcul final par produit
+    products = db.query(Product).filter(
+        (Product.archived == False) | (Product.archived == None)
+    ).all()
+    items = []
+    total_lost_eur = 0.0
+    total_lost_qty = 0.0
+    for p in products:
+        if p.id not in stock_at_snapshot:
+            continue
+        s_start = stock_at_snapshot[p.id]
+        s_end   = p.stock or 0
+        v  = ventes_qty.get(p.id, 0)
+        l  = livraisons_qty.get(p.id, 0)
+        m  = manuel_net.get(p.id, 0)
+        pe = pertes_qty.get(p.id, 0)
+
+        theoretical_end = s_start + l + m - v - pe
+        ecart = theoretical_end - s_end   # > 0 → manque, produit "disparu"
+
+        if abs(ecart) < 0.05:
+            continue   # rien de notable
+
+        price = p.purchase_price or 0
+        loss_eur = round(ecart * price, 2) if ecart > 0 else 0
+        if ecart > 0:
+            total_lost_eur += loss_eur
+            total_lost_qty += ecart
+        items.append({
+            "product_id":    p.id,
+            "product_name":  p.name,
+            "category":      p.category,
+            "stock_start":   round(s_start, 3),
+            "stock_end":     round(s_end, 3),
+            "ventes":        round(v, 3),
+            "livraisons":    round(l, 3),
+            "manuel_net":    round(m, 3),
+            "pertes_declarees": round(pe, 3),
+            "theoretical_end":  round(theoretical_end, 3),
+            "ecart":         round(ecart, 3),
+            "loss_eur":      loss_eur,
+            "unit":          p.unit or "u",
+        })
+
+    # Tri : plus grosses pertes en €
+    items.sort(key=lambda x: -x["loss_eur"])
+
+    return {
+        "has_data":      True,
+        "snapshot_date": snapshot_dt.isoformat() + "Z",
+        "snapshot_age_days": (datetime.utcnow() - snapshot_dt).days,
+        "items":         items,
+        "total_lost_eur": round(total_lost_eur, 2),
+        "total_lost_qty": round(total_lost_qty, 2),
+        "n_products_with_loss": sum(1 for i in items if i["ecart"] > 0),
+    }
+
+
 class SeasonResetIn(BaseModel):
     pin: str
     confirmation: str   # doit valoir exactement "RESET"
@@ -4689,10 +4883,32 @@ try:
         finally:
             db.close()
 
+    def _weekly_snapshot_job():
+        """Prend une photo du stock tous les lundis 02:00 pour la démarque auto."""
+        db = _SessionLocal()
+        try:
+            products = db.query(Product).filter(
+                (Product.archived == False) | (Product.archived == None)
+            ).all()
+            now = datetime.utcnow()
+            for p in products:
+                db.add(StockSnapshot(
+                    product_id=p.id, taken_at=now,
+                    stock=p.stock or 0, label="weekly_auto",
+                ))
+            db.commit()
+            print(f"[Snapshot] 📸 {len(products)} produits figés le {now.strftime('%Y-%m-%d %H:%M')}")
+        except Exception as e:
+            print(f"[Snapshot] ❌ {e}")
+        finally:
+            db.close()
+
     _scheduler = BackgroundScheduler(timezone="Europe/Paris")
     _scheduler.add_job(_auto_sync_job, "interval", minutes=30, id="cashpad_sync", replace_existing=True)
+    _scheduler.add_job(_weekly_snapshot_job, "cron", day_of_week="mon", hour=2, minute=0,
+                       id="weekly_snapshot", replace_existing=True)
     _scheduler.start()
-    print("[Cashpad] 🔄 Scheduler démarré — sync toutes les 30 min")
+    print("[Cashpad] 🔄 Scheduler démarré — sync toutes les 30 min + snapshot hebdo lundi 02:00")
 
 except Exception as _sched_err:
     print(f"[Cashpad] ⚠️ Scheduler non démarré : {_sched_err}")

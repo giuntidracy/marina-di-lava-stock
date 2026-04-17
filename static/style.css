@@ -1870,6 +1870,47 @@ html[data-theme="dark"] .pred-card-factor { background: rgba(201,169,97,0.18); c
 ═══════════════════════════════════════════════════════════════ */
 .sh-wrap { max-width: 1040px; margin: 0 auto; padding: 20px 16px 60px; }
 
+/* Démarque auto (calculée depuis snapshots) */
+.sh-auto-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent, #C9A84C);
+  border-radius: 14px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+.sh-auto-header {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.sh-auto-title { font-weight: 800; font-size: 15px; color: var(--text); }
+.sh-auto-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.sh-auto-total { text-align: right; }
+.sh-auto-total-eur { font-size: 24px; font-weight: 800; color: #DC2626; letter-spacing: -.5px; }
+.sh-auto-total-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; }
+.sh-auto-stats {
+  display: flex; gap: 6px; font-size: 12px; color: var(--text-muted);
+  padding: 6px 0 10px; flex-wrap: wrap;
+}
+.sh-auto-empty {
+  display: flex; align-items: center; gap: 16px;
+}
+.sh-auto-icon { font-size: 40px; opacity: 0.7; }
+.sh-auto-empty-msg {
+  padding: 12px; text-align: center; color: #16A34A; font-weight: 600;
+  background: rgba(22,163,74,0.08); border-radius: 10px;
+}
+.sh-auto-table { width: 100%; font-size: 12px; border-collapse: collapse; margin-top: 8px; }
+.sh-auto-table th { text-align: left; padding: 8px 10px; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; color: var(--text-muted); letter-spacing: .5px;
+  background: var(--surface-alt); border-bottom: 1.5px solid var(--border); }
+.sh-auto-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.sh-auto-ecart-loss { color: #DC2626; font-weight: 700; }
+.sh-auto-loss-eur { font-weight: 800; color: #DC2626; }
+html[data-theme="dark"] .sh-auto-table th { background: var(--surface-alt); }
+html[data-theme="dark"] .sh-auto-ecart-loss,
+html[data-theme="dark"] .sh-auto-loss-eur { color: #F87171; }
+
 .sh-header {
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 16px; margin-bottom: 24px; flex-wrap: wrap;

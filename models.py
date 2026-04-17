@@ -190,6 +190,18 @@ class AppSetting(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class StockSnapshot(Base):
+    """Photo du stock d'un produit à un instant donné (pour démarque auto hebdo)."""
+    __tablename__ = "stock_snapshots"
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    taken_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    stock = Column(Float, nullable=False, default=0)
+    label = Column(String, default="")   # ex: "weekly_auto", "pre_inventory", "user"
+
+    product = relationship("Product")
+
+
 class ManualLoss(Base):
     """Perte déclarée manuellement : casse, offert maison, vol, etc."""
     __tablename__ = "manual_losses"

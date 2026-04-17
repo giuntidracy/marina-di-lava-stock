@@ -4367,9 +4367,13 @@ async function renderShrinkage(app) {
         <h2 class="sh-title">📉 Démarque Inconnue</h2>
         <p class="sh-subtitle">Pertes déclarées · Écarts d'inventaire · Vraie démarque</p>
       </div>
-      <button class="sh-loss-btn" onclick="openLossForm()">⚠️ Saisir une perte</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-outline" onclick="createSnapshotNow()" title="Enregistre une photo du stock actuel pour démarrer le suivi de démarque automatique">📸 Snapshot</button>
+        <button class="sh-loss-btn" onclick="openLossForm()">⚠️ Saisir une perte</button>
+      </div>
     </div>
 
+    <div id="sh-auto-area"></div>
     <div id="sh-form-area"></div>
     <div id="sh-kpi-area"><div class="sh-loading">Chargement…</div></div>
     <div id="sh-table-area"></div>
@@ -4378,6 +4382,80 @@ async function renderShrinkage(app) {
   </div>`;
 
   loadShrinkage();
+  loadDemarqueAuto();
+}
+
+async function createSnapshotNow() {
+  if (!confirm("📸 Enregistrer un snapshot du stock actuel ?\n\nCe sera la référence pour calculer la démarque automatique jusqu'au prochain snapshot (automatique chaque lundi 02:00).")) return;
+  try {
+    await api("/api/stock-snapshots?label=user", { method: "POST" });
+    alert("✓ Snapshot enregistré. La démarque auto va se calculer à partir d'ici.");
+    loadDemarqueAuto();
+  } catch (e) { alert("Erreur : " + e.message); }
+}
+
+async function loadDemarqueAuto() {
+  const el = document.getElementById("sh-auto-area");
+  if (!el) return;
+  try {
+    const data = await api("/api/demarque/auto");
+    if (!data.has_data) {
+      el.innerHTML = `<div class="sh-auto-card sh-auto-empty">
+        <div class="sh-auto-icon">📸</div>
+        <div>
+          <div class="sh-auto-title">Démarque automatique — pas encore active</div>
+          <div class="sh-auto-sub">${esc(data.message)}</div>
+          <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="createSnapshotNow()">📸 Enregistrer un snapshot maintenant</button>
+        </div>
+      </div>`;
+      return;
+    }
+    const items = data.items || [];
+    const loss = items.filter(i => i.ecart > 0);
+    const excess = items.filter(i => i.ecart < 0);
+    const snapDate = new Date(data.snapshot_date).toLocaleDateString("fr-FR", {day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
+    let html = `<div class="sh-auto-card">
+      <div class="sh-auto-header">
+        <div>
+          <div class="sh-auto-title">🤖 Démarque automatique depuis le dernier snapshot</div>
+          <div class="sh-auto-sub">Snapshot du ${esc(snapDate)} · il y a ${data.snapshot_age_days} jour(s)</div>
+        </div>
+        <div class="sh-auto-total">
+          <div class="sh-auto-total-eur">€${data.total_lost_eur.toFixed(2)}</div>
+          <div class="sh-auto-total-label">perte théorique non déclarée</div>
+        </div>
+      </div>`;
+    if (loss.length === 0) {
+      html += `<div class="sh-auto-empty-msg">✅ Aucun écart significatif détecté — tout est cohérent.</div>`;
+    } else {
+      html += `<div class="sh-auto-stats">
+        <span>${loss.length} produit${loss.length>1?'s':''} avec manque</span>
+        ${excess.length > 0 ? `<span>·</span><span>${excess.length} avec surplus inexpliqué</span>` : ''}
+      </div>`;
+      html += `<table class="sh-auto-table"><thead><tr>
+        <th>Produit</th><th>Stock début</th><th>+ Livraisons</th><th>− Ventes</th><th>− Pertes déclar.</th><th>Stock théorique</th><th>Stock réel</th><th>Écart</th><th>Perte €</th>
+      </tr></thead><tbody>`;
+      loss.slice(0, 20).forEach(it => {
+        html += `<tr>
+          <td><strong>${esc(it.product_name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${esc(it.category)}</span></td>
+          <td>${it.stock_start}</td>
+          <td>${it.livraisons > 0 ? '+' + it.livraisons : '—'}</td>
+          <td>${it.ventes > 0 ? '−' + it.ventes : '—'}</td>
+          <td>${it.pertes_declarees > 0 ? '−' + it.pertes_declarees : '—'}</td>
+          <td>${it.theoretical_end}</td>
+          <td>${it.stock_end}</td>
+          <td class="sh-auto-ecart-loss">⚠️ −${it.ecart} ${esc(it.unit)}</td>
+          <td class="sh-auto-loss-eur">€${it.loss_eur.toFixed(2)}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+      if (loss.length > 20) html += `<div style="font-size:12px;color:var(--text-muted);margin-top:8px">… et ${loss.length-20} autres</div>`;
+    }
+    html += `</div>`;
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<div class="sh-auto-card"><div class="sh-auto-empty-msg">Erreur : ${esc(e.message)}</div></div>`;
+  }
 }
 
 async function loadShrinkage() {
