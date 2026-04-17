@@ -7007,90 +7007,114 @@ function renderWeekdayCaCard(weekdays) {
   </div>`;
 }
 
-function renderSeasonGoalCard(goal) {
+function renderMonthlyGoalCard(goal) {
   if (!goal) return "";
-  if (!goal.configured) {
-    return `<div class="db-card db-card-clickable" onclick="openSeasonGoalModal()" title="Définir un objectif">
-      <div class="db-card-title">🎯 Objectif saison</div>
-      <div class="db-sync-row">
-        <span class="db-sync-icon">🎯</span>
-        <div>
-          <div class="db-sync-label">Aucun objectif défini</div>
-          <div class="db-sync-date">Cliquez pour en créer un</div>
-        </div>
-      </div>
+  const fmt = v => (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", maximumFractionDigits:0 });
+  const monthName = goal.month_label || "mois";
+  const yearStr = goal.year || new Date().getFullYear();
+
+  // Bloc comparaison N-1 (toujours affiché)
+  let n1Block = "";
+  if (goal.ca_n1_month && goal.ca_n1_month > 0) {
+    const delta = goal.delta_vs_n1 || 0;
+    const deltaPct = goal.delta_pct_n1;
+    const deltaColor = delta >= 0 ? "#16a34a" : "#dc2626";
+    const arrow = delta > 0 ? "▲" : delta < 0 ? "▼" : "=";
+    n1Block = `<div class="db-goal-n1">
+      <span class="db-goal-n1-label">vs ${esc(monthName)} ${yearStr - 1}</span>
+      <span class="db-goal-n1-val">${fmt(goal.ca_n1_month)}</span>
+      ${deltaPct !== null ? `<span style="color:${deltaColor};font-weight:700">${arrow} ${Math.abs(deltaPct).toFixed(1)}%</span>` : ""}
+      <span style="color:${deltaColor};font-size:11px">(${delta >= 0 ? '+' : ''}${fmt(delta)} prorata)</span>
+    </div>`;
+  } else {
+    n1Block = `<div class="db-goal-n1" style="opacity:0.6">
+      <span class="db-goal-n1-label">N-1 ${esc(monthName)} ${yearStr - 1}</span>
+      <span style="color:var(--text-muted);font-size:11px">Aucune donnée</span>
     </div>`;
   }
+
+  if (!goal.configured) {
+    return `<div class="db-card db-card-clickable" onclick="openMonthlyGoalsModal()" title="Définir les objectifs mensuels">
+      <div class="db-card-title">🎯 Objectif ${esc(monthName)} ${yearStr}
+        <button class="db-goal-edit" onclick="event.stopPropagation();openMonthlyGoalsModal()" title="Définir">✏️</button>
+      </div>
+      <div class="db-goal-amounts">
+        <span class="db-goal-done">${fmt(goal.ca_month)}</span>
+      </div>
+      <div class="db-goal-target" style="color:var(--text-muted)">Aucun objectif défini pour ce mois</div>
+      ${n1Block}
+    </div>`;
+  }
+
   const pct = Math.min(goal.pct || 0, 100);
   const pctColor = pct >= 100 ? "#16a34a" : pct >= 75 ? "#84cc16" : pct >= 50 ? "#f59e0b" : "#dc2626";
   let subLine;
-  if (goal.before_start) {
-    subLine = `Saison non commencée`;
-  } else if (goal.after_end) {
-    subLine = pct >= 100 ? `🏆 Objectif atteint !` : `Saison terminée (${pct.toFixed(1)}%)`;
-  } else {
+  if (goal.days_remaining > 0) {
     const rythme = goal.rythme_daily || 0;
-    subLine = goal.days_remaining > 0
-      ? `Reste ${goal.days_remaining}j · il faut €${rythme.toFixed(0)}/jour`
-      : `Dernier jour !`;
+    subLine = `Reste ${goal.days_remaining}j · ${rythme > 0 ? `il faut ${fmt(rythme)}/jour` : 'objectif atteint !'}`;
+  } else {
+    subLine = pct >= 100 ? `🏆 Objectif atteint !` : `Mois terminé (${pct.toFixed(1)}%)`;
   }
-  const fmt = v => (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", maximumFractionDigits:0 });
   return `<div class="db-card">
-    <div class="db-card-title">🎯 Objectif saison
-      <button class="db-goal-edit" onclick="event.stopPropagation();openSeasonGoalModal()" title="Modifier l'objectif">✏️</button>
+    <div class="db-card-title">🎯 Objectif ${esc(monthName)} ${yearStr}
+      <button class="db-goal-edit" onclick="event.stopPropagation();openMonthlyGoalsModal()" title="Modifier">✏️</button>
     </div>
     <div class="db-goal-amounts">
-      <span class="db-goal-done">${fmt(goal.ca_so_far)}</span>
+      <span class="db-goal-done">${fmt(goal.ca_month)}</span>
       <span class="db-goal-pct" style="color:${pctColor}">${pct.toFixed(1)}%</span>
     </div>
-    <div class="db-goal-target">/ ${fmt(goal.amount)}</div>
+    <div class="db-goal-target">/ ${fmt(goal.goal_amount)}</div>
     <div class="db-goal-bar-wrap">
       <div class="db-goal-bar" style="width:${pct}%;background:${pctColor}"></div>
     </div>
     <div class="db-goal-sub">${subLine}</div>
+    ${n1Block}
   </div>`;
 }
 
-async function openSeasonGoalModal() {
-  let current = { amount: 0, start: "", end: "" };
-  try { current = await api("/api/season-goal"); } catch(_) {}
+async function openMonthlyGoalsModal() {
+  let current = { goals: {} };
+  try { current = await api("/api/monthly-goals"); } catch(_) {}
   const thisYear = new Date().getFullYear();
+  const monthsFr = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
+  // On affiche 12 mois de l'année courante
+  const rows = monthsFr.map((name, i) => {
+    const key = `${thisYear}-${String(i + 1).padStart(2, "0")}`;
+    const value = current.goals[key] || "";
+    const isSeason = (i + 1) >= 5 && (i + 1) <= 9;   // mai → septembre
+    return `<div class="mg-row ${isSeason ? 'mg-row-season' : ''}">
+      <label style="flex:1;font-size:13px">${name} ${thisYear}</label>
+      <input type="number" step="100" min="0" data-key="${key}" value="${value}" placeholder="0"
+             style="width:140px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);text-align:right"/>
+      <span style="font-size:12px;color:var(--text-muted)">€</span>
+    </div>`;
+  }).join("");
   openModal(`
-    <h3 style="margin-bottom:16px">🎯 Objectif CA saison</h3>
-    <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
-      Définissez un objectif de chiffre d'affaires à atteindre sur la période de la saison.
-      La progression se base sur les imports Cashpad.
+    <h3 style="margin-bottom:8px">🎯 Objectifs CA mensuels — ${thisYear}</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">
+      Définissez un objectif pour chaque mois. Laissez à 0 pour ne pas suivre un mois.
+      Les mois <strong>haute saison</strong> (mai → septembre) sont mis en avant.
     </p>
-    <div class="form-group">
-      <label>Objectif CA (€)</label>
-      <input type="number" id="sg-amount" step="100" min="0" value="${current.amount || 0}" placeholder="150000"/>
-    </div>
-    <div class="form-group">
-      <label>Date de début</label>
-      <input type="date" id="sg-start" value="${current.start || thisYear + '-05-01'}"/>
-    </div>
-    <div class="form-group">
-      <label>Date de fin</label>
-      <input type="date" id="sg-end" value="${current.end || thisYear + '-09-30'}"/>
-    </div>
+    <div class="mg-list" style="max-height:50vh;overflow:auto">${rows}</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
-      <button class="btn btn-primary" onclick="saveSeasonGoal()">💾 Enregistrer</button>
-    </div>`);
+      <button class="btn btn-primary" onclick="saveMonthlyGoals()">💾 Enregistrer</button>
+    </div>
+  `);
 }
 
-async function saveSeasonGoal() {
-  const amount = parseFloat(document.getElementById("sg-amount").value) || 0;
-  const start = document.getElementById("sg-start").value;
-  const end = document.getElementById("sg-end").value;
-  if (amount <= 0) { alert("Objectif invalide."); return; }
-  if (!start || !end) { alert("Dates requises."); return; }
-  if (end < start) { alert("La date de fin doit être postérieure à la date de début."); return; }
+async function saveMonthlyGoals() {
+  const inputs = document.querySelectorAll(".mg-row input[data-key]");
+  const goals = {};
+  inputs.forEach(i => {
+    const v = parseFloat(i.value) || 0;
+    if (v > 0) goals[i.dataset.key] = v;
+  });
   try {
-    await api("/api/season-goal", {
+    await api("/api/monthly-goals", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ amount, start, end }),
+      body: JSON.stringify({ goals }),
     });
     closeModal();
     renderDashboard(document.getElementById("app"));
@@ -7314,7 +7338,7 @@ async function renderDashboard(el) {
         ${renderDeliveryChecksCard(data.delivery_checks)}
         ${renderLastSyncCard(data.last_sync)}
         ${renderPendingOrdersCard(data.pending_orders)}
-        ${renderSeasonGoalCard(data.season_goal)}
+        ${renderMonthlyGoalCard(data.monthly_goal)}
 
         <div class="db-card db-card-clickable" onclick="switchView('stats')" title="Voir les statistiques">
           <div class="db-card-title">📦 Top 3 produits <span class="db-card-sub">· cette semaine</span></div>

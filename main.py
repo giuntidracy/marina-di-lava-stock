@@ -6733,59 +6733,85 @@ def get_dashboard(db: Session = Depends(get_db)):
         for i in range(7)
     ]
 
-    # ── Widget 4 : objectif CA saison ─────────────────────────────────────
+    # ── Widget : objectif mois en cours + comparaison N-1 ─────────────────
+    import calendar as _cal
+    monthly_goal = {"configured": False}
     try:
-        goal_amount = float(_get_setting(db, "season_goal_amount", "0") or 0)
+        monthly_json = _get_setting(db, "monthly_goals_json", "")
+        monthly_goals = json.loads(monthly_json) if monthly_json else {}
+        if not isinstance(monthly_goals, dict):
+            monthly_goals = {}
     except Exception:
-        goal_amount = 0.0
-    goal_start = _get_setting(db, "season_goal_start", "")   # "YYYY-MM-DD"
-    goal_end   = _get_setting(db, "season_goal_end",   "")
+        monthly_goals = {}
 
-    season_goal = {"configured": False, "amount": goal_amount, "start": goal_start, "end": goal_end}
-    if goal_amount > 0 and goal_start and goal_end:
-        try:
-            gs = datetime.strptime(goal_start, "%Y-%m-%d").date()
-            ge = datetime.strptime(goal_end,   "%Y-%m-%d").date()
-            if ge >= gs:
-                gs_dt = datetime.combine(gs, datetime.min.time())
-                ge_dt = datetime.combine(ge + timedelta(days=1), datetime.min.time())
-                season_hist = (
-                    db.query(StockHistory)
-                    .filter(
-                        StockHistory.event_type == "import_cashpad",
-                        StockHistory.created_at >= gs_dt,
-                        StockHistory.created_at <  ge_dt,
-                    )
-                    .all()
-                )
-                ca_so_far = 0.0
-                for h in season_hist:
-                    for item in extract_sales(h):
-                        qty   = float(item.get("qty_sold", 0) or 0)
-                        price = float(item.get("sale_price_ttc", 0) or 0)
-                        ca_so_far += qty * price
-                total_days = (ge - gs).days + 1
-                days_elapsed = max(0, min((today - gs).days + 1, total_days)) if today >= gs else 0
-                days_remaining = max(0, (ge - today).days + 1) if today <= ge else 0
-                pct = round((ca_so_far / goal_amount) * 100, 1) if goal_amount > 0 else 0
-                # Rythme nécessaire = (objectif - déjà fait) / jours restants
-                rythme = round((goal_amount - ca_so_far) / days_remaining, 2) if days_remaining > 0 else 0
-                season_goal = {
-                    "configured":       True,
-                    "amount":           round(goal_amount, 2),
-                    "start":            goal_start,
-                    "end":              goal_end,
-                    "ca_so_far":        round(ca_so_far, 2),
-                    "pct":              pct,
-                    "days_elapsed":     days_elapsed,
-                    "days_remaining":   days_remaining,
-                    "total_days":       total_days,
-                    "rythme_daily":     rythme,
-                    "before_start":     today < gs,
-                    "after_end":        today > ge,
-                }
-        except Exception:
-            pass
+    try:
+        cur_year, cur_month = today.year, today.month
+        cur_key = f"{cur_year:04d}-{cur_month:02d}"
+        month_start = datetime(cur_year, cur_month, 1)
+        days_in_month = _cal.monthrange(cur_year, cur_month)[1]
+        next_month = (month_start + timedelta(days=days_in_month)).replace(day=1)
+
+        # CA mois en cours
+        ca_month = 0.0
+        hist_m = db.query(StockHistory).filter(
+            StockHistory.event_type.in_(["import_cashpad", "cashpad_sync"]),
+            StockHistory.created_at >= month_start,
+            StockHistory.created_at <  next_month,
+        ).all()
+        for h in hist_m:
+            for item in extract_sales(h):
+                ca_month += float(item.get("qty_sold", 0) or 0) * float(item.get("sale_price_ttc", 0) or 0)
+
+        # CA même mois N-1 (année précédente)
+        prev_month_start = datetime(cur_year - 1, cur_month, 1)
+        prev_days_in_month = _cal.monthrange(cur_year - 1, cur_month)[1]
+        prev_next = (prev_month_start + timedelta(days=prev_days_in_month)).replace(day=1)
+        ca_n1_month = 0.0
+        hist_n1 = db.query(StockHistory).filter(
+            StockHistory.event_type.in_(["import_cashpad", "cashpad_sync"]),
+            StockHistory.created_at >= prev_month_start,
+            StockHistory.created_at <  prev_next,
+        ).all()
+        for h in hist_n1:
+            for item in extract_sales(h):
+                ca_n1_month += float(item.get("qty_sold", 0) or 0) * float(item.get("sale_price_ttc", 0) or 0)
+
+        goal_amount_m = float(monthly_goals.get(cur_key, 0) or 0)
+        days_elapsed = (today - month_start.date()).days + 1
+        days_remaining = days_in_month - days_elapsed + 1
+        pct = round((ca_month / goal_amount_m) * 100, 1) if goal_amount_m > 0 else None
+
+        # Rythme nécessaire pour atteindre l'objectif (si défini)
+        rythme = None
+        if goal_amount_m > 0 and days_remaining > 0:
+            rythme = round((goal_amount_m - ca_month) / days_remaining, 2)
+
+        # Comparaison mois prorata (pour éviter mois incomplet vs mois complet N-1)
+        n1_prorata = ca_n1_month * (days_elapsed / prev_days_in_month) if prev_days_in_month > 0 else 0
+        delta_vs_n1 = ca_month - n1_prorata
+        delta_pct_n1 = round((delta_vs_n1 / n1_prorata) * 100, 1) if n1_prorata > 0 else None
+
+        months_fr = ["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"]
+        monthly_goal = {
+            "configured":       goal_amount_m > 0,
+            "month_key":        cur_key,
+            "month_label":      months_fr[cur_month - 1],
+            "year":             cur_year,
+            "goal_amount":      round(goal_amount_m, 2),
+            "ca_month":         round(ca_month, 2),
+            "ca_n1_month":      round(ca_n1_month, 2),
+            "ca_n1_prorata":    round(n1_prorata, 2),
+            "delta_vs_n1":      round(delta_vs_n1, 2),
+            "delta_pct_n1":     delta_pct_n1,
+            "pct":              pct,
+            "days_elapsed":     days_elapsed,
+            "days_remaining":   max(0, days_remaining),
+            "total_days":       days_in_month,
+            "rythme_daily":     rythme,
+            "all_goals":        monthly_goals,   # pour l'édition
+        }
+    except Exception as e:
+        print(f"[monthly goal] {e}")
 
     # ── Widget : contrôles de livraison en attente ───────────────────────
     dc_pending_count = (
@@ -6833,35 +6859,41 @@ def get_dashboard(db: Session = Depends(get_db)):
         "last_sync":       last_sync_info,
         "pending_orders":  pending_orders,
         "ca_weekday":      ca_weekday,
-        "season_goal":     season_goal,
+        "monthly_goal":    monthly_goal,
         "delivery_checks": delivery_checks_info,
     }
 
 
-# ── Endpoint pour configurer l'objectif de saison ─────────────────────────
-class SeasonGoalIn(BaseModel):
-    amount: float
-    start: str   # "YYYY-MM-DD"
-    end: str
+# ── Endpoint pour configurer les objectifs mensuels ───────────────────────
+class MonthlyGoalsIn(BaseModel):
+    goals: dict    # {"2026-05": 18000, "2026-06": 22000, ...}
 
 
-@app.get("/api/season-goal")
-def get_season_goal(db: Session = Depends(get_db)):
+@app.get("/api/monthly-goals")
+def get_monthly_goals(db: Session = Depends(get_db)):
+    raw = _get_setting(db, "monthly_goals_json", "")
     try:
-        amount = float(_get_setting(db, "season_goal_amount", "0") or 0)
+        goals = json.loads(raw) if raw else {}
+        if not isinstance(goals, dict):
+            goals = {}
     except Exception:
-        amount = 0
-    return {
-        "amount": amount,
-        "start":  _get_setting(db, "season_goal_start", ""),
-        "end":    _get_setting(db, "season_goal_end", ""),
-    }
+        goals = {}
+    return {"goals": goals}
 
 
-@app.post("/api/season-goal")
-def set_season_goal(body: SeasonGoalIn, db: Session = Depends(get_db)):
-    _set_setting(db, "season_goal_amount", str(float(body.amount)))
-    _set_setting(db, "season_goal_start", body.start)
-    _set_setting(db, "season_goal_end", body.end)
+@app.post("/api/monthly-goals")
+def set_monthly_goals(body: MonthlyGoalsIn, db: Session = Depends(get_db)):
+    # Nettoyer : clés au format YYYY-MM, valeurs numériques positives
+    clean = {}
+    for k, v in (body.goals or {}).items():
+        if not isinstance(k, str) or len(k) != 7 or k[4] != "-":
+            continue
+        try:
+            amount = float(v)
+            if amount > 0:
+                clean[k] = amount
+        except Exception:
+            continue
+    _set_setting(db, "monthly_goals_json", json.dumps(clean))
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "goals": clean}

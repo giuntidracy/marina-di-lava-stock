@@ -2621,6 +2621,31 @@ html[data-theme="dark"] .sh-auto-loss-eur { color: #F87171; }
   transition: opacity .15s;
 }
 .db-goal-edit:hover { opacity: 1; }
+
+/* Comparaison N-1 dans le widget objectif */
+.db-goal-n1 {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; margin-top: 10px;
+  background: var(--surface-alt); border-radius: 8px;
+  font-size: 12px;
+}
+.db-goal-n1-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--text-muted);
+}
+.db-goal-n1-val { font-weight: 700; color: var(--text); }
+
+/* Modal objectifs mensuels */
+.mg-list { display: flex; flex-direction: column; gap: 6px; }
+.mg-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 8px;
+  border: 1px solid transparent;
+}
+.mg-row-season {
+  background: rgba(201,169,97,0.06);
+  border-color: rgba(201,169,97,0.25);
+}
 .db-card-full {
   grid-column: 1 / -1;
 }
