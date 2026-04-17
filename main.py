@@ -4412,11 +4412,49 @@ def get_dashboard(db: Session = Depends(get_db)):
         key=lambda x: -x["qty_sold"],
     )[:3]
 
+    # ── CA N-1 (même jour de semaine, même semaine de l'année, année -1) ──
+    yesterday = today - timedelta(days=1)
+    iso_year, iso_week, iso_day = yesterday.isocalendar()
+    # Trouver le même jour (iso_week, iso_day) de l'année précédente
+    from datetime import date as _date
+    jan4_prev = _date(iso_year - 1, 1, 4)  # le 4 janvier est toujours en semaine ISO 1
+    start_w1 = jan4_prev - timedelta(days=jan4_prev.isocalendar()[2] - 1)  # lundi S1 de l'an passé
+    target_n1 = start_w1 + timedelta(weeks=iso_week - 1, days=iso_day - 1)
+
+    n1_start = datetime.combine(target_n1, datetime.min.time())
+    n1_end   = datetime.combine(target_n1 + timedelta(days=1), datetime.min.time())
+
+    ca_n1 = 0.0
+    n1_history = (
+        db.query(StockHistory)
+        .filter(
+            StockHistory.event_type == "import_cashpad",
+            StockHistory.created_at >= n1_start,
+            StockHistory.created_at < n1_end,
+        ).all()
+    )
+    for h in n1_history:
+        try:
+            data = json.loads(h.data_json or "[]")
+            if not isinstance(data, list):
+                data = [data]
+            for item in data:
+                qty   = float(item.get("qty_sold", 0) or 0)
+                price = float(item.get("sale_price_ttc", 0) or 0)
+                ca_n1 += qty * price
+        except Exception:
+            pass
+
+    day_names = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"]
+
     return {
         "weather":         weather_summary,
         "events_upcoming": events_upcoming,
         "urgent_alerts":   urgent_alerts,
         "ca_yesterday":    round(ca_yesterday, 2),
         "ca_week":         round(ca_week, 2),
+        "ca_n1":           round(ca_n1, 2),
+        "ca_n1_date":      target_n1.strftime("%d/%m/%Y"),
+        "ca_n1_day":       day_names[target_n1.weekday()],
         "top_products":    top_products,
     }

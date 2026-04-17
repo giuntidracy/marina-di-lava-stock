@@ -5240,6 +5240,22 @@ async function renderDashboard(el) {
               <div class="db-card-value db-card-value-sm">${fmtCA(data.ca_week)}</div>
             </div>
           </div>
+          ${(() => {
+            const n1 = data.ca_n1 || 0;
+            const hier = data.ca_yesterday || 0;
+            const diff = hier - n1;
+            const pct = n1 > 0 ? Math.round((diff / n1) * 100) : null;
+            const arrow = diff > 0 ? "▲" : diff < 0 ? "▼" : "=";
+            const color = diff > 0 ? "#27ae60" : diff < 0 ? "#e74c3c" : "var(--text-muted)";
+            return `<div class="db-ca-n1">
+              <div class="db-ca-n1-label">N-1 — ${esc(data.ca_n1_day || "")} ${esc(data.ca_n1_date || "")}</div>
+              <div class="db-ca-n1-row">
+                <span class="db-ca-n1-val">${fmtCA(n1)}</span>
+                ${pct !== null ? `<span class="db-ca-n1-diff" style="color:${color}">${arrow} ${Math.abs(pct)}%</span>` : ""}
+                ${diff !== 0 ? `<span class="db-ca-n1-euro" style="color:${color}">(${diff > 0 ? "+" : ""}${fmtCA(diff)})</span>` : ""}
+              </div>
+            </div>`;
+          })()}
         </div>
 
         <div class="db-card">

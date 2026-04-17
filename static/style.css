@@ -2033,6 +2033,21 @@ details[open] .history-details summary::before { content: '▼'; }
   flex-shrink: 0;
 }
 
+/* N-1 comparison */
+.db-ca-n1 {
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
+}
+.db-ca-n1-label {
+  font-size: 11px; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: .5px; margin-bottom: 4px;
+}
+.db-ca-n1-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.db-ca-n1-val { font-size: 16px; font-weight: 700; color: var(--text); }
+.db-ca-n1-diff { font-size: 14px; font-weight: 800; }
+.db-ca-n1-euro { font-size: 12px; }
+
 /* Météo */
 .db-weather-mini {
   display: flex;
