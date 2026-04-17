@@ -2627,6 +2627,7 @@ async function renderStats(el) {
       </div>
     </div>
     <div id="stats-histo" class="hidden"></div>
+    <div id="stats-price-history" style="margin-bottom:24px"></div>
     <div id="stats-loading" style="color:var(--text-muted);padding:20px 0">Chargement…</div>
     <div id="stats-content" class="hidden" style="margin-top:4px">
       <div class="stock-summary" style="margin-bottom:24px" id="stats-kpi"></div>
@@ -2650,6 +2651,62 @@ async function renderStats(el) {
       </div>
     </div>`;
   loadStats(30);
+  loadPriceHistory();
+}
+
+async function loadPriceHistory() {
+  const el = document.getElementById("stats-price-history");
+  if (!el) return;
+  try {
+    const rows = await api("/api/price-history?limit=20");
+    if (!rows || rows.length === 0) {
+      el.innerHTML = `<div class="card" style="padding:16px">
+        <div style="font-weight:700;font-size:14px;margin-bottom:4px">💰 Historique des prix d'achat</div>
+        <div style="font-size:13px;color:var(--text-muted)">Aucune variation de prix enregistrée pour l'instant.
+          Les changements seront tracés automatiquement à chaque validation de BL.</div>
+      </div>`;
+      return;
+    }
+    const lines = rows.map(r => {
+      const dir = r.delta_pct != null ? (r.delta_pct > 0 ? "▲" : r.delta_pct < 0 ? "▼" : "=") : "";
+      const col = r.delta_pct != null ? (r.delta_pct > 0 ? "#DC2626" : r.delta_pct < 0 ? "#16A34A" : "var(--text-muted)") : "var(--text-muted)";
+      const pct = r.delta_pct != null ? `<span style="color:${col};font-weight:700">${dir} ${Math.abs(r.delta_pct).toFixed(1)}%</span>` : "<span style='color:var(--text-muted)'>nouveau</span>";
+      const src = r.source === "bl_validation" ? "BL validé"
+                : r.source === "delivery_import" ? "Import livraison"
+                : r.source === "manual_edit" ? "Édition manuelle"
+                : (r.source || "");
+      return `<tr>
+        <td><strong>${esc(r.product_name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${esc(r.category)}</span></td>
+        <td>${r.old_price != null ? '€'+r.old_price.toFixed(3) : '—'}</td>
+        <td><strong>€${r.new_price.toFixed(3)}</strong></td>
+        <td>${pct}</td>
+        <td><span style="font-size:11px">${esc(src)}${r.supplier_name ? ' · '+esc(r.supplier_name) : ''}${r.reference ? ' · '+esc(r.reference) : ''}</span></td>
+        <td style="font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(r.changed_at)}</td>
+      </tr>`;
+    }).join("");
+    el.innerHTML = `<div class="card" style="padding:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:10px">
+        <div style="font-weight:700;font-size:14px">💰 Historique des variations de prix d'achat <span style="font-weight:500;color:var(--text-muted);font-size:12px">· ${rows.length} dernières</span></div>
+      </div>
+      <div class="table-wrap">
+        <table style="width:100%;font-size:13px">
+          <thead>
+            <tr>
+              <th style="text-align:left">Produit</th>
+              <th style="text-align:left">Ancien</th>
+              <th style="text-align:left">Nouveau</th>
+              <th style="text-align:left">Δ</th>
+              <th style="text-align:left">Origine</th>
+              <th style="text-align:left">Date</th>
+            </tr>
+          </thead>
+          <tbody>${lines}</tbody>
+        </table>
+      </div>
+    </div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="card" style="padding:16px;color:var(--text-muted)">Erreur : ${esc(e.message)}</div>`;
+  }
 }
 
 function switchStatsView(view) {

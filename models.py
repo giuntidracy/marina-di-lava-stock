@@ -235,6 +235,22 @@ class DeliveryCheckItem(Base):
     product = relationship("Product")
 
 
+class PriceHistory(Base):
+    """Historique des variations de prix d'achat d'un produit."""
+    __tablename__ = "price_history"
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    old_price = Column(Float, nullable=True)
+    new_price = Column(Float, nullable=False)
+    changed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    source = Column(String, default="")   # "bl_validation" / "manual_edit" / "import"
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
+    reference = Column(String, default="")   # n° BL, commande…
+
+    product = relationship("Product")
+    supplier = relationship("Supplier")
+
+
 class StockSnapshot(Base):
     """Photo du stock d'un produit à un instant donné (pour démarque auto hebdo)."""
     __tablename__ = "stock_snapshots"

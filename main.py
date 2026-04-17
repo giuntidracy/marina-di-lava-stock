@@ -37,7 +37,7 @@ from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
     CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
     SupplierOrder, SupplierOrderItem, Event, EventRequirement, ManualLoss, AppSetting, ServiceAlert,
-    StockSnapshot, DeliveryCheck, DeliveryCheckItem
+    StockSnapshot, DeliveryCheck, DeliveryCheckItem, PriceHistory
 )
 
 Base.metadata.create_all(bind=engine)
@@ -352,6 +352,25 @@ def log_event(db: Session, event_type: str, description: str, data: dict = None)
     db.add(h)
     db.flush()  # pour obtenir h.id immédiatement
     return h
+
+
+def record_price_change(db: Session, product, new_price: float, source: str = "",
+                        supplier_id: Optional[int] = None, reference: str = ""):
+    """Enregistre une variation de prix d'achat si différente de l'ancienne."""
+    if new_price is None:
+        return
+    old = product.purchase_price
+    if old is not None and abs(float(old) - float(new_price)) < 0.001:
+        return   # pas de changement significatif
+    ph = PriceHistory(
+        product_id=product.id,
+        old_price=float(old) if old is not None else None,
+        new_price=float(new_price),
+        source=source or "",
+        supplier_id=supplier_id,
+        reference=reference or "",
+    )
+    db.add(ph)
 
 
 def extract_sales(h) -> list:
@@ -1257,6 +1276,12 @@ def validate_delivery_check(cid: int, body: DeliveryCheckValidateIn, db: Session
                     old_price = p.purchase_price
                     new_price = float(it.unit_price_ht)
                     if old_price is None or abs(old_price - new_price) > 0.001:
+                        record_price_change(
+                            db, p, new_price,
+                            source="bl_validation",
+                            supplier_id=c.supplier_id,
+                            reference=c.bl_reference or (c.order.reference if c.order else ""),
+                        )
                         p.purchase_price = new_price
                         p.is_estimated = False
 
@@ -1458,7 +1483,12 @@ def update_product(pid: int, body: ProductIn, db: Session = Depends(get_db)):
     p = db.query(Product).get(pid)
     if not p:
         raise HTTPException(404)
-    for k, v in body.model_dump().items():
+    # Traquer les changements de prix avant override
+    payload = body.model_dump()
+    new_price = payload.get("purchase_price")
+    if new_price is not None:
+        record_price_change(db, p, new_price, source="manual_edit", supplier_id=p.supplier_id)
+    for k, v in payload.items():
         setattr(p, k, v)
     p.updated_at = datetime.utcnow()
     db.commit()
@@ -1989,6 +2019,56 @@ def manual_movement(body: ManualMovementIn, db: Session = Depends(get_db)):
     h = log_event(db, "mouvement_manuel", f"Mouvement manuel : {p.name} ({'+' if body.quantity >= 0 else ''}{body.quantity})", data)
     db.commit()
     return {"ok": True, "new_stock": p.stock, "history_id": h.id}
+
+
+@app.get("/api/price-history")
+def price_history_summary(limit: int = 30, db: Session = Depends(get_db)):
+    """Liste les dernières variations de prix d'achat, tous produits confondus."""
+    rows = (
+        db.query(PriceHistory)
+        .order_by(PriceHistory.changed_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id":            h.id,
+            "product_id":    h.product_id,
+            "product_name":  h.product.name if h.product else "",
+            "category":      h.product.category if h.product else "",
+            "old_price":     round(h.old_price, 4) if h.old_price is not None else None,
+            "new_price":     round(h.new_price, 4),
+            "delta_pct":     round(((h.new_price - h.old_price) / h.old_price) * 100, 1) if h.old_price and h.old_price > 0 else None,
+            "changed_at":    to_local(h.changed_at).strftime("%d/%m/%Y %H:%M") if h.changed_at else "",
+            "source":        h.source or "",
+            "supplier_name": h.supplier.name if h.supplier else "",
+            "reference":     h.reference or "",
+        }
+        for h in rows
+    ]
+
+
+@app.get("/api/products/{pid}/price-history")
+def price_history_product(pid: int, db: Session = Depends(get_db)):
+    """Historique détaillé d'un produit (pour graphique)."""
+    rows = (
+        db.query(PriceHistory)
+        .filter(PriceHistory.product_id == pid)
+        .order_by(PriceHistory.changed_at.asc())
+        .all()
+    )
+    return [
+        {
+            "id":        h.id,
+            "old_price": round(h.old_price, 4) if h.old_price is not None else None,
+            "new_price": round(h.new_price, 4),
+            "changed_at": h.changed_at.isoformat() + "Z" if h.changed_at else "",
+            "source":    h.source or "",
+            "supplier_name": h.supplier.name if h.supplier else "",
+            "reference": h.reference or "",
+        }
+        for h in rows
+    ]
 
 
 @app.get("/api/reconciliation")
@@ -3263,6 +3343,12 @@ def _confirm_delivery_inner(body: DeliveryConfirmIn, db: Session):
             p.stock = round(p.stock + actual_qty, 4)
             # Ne met à jour le prix que pour les entrées de stock (livraisons)
             if prix is not None and prix > 0 and actual_qty > 0:
+                record_price_change(
+                    db, p, prix,
+                    source="delivery_import",
+                    supplier_id=supplier_obj.id if supplier_obj else None,
+                    reference=body.numero_facture or "",
+                )
                 p.purchase_price = prix
                 p.is_estimated = False
                 # Upsert dans product_suppliers pour ce fournisseur
