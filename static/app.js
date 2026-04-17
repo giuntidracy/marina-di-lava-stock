@@ -5622,12 +5622,12 @@ async function renderDashboard(el) {
 
       <div class="db-grid">
 
-        <div class="db-card">
+        <div class="db-card db-card-clickable" onclick="switchView('alerts')" title="Ouvrir les alertes">
           <div class="db-card-title">🌡️ Météo</div>
           ${weatherHtml}
         </div>
 
-        <div class="db-card">
+        <div class="db-card db-card-clickable" onclick="switchView('stats')" title="Voir les statistiques">
           <div class="db-card-title">💰 Chiffre d'affaires</div>
           <div class="db-ca-row">
             <div class="db-ca-block">
@@ -5658,22 +5658,22 @@ async function renderDashboard(el) {
           })()}
         </div>
 
-        <div class="db-card">
+        <div class="db-card db-card-clickable" onclick="switchView('alerts')" title="Voir toutes les alertes">
           <div class="db-card-title">🔴 Alertes stock urgentes</div>
           ${alertsHtml}
         </div>
 
-        <div class="db-card">
+        <div class="db-card db-card-clickable" onclick="switchView('events')" title="Gérer les événements">
           <div class="db-card-title">📅 Prochains événements</div>
           <div class="db-events-scroll">${eventsHtml}</div>
         </div>
 
-        <div class="db-card db-card-full">
+        <div class="db-card db-card-full db-card-clickable" onclick="switchView('stats')" title="Voir les statistiques">
           <div class="db-card-title">📦 Top 3 produits vendus cette semaine</div>
           ${topsHtml}
         </div>
 
-        <div class="db-card db-card-full" id="db-manque-gagner">
+        <div class="db-card db-card-full db-card-clickable" id="db-manque-gagner" onclick="switchView('shrinkage')" title="Voir la démarque">
           <div class="db-card-title">💸 Manque à gagner (ruptures)</div>
           <p class="db-empty">Chargement…</p>
         </div>

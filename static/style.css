@@ -2060,6 +2060,12 @@ details[open] .history-details summary::before { content: '▼'; }
   flex-direction: column;
   gap: 10px;
 }
+.db-card-clickable { cursor: pointer; transition: transform .15s, box-shadow .15s, border-color .15s; }
+.db-card-clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(0,0,0,.08);
+  border-color: var(--gold, #C9A961);
+}
 .db-card-full {
   grid-column: 1 / -1;
 }
