@@ -1853,6 +1853,19 @@ function renderDelivery(el) {
           🗑 Supprimer tous les BL
         </button>
       </div>
+      <div style="margin-top:18px;padding:14px;background:#1a0000;background:linear-gradient(135deg,#7f1d1d,#991b1b);color:#fff;border-radius:10px">
+        <div style="font-weight:800;font-size:14px;margin-bottom:6px">🧹 Réinitialisation saison</div>
+        <div style="font-size:12px;opacity:0.9;margin-bottom:10px;line-height:1.5">
+          Purge toutes les données de rodage avant l'ouverture de la saison :
+          imports Cashpad, BL, mouvements manuels, alertes, ventes historiques, pertes déclarées.
+          Remet les stocks à 0.<br>
+          <strong>Conserve</strong> : produits, cocktails, fournisseurs, mappings, événements, objectif saison.
+        </div>
+        <button class="btn" style="background:#fff;color:#991b1b;font-weight:800;border:none"
+          onclick="adminResetSeason()">
+          🚀 Réinitialiser la saison
+        </button>
+      </div>
     </div>`;
 
   const zone = document.getElementById("delivery-zone");
@@ -2048,6 +2061,78 @@ async function adminClearImports() {
       alert(`✓ ${res.deleted} bon(s) de livraison supprimé(s).`);
     }
   });
+}
+
+async function adminResetSeason() {
+  // Étape 1 : confirmation "tape RESET"
+  openModal(`
+    <h3 style="margin-bottom:10px;color:#991B1B">🧹 Réinitialisation saison</h3>
+    <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:12px 14px;margin:10px 0 14px;font-size:13px;color:#991B1B;line-height:1.6">
+      ⚠️ <strong>Action IRRÉVERSIBLE.</strong><br>
+      Vont être <strong>supprimés</strong> :<br>
+      • Tous les imports Cashpad<br>
+      • Tous les bons de livraison<br>
+      • Tous les mouvements manuels, alertes inventaire, pertes déclarées<br>
+      • Les sessions d'inventaire et les alertes service<br>
+      • Les stocks seront remis à <strong>0</strong><br><br>
+      Vont être <strong>conservés</strong> : produits, cocktails, fournisseurs, mappings Cashpad, événements, objectif saison.
+    </div>
+    <div class="form-group" style="margin-bottom:12px">
+      <label style="font-size:13px;font-weight:600">Tapez <code>RESET</code> en majuscules pour confirmer</label>
+      <input id="reset-season-conf" type="text" placeholder="RESET" autocomplete="off"
+        style="margin-top:6px;width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+               background:var(--surface);color:var(--text);font-size:15px;letter-spacing:3px;text-transform:uppercase"/>
+    </div>
+    <div class="form-group" style="margin-bottom:12px">
+      <label style="font-size:13px;font-weight:600">Code PIN direction</label>
+      <input id="reset-season-pin" type="password" inputmode="numeric" maxlength="8" placeholder="••••" autocomplete="off"
+        style="margin-top:6px;width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+               background:var(--surface);color:var(--text);font-size:15px;letter-spacing:4px"/>
+    </div>
+    <div id="reset-season-error" style="color:#DC2626;font-size:12px;margin-bottom:10px;display:none"></div>
+    <div style="display:flex;gap:10px">
+      <button class="btn" style="flex:1;background:#991B1B;color:#fff;font-weight:800;justify-content:center"
+        onclick="_submitResetSeason()">🚀 Réinitialiser</button>
+      <button class="btn btn-outline" style="flex:1;justify-content:center" onclick="closeModal()">Annuler</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('reset-season-conf')?.focus(), 100);
+}
+
+async function _submitResetSeason() {
+  const conf = (document.getElementById('reset-season-conf')?.value || '').trim();
+  const pin = document.getElementById('reset-season-pin')?.value || '';
+  const errEl = document.getElementById('reset-season-error');
+  if (conf !== 'RESET') {
+    if (errEl) { errEl.textContent = 'Vous devez taper RESET en majuscules.'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (!pin) {
+    if (errEl) { errEl.textContent = 'Code PIN requis.'; errEl.style.display = 'block'; }
+    return;
+  }
+  try {
+    const res = await api("/api/admin/reset-season", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin, confirmation: conf })
+    });
+    closeModal();
+    allProducts = await api("/api/produits");
+    updateAlertBadge();
+    alert(
+      `✓ Réinitialisation effectuée.\n\n` +
+      `• ${res.stock_history_deleted} événements historiques supprimés\n` +
+      `• ${res.import_logs_deleted} imports/BL supprimés\n` +
+      `• ${res.inventory_sessions_deleted} sessions inventaire supprimées\n` +
+      `• ${res.service_alerts_deleted} alertes service supprimées\n` +
+      `• ${res.manual_losses_deleted} pertes manuelles supprimées\n` +
+      `• ${res.products_reset} stocks remis à 0\n\n` +
+      `Prêt pour la nouvelle saison !`
+    );
+  } catch (e) {
+    if (errEl) { errEl.textContent = e.message || 'Erreur'; errEl.style.display = 'block'; }
+  }
 }
 
 async function deleteImportLine(importId, productId, productName, qty) {

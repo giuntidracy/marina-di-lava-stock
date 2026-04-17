@@ -2836,6 +2836,76 @@ def admin_clear_imports(body: AdminActionIn, db: Session = Depends(get_db)):
     return {"ok": True, "deleted": count}
 
 
+class SeasonResetIn(BaseModel):
+    pin: str
+    confirmation: str   # doit valoir exactement "RESET"
+
+
+@app.post("/api/admin/reset-season")
+def admin_reset_season(body: SeasonResetIn, db: Session = Depends(get_db)):
+    """
+    RÉINITIALISATION SAISON — purge les données de rodage.
+    Supprime : imports Cashpad (StockHistory + ImportLog), mouvements manuels,
+    alertes inventaire, ventes historiques, session inventaires, service alerts.
+    Remet les stocks à 0.
+    Conserve : produits, cocktails, fournisseurs, mappings Cashpad, événements,
+    objectif saison, commandes fournisseurs.
+    """
+    _verify_admin_pin(body.pin)
+    if (body.confirmation or "").strip() != "RESET":
+        raise HTTPException(400, "Confirmation invalide — tapez RESET en majuscules.")
+
+    stats = {}
+
+    # 1. StockHistory — purger tous les événements "transactionnels"
+    event_types_to_purge = [
+        "import_cashpad", "cashpad_sync", "mouvement_manuel",
+        "alerte_inventaire", "ventes_historiques", "controle_flash",
+        "livraison", "avoir_fournisseur",
+    ]
+    stats["stock_history_deleted"] = (
+        db.query(StockHistory)
+        .filter(StockHistory.event_type.in_(event_types_to_purge))
+        .delete(synchronize_session=False)
+    )
+
+    # 2. ImportLog (Cashpad + livraisons)
+    stats["import_logs_deleted"] = (
+        db.query(ImportLog).delete(synchronize_session=False)
+    )
+
+    # 3. Sessions inventaires (anciens inventaires flash)
+    stats["inventory_sessions_deleted"] = (
+        db.query(InventorySession).delete(synchronize_session=False)
+    )
+
+    # 4. Service alerts
+    stats["service_alerts_deleted"] = (
+        db.query(ServiceAlert).delete(synchronize_session=False)
+    )
+
+    # 5. Pertes manuelles (casse, vol déclarés pendant rodage)
+    stats["manual_losses_deleted"] = (
+        db.query(ManualLoss).delete(synchronize_session=False)
+    )
+
+    # 6. Remettre stocks à 0
+    stats["products_reset"] = db.query(Product).count()
+    db.query(Product).update({"stock": 0})
+
+    # 7. Reset settings Cashpad
+    for key in ["cashpad_last_sync", "cashpad_last_sequential_id",
+                "weather_cache", "weather_cache_ts"]:
+        db.query(AppSetting).filter(AppSetting.key == key).delete(synchronize_session=False)
+
+    # Log la purge elle-même (reste dans l'historique comme marqueur)
+    log_event(db, "admin_reset_season",
+              f"Réinitialisation saison effectuée — purge complète", stats)
+    db.commit()
+
+    return {"ok": True, **stats}
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # STATISTIQUES DE CONSOMMATION
 # ══════════════════════════════════════════════════════════════════════════
