@@ -1344,6 +1344,14 @@ async function renderAlerts(el) {
         const daysStr = daysInt === 0 ? "aujourd'hui" : daysInt === 1 ? "demain" : `dans ${daysInt} jours`;
         const urgClass = p.urgency === "critique" ? "pred-card-critique" : p.urgency === "warning" ? "pred-card-warning" : "pred-card-info";
         const icon = p.urgency === "critique" ? "🔴" : p.urgency === "warning" ? "🟠" : "🟡";
+
+        const evBadge = (p.event_reservations && p.event_reservations.length > 0)
+          ? `<div class="pred-card-factor">🎉 ${p.event_need_total} réservé pour ${p.event_reservations.slice(0,2).map(e => esc(e.event_name)).join(', ')}${p.event_reservations.length > 2 ? ` +${p.event_reservations.length-2}` : ''}</div>`
+          : '';
+        const weatherBadge = p.weather_boost
+          ? `<div class="pred-card-factor">☀️ ${esc(p.weather_boost)}</div>`
+          : '';
+
         html += `
         <div class="pred-card ${urgClass}">
           <div class="pred-card-name">${icon} ${esc(p.product_name)}</div>
@@ -1351,6 +1359,8 @@ async function renderAlerts(el) {
           <div class="pred-card-detail">
             Stock : ${p.stock} u · ${p.avg_daily.toFixed(1)}/jour · ${p.total_consumed_14j} vendus en 14j
           </div>
+          ${evBadge}
+          ${weatherBadge}
           <div class="pred-card-date">📅 ${p.predicted_date}</div>
         </div>`;
       });

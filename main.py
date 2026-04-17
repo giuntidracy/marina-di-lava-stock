@@ -1142,6 +1142,51 @@ def get_predictions(db: Session = Depends(get_db)):
                 consumption[pid] += qty
                 days_seen[pid].add(day)
 
+    # Besoins événementiels à venir (jusqu'à 14j) — par produit
+    today_dt = datetime.combine(datetime.utcnow().date(), datetime.min.time())
+    horizon_dt = today_dt + timedelta(days=PERIODE)
+    upcoming = (
+        db.query(Event)
+        .filter(Event.date <= horizon_dt)
+        .filter(
+            (Event.date >= today_dt) |
+            ((Event.end_date != None) & (Event.end_date >= today_dt))
+        )
+        .all()
+    )
+    event_needs = defaultdict(list)   # product_id → [{qty, event_name, days_until}]
+    for ev in upcoming:
+        ev_start = ev.date.date() if hasattr(ev.date, "date") else ev.date
+        days_until = max(0, (ev_start - datetime.utcnow().date()).days)
+        for req in (ev.requirements or []):
+            if req.product_id and req.quantity:
+                event_needs[req.product_id].append({
+                    "qty":         float(req.quantity),
+                    "event_name":  ev.name,
+                    "days_until":  days_until,
+                    "event_date":  ev.date.strftime("%d/%m/%Y"),
+                })
+
+    # Boost saisonnier lié à la météo : on regarde la température prévue demain
+    weather_boost = 1.0
+    weather_label = None
+    try:
+        cached = _get_setting(db, "weather_cache", "")
+        if cached:
+            w = json.loads(cached)
+            level = w.get("alert_level")
+            if level == "canicule":
+                weather_boost = 1.30   # +30 % par canicule
+                weather_label = "canicule prévue (+30%)"
+            elif level == "chaud":
+                weather_boost = 1.15   # +15 % par forte chaleur
+                weather_label = "forte chaleur prévue (+15%)"
+    except Exception:
+        pass
+
+    # Catégories plus sensibles à la chaleur (softs, eaux, bières, rosé)
+    _HEAT_SENSITIVE = {"Eaux", "Sodas", "Bières", "Vins Rosés", "Cocktails SA"}
+
     products = db.query(Product).filter((Product.archived == False) | (Product.archived == None)).all()
     predictions = []
 
@@ -1149,20 +1194,34 @@ def get_predictions(db: Session = Depends(get_db)):
         if p.id not in consumption:
             continue
         total_consumed = consumption[p.id]
-        n_days = max(len(days_seen[p.id]), 1)  # jours où ce produit a été vendu
-        # Moyenne journalière basée sur les jours actifs (plus réaliste)
+        n_days = max(len(days_seen[p.id]), 1)
         avg_per_active_day = total_consumed / n_days
-        # Extrapolé sur la période complète (ex: vendu 3j/14 → vend ~3/14 /jour en moyenne)
-        avg_daily = total_consumed / PERIODE
+        base_avg_daily = total_consumed / PERIODE
+
+        # Appliquer le boost météo aux catégories sensibles
+        avg_daily = base_avg_daily
+        applied_weather = None
+        if weather_boost > 1.0 and p.category in _HEAT_SENSITIVE:
+            avg_daily = base_avg_daily * weather_boost
+            applied_weather = weather_label
 
         if avg_daily <= 0 or p.stock <= 0:
             continue
 
-        days_left = p.stock / avg_daily
-        # Date estimée de rupture
+        # Stock effectif : on soustrait les besoins événements à venir dans l'horizon
+        event_reservations = event_needs.get(p.id, [])
+        total_event_need = sum(r["qty"] for r in event_reservations)
+        effective_stock = p.stock - total_event_need
+
+        # Si les événements à eux seuls vident le stock → rupture programmée à la date du 1er event
+        if effective_stock <= 0 and event_reservations:
+            first_ev = min(event_reservations, key=lambda r: r["days_until"])
+            days_left = float(first_ev["days_until"])
+        else:
+            days_left = max(effective_stock, 0) / avg_daily
+
         predicted_date = to_local(datetime.utcnow()) + timedelta(days=days_left)
 
-        # Urgence : critique < 3j, warning < 7j, info < 14j
         urgency = "critique" if days_left < 3 else "warning" if days_left < 7 else "info" if days_left < 14 else None
         if not urgency:
             continue
@@ -1172,14 +1231,18 @@ def get_predictions(db: Session = Depends(get_db)):
             "product_name":  p.name,
             "category":      p.category,
             "stock":         round(p.stock, 1),
+            "effective_stock": round(effective_stock, 1),
             "avg_daily":     round(avg_daily, 2),
+            "base_avg_daily":round(base_avg_daily, 2),
             "days_left":     round(days_left, 1),
             "predicted_date": predicted_date.strftime("%d/%m/%Y"),
             "urgency":       urgency,
             "total_consumed_14j": round(total_consumed, 1),
+            "event_reservations": event_reservations,
+            "event_need_total":   round(total_event_need, 1),
+            "weather_boost":      applied_weather,
         })
 
-    # Tri : plus urgent en premier
     predictions.sort(key=lambda x: x["days_left"])
     return predictions
 
