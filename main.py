@@ -2508,6 +2508,195 @@ def mark_template_used(tid: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# CHAT IA — assistant conversationnel sur les données métier
+# ══════════════════════════════════════════════════════════════════════════
+
+class ChatMessageIn(BaseModel):
+    role: str       # "user" | "assistant"
+    content: str
+
+
+class ChatIn(BaseModel):
+    messages: List[ChatMessageIn]
+
+
+def _build_chat_context(db: Session) -> str:
+    """Construit un contexte textuel des données actuelles pour Claude."""
+    lines = ["=== CONTEXTE MARINA DI LAVA (actualisé à la requête) ===\n"]
+
+    # Produits actifs avec stock
+    lines.append("PRODUITS (id | nom | catégorie | stock | unité | seuil | prix achat | prix vente TTC | TVA) :")
+    for p in db.query(Product).filter((Product.archived == False) | (Product.archived == None)).order_by(Product.category, Product.name).all():
+        pa = f"€{p.purchase_price:.3f}" if p.purchase_price is not None else "?"
+        pv = f"€{p.sale_price_ttc:.2f}" if p.sale_price_ttc is not None else "?"
+        vat = int((p.vat_rate or 0.20) * 100)
+        lines.append(f"  {p.id} | {p.name} | {p.category} | {p.stock:.1f} | {p.unit} | seuil {p.alert_threshold} | {pa} | {pv} | {vat}%")
+
+    # Fournisseurs
+    lines.append("\nFOURNISSEURS :")
+    for s in db.query(Supplier).all():
+        email_str = s.email or "(pas d'email)"
+        lines.append(f"  {s.id} | {s.name} | {email_str} | catégories: {s.categories}")
+
+    # Événements à venir (30 prochains jours)
+    today_dt = datetime.utcnow()
+    horizon = today_dt + timedelta(days=30)
+    lines.append("\nÉVÉNEMENTS À VENIR (30 jours) :")
+    for e in db.query(Event).filter(Event.date <= horizon).filter(
+        (Event.date >= today_dt.replace(hour=0, minute=0, second=0, microsecond=0)) |
+        ((Event.end_date != None) & (Event.end_date >= today_dt.replace(hour=0, minute=0, second=0, microsecond=0)))
+    ).all():
+        dates = e.date.strftime("%d/%m")
+        if e.end_date and e.end_date != e.date:
+            dates += f"→{e.end_date.strftime('%d/%m')}"
+        reqs = [f"{r.product.name if r.product else '?'} x{r.quantity}" for r in (e.requirements or [])]
+        lines.append(f"  {dates} | {e.event_type} | {e.name}" + (f" | besoins : {', '.join(reqs)}" if reqs else ""))
+
+    # Commandes fournisseurs en cours
+    lines.append("\nCOMMANDES EN COURS :")
+    for o in db.query(SupplierOrder).filter(SupplierOrder.status.in_(["draft", "sent", "partial"])).all():
+        lines.append(f"  {o.reference} | {o.supplier.name if o.supplier else '?'} | {o.status} | {len(o.items or [])} produit(s)")
+
+    # Contrôles livraison en attente
+    lines.append("\nCONTRÔLES LIVRAISON EN ATTENTE :")
+    for c in db.query(DeliveryCheck).filter(DeliveryCheck.status.in_(["pending_count", "counted", "partial"])).all():
+        lines.append(f"  {c.id} | {c.supplier.name if c.supplier else '?'} | statut {c.status} | BL {c.bl_reference or '—'}")
+
+    # Ventes récentes (7 derniers jours)
+    week_start = datetime.utcnow() - timedelta(days=7)
+    sales_hist = db.query(StockHistory).filter(
+        StockHistory.event_type.in_(["import_cashpad", "cashpad_sync"]),
+        StockHistory.created_at >= week_start,
+    ).all()
+    totals = {}
+    ca = 0.0
+    for h in sales_hist:
+        for item in extract_sales(h):
+            qty = float(item.get("qty_sold", 0) or 0)
+            price = float(item.get("sale_price_ttc", 0) or 0)
+            name = item.get("product_name") or item.get("name", "")
+            ca += qty * price
+            if name:
+                totals[name] = totals.get(name, 0) + qty
+    top = sorted(totals.items(), key=lambda x: -x[1])[:10]
+    lines.append(f"\nVENTES 7 DERNIERS JOURS (CA={ca:.0f}€, top 10) :")
+    for name, qty in top:
+        lines.append(f"  {name} : {qty:.0f}")
+
+    # Historique prix récent
+    recent_prices = db.query(PriceHistory).order_by(PriceHistory.changed_at.desc()).limit(10).all()
+    if recent_prices:
+        lines.append("\nVARIATIONS PRIX D'ACHAT RÉCENTES (10 dernières) :")
+        for h in recent_prices:
+            pct = (h.new_price - h.old_price) / h.old_price * 100 if h.old_price else 0
+            lines.append(f"  {h.product.name if h.product else '?'} : {h.old_price}→{h.new_price} ({pct:+.1f}%) via {h.source}")
+
+    # Pertes déclarées du mois
+    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    losses = db.query(ManualLoss).filter(ManualLoss.date >= month_start).all()
+    if losses:
+        lines.append(f"\nPERTES DÉCLARÉES CE MOIS ({len(losses)}) :")
+        for l in losses[:20]:
+            lines.append(f"  {l.product.name if l.product else '?'} × {l.quantity} | {l.reason}")
+
+    # Météo cache
+    try:
+        w = json.loads(_get_setting(db, "weather_cache", "") or "{}")
+        if w:
+            lines.append(f"\nMÉTÉO : {w.get('current_temp')}°C · {w.get('alert_label', '')}")
+    except Exception:
+        pass
+
+    return "\n".join(lines)
+
+
+_CHAT_SYSTEM_INSTRUCTIONS = """Tu es **l'assistant IA de Marina di Lava**, un hôtel-restaurant-bar de plage à Ajaccio (Corse).
+Ton rôle : aider Jean-Marc (le gérant) à gérer son stock, ses ventes et son activité.
+
+Règles :
+- Toujours répondre en **français**, ton direct et pragmatique (J-Marc n'aime pas les réponses alambiquées).
+- Baser toutes tes réponses sur le **CONTEXTE** fourni ci-dessous. Ne pas inventer de chiffres.
+- Si tu ne peux pas répondre avec les données disponibles, dis-le honnêtement.
+- Format : réponses courtes et exploitables. Utilise des listes à puces si pertinent.
+- Pour les montants : utilise le format 123,45 € (virgule + espace insécable avant €).
+- Si la question implique une action concrète (passer une commande, archiver un produit, créer un événement…), suggère clairement l'endroit où la faire dans l'app :
+  * Stock & Marges : ajustements produits, seuils d'alerte
+  * Cocktails & Marges : recettes
+  * Alertes : tous les signaux (ruptures, événements sans stock…)
+  * Démarque : pertes déclarées, démarque automatique, rapprochement sortie/Cashpad
+  * Contrôle livraison : réceptionner un BL + admin + backups
+  * Commandes : passer une commande fournisseur
+  * Événements : agenda + besoins boissons clients
+  * Statistiques : CA, consommation, historique prix
+- Ne pas donner de conseils médicaux, juridiques ou comportementaux hors du champ de la gestion du bar."""
+
+
+@app.post("/api/chat")
+def chat_endpoint(body: ChatIn, db: Session = Depends(get_db)):
+    """Chat conversationnel avec Claude, contextualisé sur les données métier."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(400, "Clé API Anthropic non configurée (ANTHROPIC_API_KEY)")
+
+    if not body.messages:
+        raise HTTPException(400, "Message vide")
+
+    # Normaliser les messages (rôles autorisés : user / assistant)
+    msgs = []
+    for m in body.messages[-20:]:   # on limite à 20 derniers tours pour maîtriser le coût
+        if m.role not in ("user", "assistant"):
+            continue
+        if not m.content or not m.content.strip():
+            continue
+        msgs.append({"role": m.role, "content": m.content.strip()})
+    if not msgs or msgs[-1]["role"] != "user":
+        raise HTTPException(400, "Dernier message doit venir de l'utilisateur")
+
+    # Construire le contexte actuel des données
+    context = _build_chat_context(db)
+
+    import anthropic as _anthropic
+    client = _anthropic.Anthropic(api_key=api_key)
+
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1024,
+            system=[
+                {"type": "text", "text": _CHAT_SYSTEM_INSTRUCTIONS},
+                # Le contexte change à chaque requête → pas de cache ici, mais
+                # les instructions système, elles, sont cachées par Anthropic
+                # automatiquement (préfixe identique).
+                {"type": "text", "text": context},
+            ],
+            messages=msgs,
+        )
+    except _anthropic.AuthenticationError:
+        raise HTTPException(401, "Clé API Anthropic invalide")
+    except _anthropic.BadRequestError as e:
+        raise HTTPException(400, f"Requête invalide : {str(e)[:200]}")
+    except Exception as e:
+        raise HTTPException(500, f"Erreur IA : {str(e)[:200]}")
+
+    reply = ""
+    try:
+        for block in response.content:
+            if getattr(block, "type", "") == "text":
+                reply += block.text
+        reply = reply.strip()
+    except Exception:
+        reply = "(Réponse vide)"
+
+    return {
+        "reply": reply,
+        "usage": {
+            "input_tokens":  response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+        },
+    }
+
+
 @app.get("/api/price-history")
 def price_history_summary(limit: int = 30, db: Session = Depends(get_db)):
     """Liste les dernières variations de prix d'achat, tous produits confondus."""

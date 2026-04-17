@@ -174,6 +174,7 @@ async function loadAll() {
     api("/api/recettes"),
   ]);
   updateAlertBadge();
+  initChatUI();
   renderView(currentView);
 }
 
@@ -301,6 +302,118 @@ async function updateAlertBadge() {
     }
   } catch {}
   updateDeliveryCheckBadge();
+}
+
+// ─────────── CHAT IA ─────────────────────────────────────────────────────
+let __chatMessages = [];
+const CHAT_STORAGE_KEY = "marina_chat_history_v1";
+
+function initChatUI() {
+  const fab = document.getElementById("chat-fab");
+  if (fab) fab.classList.remove("hidden");
+  try {
+    const saved = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (saved) __chatMessages = JSON.parse(saved) || [];
+  } catch(_) { __chatMessages = []; }
+  renderChatMessages();
+}
+
+function toggleChat() {
+  const panel = document.getElementById("chat-panel");
+  if (!panel) return;
+  panel.classList.toggle("hidden");
+  if (!panel.classList.contains("hidden")) {
+    setTimeout(() => document.getElementById("chat-input")?.focus(), 100);
+    renderChatMessages();
+  }
+}
+
+function clearChat() {
+  if (__chatMessages.length && !confirm("Effacer la conversation ?")) return;
+  __chatMessages = [];
+  localStorage.removeItem(CHAT_STORAGE_KEY);
+  renderChatMessages();
+}
+
+function renderChatMessages() {
+  const box = document.getElementById("chat-messages");
+  if (!box) return;
+  if (__chatMessages.length === 0) {
+    box.innerHTML = `<div class="chat-welcome">
+      <div style="font-size:32px;margin-bottom:8px">✦</div>
+      <div style="font-weight:700;margin-bottom:4px">Bonjour J-Marc 👋</div>
+      <div style="font-size:12px;color:var(--text-muted);line-height:1.5;max-width:260px;margin:0 auto">
+        Je peux répondre sur ton stock, tes ventes, tes événements, la démarque…<br>
+        <em>Essaye : "Quels produits sont à risque cette semaine ?"</em>
+      </div>
+    </div>`;
+    return;
+  }
+  box.innerHTML = __chatMessages.map(m => `
+    <div class="chat-msg chat-msg-${m.role}">
+      <div class="chat-msg-bubble">${chatRenderContent(m.content)}</div>
+    </div>
+  `).join("");
+  box.scrollTop = box.scrollHeight;
+}
+
+function chatRenderContent(text) {
+  // Markdown très léger : gras **x**, italique *x*, listes, saut de ligne, liens
+  let html = esc(text);
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/(^|\s)\*([^*]+)\*(\s|$|[.,!?])/g, "$1<em>$2</em>$3");
+  html = html.replace(/^- (.+)$/gm, "<li>$1</li>");
+  html = html.replace(/(<li>[\s\S]+?<\/li>)/g, "<ul>$1</ul>");
+  html = html.replace(/\n/g, "<br>");
+  return html;
+}
+
+async function sendChat(event) {
+  event.preventDefault();
+  const input = document.getElementById("chat-input");
+  const txt = (input?.value || "").trim();
+  if (!txt) return;
+  input.value = "";
+
+  __chatMessages.push({ role: "user", content: txt });
+  renderChatMessages();
+  _persistChat();
+
+  // Message "en train de réfléchir"
+  const box = document.getElementById("chat-messages");
+  const thinking = document.createElement("div");
+  thinking.className = "chat-msg chat-msg-assistant chat-msg-thinking";
+  thinking.innerHTML = `<div class="chat-msg-bubble"><span class="chat-dots"><span></span><span></span><span></span></span></div>`;
+  box.appendChild(thinking);
+  box.scrollTop = box.scrollHeight;
+
+  const sendBtn = document.getElementById("chat-send");
+  if (sendBtn) sendBtn.disabled = true;
+
+  try {
+    const res = await api("/api/chat", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ messages: __chatMessages }),
+    });
+    thinking.remove();
+    __chatMessages.push({ role: "assistant", content: res.reply });
+    _persistChat();
+    renderChatMessages();
+  } catch (e) {
+    thinking.remove();
+    __chatMessages.push({ role: "assistant", content: "❌ Erreur : " + (e.message || "inconnue") });
+    renderChatMessages();
+  } finally {
+    if (sendBtn) sendBtn.disabled = false;
+    input.focus();
+  }
+}
+
+function _persistChat() {
+  try {
+    const last20 = __chatMessages.slice(-20);
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(last20));
+  } catch(_) {}
 }
 
 async function updateDeliveryCheckBadge() {

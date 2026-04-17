@@ -123,6 +123,29 @@
   </div>
 </div>
 
+<!-- Chat IA -->
+<button id="chat-fab" class="hidden" onclick="toggleChat()" title="Assistant IA">
+  <span id="chat-fab-icon">✦</span>
+</button>
+<div id="chat-panel" class="hidden">
+  <div id="chat-header">
+    <div>
+      <div style="font-weight:800">✦ Assistant Marina</div>
+      <div style="font-size:11px;opacity:0.7">Pose une question sur ton stock, tes ventes, tes événements…</div>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button id="chat-clear" onclick="clearChat()" title="Nouveau fil">🗑</button>
+      <button id="chat-close" onclick="toggleChat()">✕</button>
+    </div>
+  </div>
+  <div id="chat-messages"></div>
+  <form id="chat-form" onsubmit="sendChat(event)">
+    <textarea id="chat-input" rows="2" placeholder="Ex: Quels produits sont à risque de rupture cette semaine ?" required
+              onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();document.getElementById('chat-form').requestSubmit()}"></textarea>
+    <button type="submit" id="chat-send">✦ Envoyer</button>
+  </form>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="/static/app.js?v=20260417m"></script>
