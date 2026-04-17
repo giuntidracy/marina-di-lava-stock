@@ -330,6 +330,23 @@ def log_event(db: Session, event_type: str, description: str, data: dict = None)
     return h
 
 
+def extract_sales(h) -> list:
+    """
+    Retourne la liste des lignes de vente d'une entrée StockHistory (import_cashpad).
+    Gère l'ancien et le nouveau format. Chaque ligne contient au moins :
+    qty_sold, sale_price_ttc, purchase_price, vat_rate, name/product_name.
+    """
+    try:
+        data = json.loads(h.data_json or "{}")
+    except Exception:
+        return []
+    if isinstance(data, dict):
+        return data.get("sales") or []
+    if isinstance(data, list):
+        return data
+    return []
+
+
 # ── root ───────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -1599,7 +1616,8 @@ async def import_cashpad(
     # build mapping index
     mappings = {m.nom_cashpad.strip().lower(): m for m in db.query(CashpadMapping).all()}
 
-    deductions = []
+    deductions = []      # impact stock (audit)
+    sales = []           # lignes de vente (CA, marge) — prix figés au moment de la vente
     alerts_triggered = []
     unknown_products = []
 
@@ -1626,10 +1644,11 @@ async def import_cashpad(
         if mapping.mapping_type == "cocktail" and mapping.cocktail_id:
             cocktail = db.query(Cocktail).get(mapping.cocktail_id)
             if cocktail:
+                cost_matiere = 0.0
+                has_alcohol = False
                 for ing in cocktail.ingredients:
                     p = ing.product
                     if p and p.volume_cl and ing.dose_cl:
-                        # Stock en unités individuelles : déduire dose/volume par unité vendue
                         total_vol = p.volume_cl
                         deduct = (ing.dose_cl / total_vol) * qty_sold
                         p.stock = p.stock - deduct
@@ -1638,12 +1657,26 @@ async def import_cashpad(
                             "deducted": round(deduct, 4),
                             "new_stock": round(p.stock, 4),
                         })
+                        if p.purchase_price is not None:
+                            cost_matiere += (p.purchase_price / total_vol) * ing.dose_cl
+                        if (p.vat_rate or 0) >= 0.20:
+                            has_alcohol = True
                         if p.stock <= p.alert_threshold:
                             alerts_triggered.append(p.name)
+                sales.append({
+                    "ref_type":       "cocktail",
+                    "ref_id":         cocktail.id,
+                    "product_name":   cocktail.name,
+                    "name":           cocktail.name,
+                    "qty_sold":       qty_sold,
+                    "sale_price_ttc": cocktail.sale_price_ttc or 0,
+                    "purchase_price": round(cost_matiere, 4),
+                    "vat_rate":       0.20 if has_alcohol else 0.10,
+                    "unit":           "u",
+                })
         elif mapping.mapping_type == "direct" and mapping.product_id:
             p = db.query(Product).get(mapping.product_id)
             if p and p.volume_cl and mapping.dose_cl:
-                # Stock en unités individuelles : déduire dose/volume par unité vendue
                 total_vol = p.volume_cl
                 deduct = (mapping.dose_cl / total_vol) * qty_sold
                 p.stock = p.stock - deduct
@@ -1651,6 +1684,19 @@ async def import_cashpad(
                     "product": p.name,
                     "deducted": round(deduct, 4),
                     "new_stock": round(p.stock, 4),
+                })
+                unit_cost = (p.purchase_price / total_vol) * mapping.dose_cl if p.purchase_price is not None else None
+                sales.append({
+                    "ref_type":       "direct",
+                    "ref_id":         p.id,
+                    "product_id":     p.id,
+                    "product_name":   mapping.nom_cashpad,
+                    "name":           mapping.nom_cashpad,
+                    "qty_sold":       qty_sold,
+                    "sale_price_ttc": 0,  # inconnu côté Cashpad Excel, complété plus tard si possible
+                    "purchase_price": round(unit_cost, 4) if unit_cost is not None else None,
+                    "vat_rate":       p.vat_rate if p.vat_rate is not None else 0.20,
+                    "unit":           p.unit or "u",
                 })
                 if p.stock <= p.alert_threshold:
                     alerts_triggered.append(p.name)
@@ -1663,9 +1709,10 @@ async def import_cashpad(
         f"Import Cashpad clôture n°{ref} — {len(deductions)} déductions",
         {
             "numero_cloture": ref,
-            "deductions": deductions,
-            "alerts": list(set(alerts_triggered)),
-            "unknown": unknown_products,
+            "deductions":     deductions,
+            "sales":          sales,
+            "alerts":         list(set(alerts_triggered)),
+            "unknown":        unknown_products,
         }
     )
     db.commit()
@@ -4151,6 +4198,7 @@ def _process_cashpad_archive(archive_data: dict, db: Session) -> dict:
     mappings = {m.nom_cashpad.lower(): m for m in db.query(CashpadMapping).all()}
 
     deductions = []
+    sales      = []
     skipped    = []
 
     for line in lines:
@@ -4166,6 +4214,13 @@ def _process_cashpad_archive(archive_data: dict, db: Session) -> dict:
             line.get("quantite") or line.get("sold_qty") or 0
         )
 
+        # Prix de vente TTC éventuellement présent dans la ligne
+        line_price = 0.0
+        for _f in ("unit_price_ttc", "price_ttc", "unit_price", "price", "ttc", "prix_ttc", "prix_unitaire"):
+            if line.get(_f) is not None:
+                try: line_price = float(line[_f]); break
+                except Exception: pass
+
         if not name or qty <= 0:
             continue
 
@@ -4177,16 +4232,34 @@ def _process_cashpad_archive(archive_data: dict, db: Session) -> dict:
         if mapping.mapping_type == "cocktail" and mapping.cocktail_id:
             cocktail = db.query(Cocktail).get(mapping.cocktail_id)
             if cocktail:
+                cost_matiere = 0.0
+                has_alcohol = False
                 for ing in cocktail.ingredients:
                     if ing.product:
                         dose_cl = ing.dose_cl * qty
-                        bottles = dose_cl / (ing.product.volume_cl or 70)
+                        vol = (ing.product.volume_cl or 70)
+                        bottles = dose_cl / vol
                         ing.product.stock = max(0.0, ing.product.stock - bottles)
                         deductions.append({
                             "product_id":   ing.product.id,
                             "product_name": ing.product.name,
                             "quantity":     round(bottles, 4),
                         })
+                        if ing.product.purchase_price is not None:
+                            cost_matiere += (ing.product.purchase_price / vol) * ing.dose_cl
+                        if (ing.product.vat_rate or 0) >= 0.20:
+                            has_alcohol = True
+                sales.append({
+                    "ref_type":       "cocktail",
+                    "ref_id":         cocktail.id,
+                    "product_name":   cocktail.name,
+                    "name":           cocktail.name,
+                    "qty_sold":       qty,
+                    "sale_price_ttc": line_price if line_price > 0 else (cocktail.sale_price_ttc or 0),
+                    "purchase_price": round(cost_matiere, 4),
+                    "vat_rate":       0.20 if has_alcohol else 0.10,
+                    "unit":           "u",
+                })
 
         elif mapping.product_id:
             p = db.query(Product).get(mapping.product_id)
@@ -4202,12 +4275,29 @@ def _process_cashpad_archive(archive_data: dict, db: Session) -> dict:
                     "product_name": p.name,
                     "quantity":     round(bottles, 4),
                 })
+                # Figer le coût matière associé à la vente
+                if mapping.dose_cl and p.volume_cl:
+                    unit_cost = (p.purchase_price / p.volume_cl) * mapping.dose_cl if p.purchase_price is not None else None
+                else:
+                    unit_cost = p.purchase_price
+                sales.append({
+                    "ref_type":       "direct",
+                    "ref_id":         p.id,
+                    "product_id":     p.id,
+                    "product_name":   mapping.nom_cashpad,
+                    "name":           mapping.nom_cashpad,
+                    "qty_sold":       qty,
+                    "sale_price_ttc": line_price if line_price > 0 else (p.sale_price_ttc or 0),
+                    "purchase_price": round(unit_cost, 4) if unit_cost is not None else None,
+                    "vat_rate":       p.vat_rate if p.vat_rate is not None else 0.20,
+                    "unit":           p.unit or "u",
+                })
 
     if deductions:
         log_event(
             db, "import_cashpad",
             f"Sync Cashpad API — archive #{seq_id} ({start_date} → {end_date})",
-            {"deductions": deductions, "source": "api_sync", "sequential_id": seq_id},
+            {"deductions": deductions, "sales": sales, "source": "api_sync", "sequential_id": seq_id},
         )
         db.commit()
 
@@ -4561,21 +4651,14 @@ def get_manque_a_gagner(db: Session = Depends(get_db)):
 
     daily_sales = {}
     for h in sales_history:
-        try:
-            data = json.loads(h.data_json)
-            items = data if isinstance(data, list) else data.get("results", data.get("items", []))
-            if isinstance(items, dict):
-                items = [items]
-            for item in items:
-                name = item.get("product_name", item.get("name", ""))
-                qty = float(item.get("qty_sold", item.get("quantity", 0)) or 0)
-                price = float(item.get("sale_price_ttc", 0) or 0)
-                if name and qty > 0 and price > 0:
-                    if name not in daily_sales:
-                        daily_sales[name] = {"total_qty": 0, "price": price}
-                    daily_sales[name]["total_qty"] += qty
-        except Exception:
-            pass
+        for item in extract_sales(h):
+            name = item.get("product_name") or item.get("name", "")
+            qty = float(item.get("qty_sold", 0) or 0)
+            price = float(item.get("sale_price_ttc", 0) or 0)
+            if name and qty > 0 and price > 0:
+                if name not in daily_sales:
+                    daily_sales[name] = {"total_qty": 0, "price": price}
+                daily_sales[name]["total_qty"] += qty
 
     # Calculer le manque pour chaque produit en rupture
     items = []
@@ -4745,25 +4828,19 @@ def get_dashboard(db: Session = Depends(get_db)):
     product_totals: dict = {}   # name → {"qty": float, "unit": str}
 
     for h in cashpad_history:
-        try:
-            data = json.loads(h.data_json or "[]")
-            if not isinstance(data, list):
-                data = [data]
-            for item in data:
-                qty   = float(item.get("qty_sold", 0) or 0)
-                price = float(item.get("sale_price_ttc", 0) or 0)
-                name  = item.get("product_name", item.get("name", ""))
-                unit  = item.get("unit", "u")
-                revenue = qty * price
-                ca_week += revenue
-                if yesterday_start <= h.created_at < today_start:
-                    ca_yesterday += revenue
-                if name:
-                    if name not in product_totals:
-                        product_totals[name] = {"qty": 0.0, "unit": unit}
-                    product_totals[name]["qty"] += qty
-        except Exception:
-            pass
+        for item in extract_sales(h):
+            qty   = float(item.get("qty_sold", 0) or 0)
+            price = float(item.get("sale_price_ttc", 0) or 0)
+            name  = item.get("product_name") or item.get("name", "")
+            unit  = item.get("unit", "u")
+            revenue = qty * price
+            ca_week += revenue
+            if yesterday_start <= h.created_at < today_start:
+                ca_yesterday += revenue
+            if name:
+                if name not in product_totals:
+                    product_totals[name] = {"qty": 0.0, "unit": unit}
+                product_totals[name]["qty"] += qty
 
     top_products = sorted(
         [{"name": k, "qty_sold": round(v["qty"], 2), "unit": v["unit"]} for k, v in product_totals.items()],
@@ -4792,16 +4869,10 @@ def get_dashboard(db: Session = Depends(get_db)):
         ).all()
     )
     for h in n1_history:
-        try:
-            data = json.loads(h.data_json or "[]")
-            if not isinstance(data, list):
-                data = [data]
-            for item in data:
-                qty   = float(item.get("qty_sold", 0) or 0)
-                price = float(item.get("sale_price_ttc", 0) or 0)
-                ca_n1 += qty * price
-        except Exception:
-            pass
+        for item in extract_sales(h):
+            qty   = float(item.get("qty_sold", 0) or 0)
+            price = float(item.get("sale_price_ttc", 0) or 0)
+            ca_n1 += qty * price
 
     day_names = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"]
 
@@ -4871,23 +4942,17 @@ def get_dashboard(db: Session = Depends(get_db)):
     cnt_by_weekday = [0] * 7
     seen_days = {}   # weekday → set of days
     for h in weekday_hist:
-        try:
-            data = json.loads(h.data_json or "[]")
-            if not isinstance(data, list):
-                data = [data]
-            day_key = h.created_at.strftime("%Y-%m-%d")
-            wd = h.created_at.weekday()
-            revenue_day = 0.0
-            for item in data:
-                qty   = float(item.get("qty_sold", 0) or 0)
-                price = float(item.get("sale_price_ttc", 0) or 0)
-                revenue_day += qty * price
-            ca_by_weekday[wd] += revenue_day
-            if wd not in seen_days:
-                seen_days[wd] = set()
-            seen_days[wd].add(day_key)
-        except Exception:
-            pass
+        day_key = h.created_at.strftime("%Y-%m-%d")
+        wd = h.created_at.weekday()
+        revenue_day = 0.0
+        for item in extract_sales(h):
+            qty   = float(item.get("qty_sold", 0) or 0)
+            price = float(item.get("sale_price_ttc", 0) or 0)
+            revenue_day += qty * price
+        ca_by_weekday[wd] += revenue_day
+        if wd not in seen_days:
+            seen_days[wd] = set()
+        seen_days[wd].add(day_key)
     for wd, days_set in seen_days.items():
         cnt_by_weekday[wd] = len(days_set)
     ca_weekday = [
@@ -4927,16 +4992,10 @@ def get_dashboard(db: Session = Depends(get_db)):
                 )
                 ca_so_far = 0.0
                 for h in season_hist:
-                    try:
-                        data = json.loads(h.data_json or "[]")
-                        if not isinstance(data, list):
-                            data = [data]
-                        for item in data:
-                            qty   = float(item.get("qty_sold", 0) or 0)
-                            price = float(item.get("sale_price_ttc", 0) or 0)
-                            ca_so_far += qty * price
-                    except Exception:
-                        pass
+                    for item in extract_sales(h):
+                        qty   = float(item.get("qty_sold", 0) or 0)
+                        price = float(item.get("sale_price_ttc", 0) or 0)
+                        ca_so_far += qty * price
                 total_days = (ge - gs).days + 1
                 days_elapsed = max(0, min((today - gs).days + 1, total_days)) if today >= gs else 0
                 days_remaining = max(0, (ge - today).days + 1) if today <= ge else 0
