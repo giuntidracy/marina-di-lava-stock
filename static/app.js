@@ -3246,11 +3246,19 @@ function _renderOrderForm(el, existingNotes) {
     const hasQty = p.qty_input > 0;
     const prix = p.unit_price_ht != null ? p.unit_price_ht.toFixed(4) : "";
     const lineTotal = (p.qty_input > 0 && p.unit_price_ht) ? `€${(p.qty_input * p.unit_price_ht).toFixed(2)}` : "—";
+    const altBadge = (!p.is_cheapest && p.cheapest_elsewhere && p.savings_per_unit > 0)
+      ? `<div class="ord-alt-badge" title="Moins cher chez ${esc(p.cheapest_elsewhere.supplier_name)} à €${p.cheapest_elsewhere.price.toFixed(4)}">
+          💰 -€${p.savings_per_unit.toFixed(3)}/u chez ${esc(p.cheapest_elsewhere.supplier_name)}
+        </div>`
+      : (p.alternatives && p.alternatives.length > 0 && p.is_cheapest
+          ? `<div class="ord-best-badge" title="Prix le plus bas parmi ${p.alternatives.length + 1} fournisseurs">👑 Moins cher ici</div>`
+          : "");
     return `
     <tr class="ord-form-row ${hasQty ? 'ord-row-active' : ''}" id="ord-row-${i}">
       <td>
         <div class="ord-prod-name">${stockIcon} ${p.product_name}</div>
         <div class="ord-prod-cat">${p.category}</div>
+        ${altBadge}
       </td>
       <td class="ord-stock-cell ${p.stock_status === 'rupture' ? 'ord-stock-rupture' : p.stock_status === 'low' ? 'ord-stock-low' : ''}">
         ${stockVal}

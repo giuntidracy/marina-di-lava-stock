@@ -604,29 +604,124 @@ def get_orders(db: Session = Depends(get_db)):
 
 @app.get("/api/orders/suggestions/{supplier_id}")
 def get_order_suggestions(supplier_id: int, db: Session = Depends(get_db)):
-    """Retourne les produits du fournisseur avec suggestions de quantité à commander."""
-    products = db.query(Product).filter(Product.supplier_id == supplier_id).all()
+    """Retourne les produits du fournisseur avec suggestions de quantité et
+    comparaison multi-fournisseurs (alternative moins chère si elle existe)."""
+    # Produits rattachés à ce fournisseur : via supplier_id principal OU via ProductSupplier
+    primary_products = db.query(Product).filter(Product.supplier_id == supplier_id).all()
+    via_link = (
+        db.query(Product)
+        .join(ProductSupplier, ProductSupplier.product_id == Product.id)
+        .filter(ProductSupplier.supplier_id == supplier_id)
+        .all()
+    )
+    # Uniq sur id
+    seen = set()
+    products = []
+    for p in list(primary_products) + list(via_link):
+        if p.id not in seen:
+            seen.add(p.id)
+            products.append(p)
+
     result = []
     for p in products:
         stock = p.stock or 0
         threshold = p.alert_threshold or 0
-        # Suggestion : si stock < 3× seuil, commander pour remonter à 3× seuil
         target = threshold * 3
         suggested = max(0, target - stock)
+
+        # Prix chez CE fournisseur (via ProductSupplier si dispo, sinon purchase_price global)
+        link_here = next((ps for ps in (p.product_suppliers or []) if ps.supplier_id == supplier_id), None)
+        price_here = link_here.purchase_price if link_here and link_here.purchase_price is not None else p.purchase_price
+
+        # Alternatives : tous les autres fournisseurs avec un prix connu
+        alternatives = []
+        for ps in (p.product_suppliers or []):
+            if ps.supplier_id == supplier_id:
+                continue
+            if ps.purchase_price is None:
+                continue
+            alternatives.append({
+                "supplier_id":    ps.supplier_id,
+                "supplier_name":  ps.supplier.name if ps.supplier else "",
+                "price":          round(ps.purchase_price, 4),
+            })
+        alternatives.sort(key=lambda a: a["price"])
+
+        # Moins cher ailleurs ?
+        cheapest_elsewhere = alternatives[0] if alternatives else None
+        is_cheapest = True
+        savings_per_unit = 0.0
+        if cheapest_elsewhere and price_here is not None:
+            if cheapest_elsewhere["price"] < price_here:
+                is_cheapest = False
+                savings_per_unit = round(price_here - cheapest_elsewhere["price"], 4)
+
         result.append({
-            "product_id": p.id,
-            "product_name": p.name,
-            "category": p.category,
-            "stock": stock,
+            "product_id":      p.id,
+            "product_name":    p.name,
+            "category":        p.category,
+            "stock":           stock,
             "alert_threshold": threshold,
-            "unit_price_ht": p.purchase_price,
-            "suggested_qty": round(suggested, 0) if suggested > 0 else 0,
-            "stock_status": "rupture" if stock == 0 else ("low" if stock <= threshold else "ok"),
+            "unit_price_ht":   price_here,
+            "suggested_qty":   round(suggested, 0) if suggested > 0 else 0,
+            "stock_status":    "rupture" if stock == 0 else ("low" if stock <= threshold else "ok"),
+            "alternatives":    alternatives,
+            "is_cheapest":     is_cheapest,
+            "cheapest_elsewhere": cheapest_elsewhere,
+            "savings_per_unit": savings_per_unit,
         })
-    # Tri : ruptures en tête, puis stock bas, puis ok — par catégorie
     order_map = {"rupture": 0, "low": 1, "ok": 2}
     result.sort(key=lambda x: (order_map[x["stock_status"]], x["category"], x["product_name"]))
     return result
+
+
+@app.get("/api/orders/best-supplier-map")
+def get_best_supplier_map(db: Session = Depends(get_db)):
+    """
+    Pour chaque produit actif, retourne le fournisseur le moins cher (parmi ses
+    ProductSuppliers). Permet de générer un plan de commandes optimisé.
+    """
+    products = db.query(Product).filter(
+        (Product.archived == False) | (Product.archived == None)
+    ).all()
+    rows = []
+    for p in products:
+        links = [ps for ps in (p.product_suppliers or []) if ps.purchase_price is not None]
+        if not links:
+            # Fallback : supplier_id principal + purchase_price global
+            if p.supplier_id and p.purchase_price is not None:
+                rows.append({
+                    "product_id":    p.id,
+                    "product_name":  p.name,
+                    "category":      p.category,
+                    "stock":         p.stock or 0,
+                    "alert_threshold": p.alert_threshold or 0,
+                    "best_supplier_id":   p.supplier_id,
+                    "best_supplier_name": p.supplier_rel.name if p.supplier_rel else "",
+                    "best_price":    round(p.purchase_price, 4),
+                    "alternatives":  [],
+                })
+            continue
+        links_sorted = sorted(links, key=lambda x: x.purchase_price)
+        best = links_sorted[0]
+        rows.append({
+            "product_id":    p.id,
+            "product_name":  p.name,
+            "category":      p.category,
+            "stock":         p.stock or 0,
+            "alert_threshold": p.alert_threshold or 0,
+            "best_supplier_id":   best.supplier_id,
+            "best_supplier_name": best.supplier.name if best.supplier else "",
+            "best_price":    round(best.purchase_price, 4),
+            "alternatives":  [
+                {"supplier_id": l.supplier_id,
+                 "supplier_name": l.supplier.name if l.supplier else "",
+                 "price": round(l.purchase_price, 4)}
+                for l in links_sorted[1:]
+            ],
+        })
+    rows.sort(key=lambda x: (x["best_supplier_name"], x["category"], x["product_name"]))
+    return rows
 
 
 @app.post("/api/orders")
