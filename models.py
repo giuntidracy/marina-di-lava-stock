@@ -235,6 +235,30 @@ class DeliveryCheckItem(Base):
     product = relationship("Product")
 
 
+class OrderTemplate(Base):
+    """Modèle de commande récurrente (ex: 'Commande hebdo Socobo')."""
+    __tablename__ = "order_templates"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+
+    supplier = relationship("Supplier")
+    items = relationship("OrderTemplateItem", back_populates="template", cascade="all, delete-orphan")
+
+
+class OrderTemplateItem(Base):
+    __tablename__ = "order_template_items"
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, ForeignKey("order_templates.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    default_qty = Column(Float, default=0)
+
+    template = relationship("OrderTemplate", back_populates="items")
+    product = relationship("Product")
+
+
 class PriceHistory(Base):
     """Historique des variations de prix d'achat d'un produit."""
     __tablename__ = "price_history"

@@ -3375,7 +3375,9 @@ function _renderOrderForm(el, existingNotes) {
         Commande — <strong>${_orderFormSupplier.name}</strong>
         ${_orderEditId ? `<span class="ord-edit-badge">Modification</span>` : `<span class="ord-new-badge">Nouveau</span>`}
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-outline" onclick="openLoadTemplateModal()">📂 Charger template</button>
+        <button class="btn btn-outline" onclick="openSaveTemplateModal()">💾 Sauver comme template</button>
         <button class="btn btn-outline" onclick="autoFillSuggestions()">💡 Auto-remplir</button>
         <button class="btn btn-outline" onclick="clearOrderForm()">🗑 Vider</button>
       </div>
@@ -3451,6 +3453,105 @@ function recalcOrderTotal() {
   const lc = document.getElementById("ord-lines-count");
   if (el) el.textContent = total > 0 ? `€${total.toFixed(2)}` : "—";
   if (lc) lc.textContent = `${items.length} ligne${items.length > 1 ? "s" : ""}`;
+}
+
+// ─────────── Templates de commandes ──────────────────────────────────────
+async function openLoadTemplateModal() {
+  const supId = _orderFormSupplier?.id;
+  if (!supId) { alert("Fournisseur inconnu"); return; }
+  let templates = [];
+  try {
+    templates = await api(`/api/order-templates?supplier_id=${supId}`);
+  } catch(e) { alert("Erreur : " + e.message); return; }
+  if (templates.length === 0) {
+    alert(`Aucun template pour ${_orderFormSupplier.name}. Remplissez le formulaire et cliquez "💾 Sauver comme template".`);
+    return;
+  }
+  openModal(`
+    <h3 style="margin-bottom:12px">📂 Charger un template</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
+      Les quantités du template vont remplir le formulaire actuel. Vous pourrez les ajuster avant de créer la commande.
+    </p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      ${templates.map(t => `
+        <div class="tpl-row" style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div>
+            <div style="font-weight:700">${esc(t.name)}</div>
+            <div style="font-size:11px;color:var(--text-muted)">${t.items.length} produit(s) · ${t.last_used_at ? 'utilisé le '+new Date(t.last_used_at).toLocaleDateString('fr-FR') : 'jamais utilisé'}</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-primary btn-sm" onclick='applyOrderTemplate(${t.id}, ${JSON.stringify(t.items).replace(/'/g,"\\'")})'>Charger</button>
+            <button class="btn btn-outline btn-sm" onclick="deleteOrderTemplate(${t.id}, '${esc(t.name).replace(/'/g,"\\'")}')" style="color:#DC2626;border-color:#FECACA">🗑</button>
+          </div>
+        </div>`).join("")}
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-outline" onclick="closeModal()">Fermer</button>
+    </div>
+  `);
+}
+
+async function applyOrderTemplate(tid, items) {
+  // items = [{product_id, default_qty}]
+  (_orderFormData || []).forEach((row, i) => {
+    const match = items.find(it => it.product_id === row.product_id);
+    if (match) {
+      row.qty_input = match.default_qty;
+      updateOrderRow(i, match.default_qty);
+    }
+  });
+  try { await api(`/api/order-templates/${tid}/mark-used`, { method: "POST" }); } catch(_) {}
+  closeModal();
+  _renderOrderForm(document.getElementById("app"), document.getElementById("ord-notes")?.value || "");
+}
+
+async function deleteOrderTemplate(tid, name) {
+  if (!confirm(`Supprimer le template "${name}" ?`)) return;
+  try {
+    await api(`/api/order-templates/${tid}`, { method: "DELETE" });
+    openLoadTemplateModal();
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function openSaveTemplateModal() {
+  const supId = _orderFormSupplier?.id;
+  if (!supId) { alert("Fournisseur inconnu"); return; }
+  const items = (_orderFormData || [])
+    .filter(p => p.qty_input > 0)
+    .map(p => ({ product_id: p.product_id, default_qty: Number(p.qty_input), product_name: p.product_name }));
+  if (items.length === 0) { alert("Aucune quantité saisie — le template serait vide."); return; }
+
+  openModal(`
+    <h3 style="margin-bottom:12px">💾 Sauver comme template</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
+      Enregistre ${items.length} ligne(s) pour <strong>${esc(_orderFormSupplier.name)}</strong>. Au prochain appel, un clic remplira les mêmes quantités.
+    </p>
+    <div class="form-group">
+      <label>Nom du template</label>
+      <input type="text" id="tpl-name" placeholder="ex: Commande hebdo Socobo" autocomplete="off"/>
+    </div>
+    <div style="max-height:200px;overflow:auto;background:var(--surface-alt);border-radius:8px;padding:10px;font-size:12px">
+      ${items.map(it => `<div style="padding:2px 0">${esc(it.product_name)} × ${it.default_qty}</div>`).join("")}
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" onclick='submitSaveTemplate(${supId}, ${JSON.stringify(items).replace(/'/g,"\\'")})'>💾 Enregistrer</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById("tpl-name")?.focus(), 100);
+}
+
+async function submitSaveTemplate(supId, items) {
+  const name = document.getElementById("tpl-name")?.value?.trim();
+  if (!name) { alert("Nom requis"); return; }
+  try {
+    await api("/api/order-templates", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ name, supplier_id: supId, items: items.map(it => ({ product_id: it.product_id, default_qty: it.default_qty })) }),
+    });
+    closeModal();
+    alert("✓ Template enregistré");
+  } catch(e) { alert("Erreur : " + e.message); }
 }
 
 function autoFillSuggestions() {

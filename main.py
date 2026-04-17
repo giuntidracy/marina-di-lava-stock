@@ -37,7 +37,8 @@ from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
     CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
     SupplierOrder, SupplierOrderItem, Event, EventRequirement, ManualLoss, AppSetting, ServiceAlert,
-    StockSnapshot, DeliveryCheck, DeliveryCheckItem, PriceHistory
+    StockSnapshot, DeliveryCheck, DeliveryCheckItem, PriceHistory,
+    OrderTemplate, OrderTemplateItem
 )
 
 Base.metadata.create_all(bind=engine)
@@ -2019,6 +2020,101 @@ def manual_movement(body: ManualMovementIn, db: Session = Depends(get_db)):
     h = log_event(db, "mouvement_manuel", f"Mouvement manuel : {p.name} ({'+' if body.quantity >= 0 else ''}{body.quantity})", data)
     db.commit()
     return {"ok": True, "new_stock": p.stock, "history_id": h.id}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TEMPLATES DE COMMANDES (récurrentes)
+# ══════════════════════════════════════════════════════════════════════════
+
+class OrderTemplateItemIn(BaseModel):
+    product_id: int
+    default_qty: float = 0
+
+
+class OrderTemplateIn(BaseModel):
+    name: str
+    supplier_id: int
+    items: List[OrderTemplateItemIn] = []
+
+
+def _template_dict(t: OrderTemplate) -> dict:
+    return {
+        "id":           t.id,
+        "name":         t.name,
+        "supplier_id":  t.supplier_id,
+        "supplier_name": t.supplier.name if t.supplier else "",
+        "last_used_at": t.last_used_at.isoformat() + "Z" if t.last_used_at else None,
+        "created_at":   t.created_at.isoformat() + "Z" if t.created_at else None,
+        "items": [
+            {
+                "product_id":   it.product_id,
+                "product_name": it.product.name if it.product else "",
+                "unit":         it.product.unit if it.product else "",
+                "default_qty":  it.default_qty,
+            }
+            for it in (t.items or [])
+        ],
+    }
+
+
+@app.get("/api/order-templates")
+def list_order_templates(supplier_id: Optional[int] = None, db: Session = Depends(get_db)):
+    q = db.query(OrderTemplate).order_by(OrderTemplate.name.asc())
+    if supplier_id:
+        q = q.filter(OrderTemplate.supplier_id == supplier_id)
+    return [_template_dict(t) for t in q.all()]
+
+
+@app.post("/api/order-templates")
+def create_order_template(body: OrderTemplateIn, db: Session = Depends(get_db)):
+    if not body.name.strip():
+        raise HTTPException(400, "Nom requis")
+    t = OrderTemplate(name=body.name.strip(), supplier_id=body.supplier_id)
+    db.add(t)
+    db.flush()
+    for it in body.items:
+        if it.default_qty and it.default_qty > 0:
+            db.add(OrderTemplateItem(template_id=t.id, product_id=it.product_id, default_qty=float(it.default_qty)))
+    db.commit()
+    db.refresh(t)
+    return _template_dict(t)
+
+
+@app.put("/api/order-templates/{tid}")
+def update_order_template(tid: int, body: OrderTemplateIn, db: Session = Depends(get_db)):
+    t = db.query(OrderTemplate).get(tid)
+    if not t:
+        raise HTTPException(404)
+    t.name = body.name.strip() or t.name
+    t.supplier_id = body.supplier_id
+    for old in list(t.items):
+        db.delete(old)
+    for it in body.items:
+        if it.default_qty and it.default_qty > 0:
+            db.add(OrderTemplateItem(template_id=t.id, product_id=it.product_id, default_qty=float(it.default_qty)))
+    db.commit()
+    db.refresh(t)
+    return _template_dict(t)
+
+
+@app.delete("/api/order-templates/{tid}")
+def delete_order_template(tid: int, db: Session = Depends(get_db)):
+    t = db.query(OrderTemplate).get(tid)
+    if not t:
+        raise HTTPException(404)
+    db.delete(t)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/order-templates/{tid}/mark-used")
+def mark_template_used(tid: int, db: Session = Depends(get_db)):
+    t = db.query(OrderTemplate).get(tid)
+    if not t:
+        raise HTTPException(404)
+    t.last_used_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/price-history")
