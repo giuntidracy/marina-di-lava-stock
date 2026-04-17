@@ -4247,30 +4247,112 @@ async function saLoadHistory() {
       container.innerHTML = "";
       return;
     }
-    const recent = alerts.slice(0, 10);
-    container.innerHTML = `
-      <strong style="font-size:14px">Vos alertes récentes</strong>
-      <div class="sa-history-list">
-        ${recent.map(a => {
-          const statusMap = {
-            open: "🟡 En attente",
-            acknowledged: "🔵 Vue par la direction",
-            ordered: "🟢 Commandé",
-            resolved: "✅ Résolu",
-          };
-          return `<div class="sa-hist-row">
-            <div>
-              <strong>${esc(a.product_name)}</strong>
-              ${a.is_rupture ? '<span class="sa-badge-rupture">RUPTURE</span>' : `<span class="sa-badge-low">${a.reported_stock} restant</span>`}
-            </div>
-            <div>
-              <small style="color:var(--text-muted)">${esc(a.created_at)}</small>
-              <span class="sa-status">${statusMap[a.status] || a.status}</span>
-            </div>
-          </div>`;
-        }).join("")}
-      </div>`;
+
+    // Direction : vue avec sélection et commande
+    if (userRole === "manager") {
+      const openAlerts = alerts.filter(a => a.status === "open" || a.status === "acknowledged");
+
+      // Grouper les alertes ouvertes par fournisseur
+      const bySupplier = {};
+      openAlerts.forEach(a => {
+        const sup = a.supplier_name || "Sans fournisseur";
+        if (!bySupplier[sup]) bySupplier[sup] = [];
+        bySupplier[sup].push(a);
+      });
+
+      let openHtml = "";
+      if (openAlerts.length > 0) {
+        openHtml = `<div class="sa-direction-title">À traiter (${openAlerts.length})</div>`;
+        Object.entries(bySupplier).forEach(([sup, items]) => {
+          openHtml += `<div class="sa-supplier-group">
+            <div class="sa-supplier-header">
+              <strong>${esc(sup)}</strong>
+              ${sup !== "Sans fournisseur" ? `<button class="btn btn-sm btn-primary" onclick="saCommanderGroup('${esc(sup).replace(/'/g,"\\'")}')">🛒 Commander tout</button>` : ""}
+            </div>`;
+          items.forEach(a => {
+            openHtml += `<div class="sa-alert-row-dir">
+              <div class="sa-alert-info">
+                <strong>${esc(a.product_name)}</strong>
+                ${a.is_rupture ? '<span class="sa-badge-rupture">RUPTURE</span>' : `<span class="sa-badge-low">${a.reported_stock} restant</span>`}
+                <small style="color:var(--text-muted);display:block">${esc(a.staff_name)} · ${esc(a.created_at)}</small>
+                ${a.notes ? `<small style="color:var(--text-muted);font-style:italic">📝 ${esc(a.notes)}</small>` : ""}
+              </div>
+              <div class="sa-alert-actions-dir">
+                <button class="btn btn-sm btn-outline" onclick="saAckAlert(${a.id})">✓ Vu</button>
+              </div>
+            </div>`;
+          });
+          openHtml += `</div>`;
+        });
+      }
+
+      // Historique des résolues
+      const resolved = alerts.filter(a => a.status === "ordered" || a.status === "resolved").slice(0, 10);
+      let resolvedHtml = "";
+      if (resolved.length) {
+        resolvedHtml = `<div class="sa-direction-title" style="margin-top:20px">Traitées</div>
+          <div class="sa-history-list">${resolved.map(a => {
+            const statusMap = { ordered: "🟢 Commandé", resolved: "✅ Résolu" };
+            return `<div class="sa-hist-row">
+              <div><strong>${esc(a.product_name)}</strong></div>
+              <div><small style="color:var(--text-muted)">${esc(a.created_at)}</small> <span class="sa-status">${statusMap[a.status]}</span></div>
+            </div>`;
+          }).join("")}</div>`;
+      }
+
+      container.innerHTML = openHtml + resolvedHtml;
+    } else {
+      // Service : vue simple
+      const recent = alerts.slice(0, 10);
+      container.innerHTML = `
+        <strong style="font-size:14px">Vos alertes récentes</strong>
+        <div class="sa-history-list">
+          ${recent.map(a => {
+            const statusMap = {
+              open: "🟡 En attente",
+              acknowledged: "🔵 Vue par la direction",
+              ordered: "🟢 Commandé",
+              resolved: "✅ Résolu",
+            };
+            return `<div class="sa-hist-row">
+              <div>
+                <strong>${esc(a.product_name)}</strong>
+                ${a.is_rupture ? '<span class="sa-badge-rupture">RUPTURE</span>' : `<span class="sa-badge-low">${a.reported_stock} restant</span>`}
+              </div>
+              <div>
+                <small style="color:var(--text-muted)">${esc(a.created_at)}</small>
+                <span class="sa-status">${statusMap[a.status] || a.status}</span>
+              </div>
+            </div>`;
+          }).join("")}
+        </div>`;
+    }
   } catch(e) {}
+}
+
+async function saAckAlert(alertId) {
+  try {
+    await api(`/api/service-alerts/${alertId}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({}) });
+    showToast("Alerte mise à jour");
+    saLoadHistory();
+  } catch(e) { showToast("Erreur : " + e.message); }
+}
+
+async function saCommanderGroup(supplierName) {
+  const suppliers = allSuppliers.length ? allSuppliers : await api("/api/suppliers");
+  const supp = suppliers.find(s => s.name === supplierName);
+  if (!supp) { showToast("Fournisseur introuvable"); return; }
+
+  // Marquer les alertes comme "ordered"
+  const openAlerts = await api("/api/service-alerts?status=open");
+  const toOrder = openAlerts.filter(a => a.supplier_name === supplierName);
+  for (const a of toOrder) {
+    await api(`/api/service-alerts/${a.id}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({}) }).catch(() => {});
+    await api(`/api/service-alerts/${a.id}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({}) }).catch(() => {});
+  }
+
+  switchView("orders");
+  setTimeout(() => openOrderForm(supp.id, supp.name), 500);
 }
 
 // ══════════════════════════════════════════════════════════════════════════

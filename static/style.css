@@ -2259,6 +2259,26 @@ details[open] .history-details summary::before { content: '▼'; }
 }
 .sa-status { font-size: 12px; margin-left: 8px; }
 
+/* Direction view */
+.sa-direction-title {
+  font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 10px;
+}
+.sa-supplier-group {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  margin-bottom: 10px; overflow: hidden;
+}
+.sa-supplier-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; background: var(--surface-alt); border-bottom: 1px solid var(--border);
+}
+.sa-alert-row-dir {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border); gap: 8px;
+}
+.sa-alert-row-dir:last-child { border-bottom: none; }
+.sa-alert-info { flex: 1; min-width: 0; }
+.sa-alert-actions-dir { flex-shrink: 0; }
+
 /* Order page alerts */
 .ord-alerts-grid { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
 .ord-alert-card {
