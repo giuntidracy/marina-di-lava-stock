@@ -1334,6 +1334,7 @@ async function renderAlerts(el) {
 
     if (alerts.length > 0) {
       const groups = {
+        besoin_evenement: { label: "Besoin événement non couvert", icon: "🎉", alerts: [] },
         rupture:          { label: "Rupture de stock",      icon: "🔴", alerts: [] },
         stock_bas:        { label: "Stock bas",              icon: "⚠️", alerts: [] },
         marge:            { label: "Marge insuffisante",     icon: "📉", alerts: [] },
@@ -3806,13 +3807,30 @@ async function renderEvents(app) {
   loadEvents();
 }
 
+let __evCache = [];
+
 async function loadEvents() {
-  const [events, analysis] = await Promise.all([
+  const [events, analysis, products] = await Promise.all([
     api("/api/events"),
     api("/api/events/analysis"),
+    api("/api/produits").catch(() => allProducts || []),
   ]);
+  allProducts = products || allProducts || [];
   renderEventList(events);
   renderEventAnalysis(analysis);
+}
+
+function openEventFormById(eid) {
+  const ev = (__evCache || []).find(e => e.id === eid);
+  if (!ev) return;
+  openEventForm(
+    ev.id, ev.name, ev.event_type, ev.date,
+    ev.notes || "",
+    ev.end_date || "",
+    ev.start_time || "",
+    ev.end_time || "",
+    ev.requirements || []
+  );
 }
 
 function renderEventList(events) {
@@ -3825,9 +3843,23 @@ function renderEventList(events) {
     </div>`;
     return;
   }
+  __evCache = events;
   const rows = events.map(ev => {
     const icon = EVENT_TYPE_ICON[ev.event_type] || "🎉";
-    const esc = s => String(s || "").replace(/'/g, "\\'");
+    const reqs = ev.requirements || [];
+    let reqBlock = "";
+    if (reqs.length > 0) {
+      reqBlock = `<div class="ev-req-summary">
+        ${reqs.map(r => {
+          const miss = r.quantity > r.stock ? (r.quantity - r.stock) : 0;
+          const cls = miss > 0 ? "ev-req-pill-warn" : "ev-req-pill-ok";
+          const icon = miss > 0 ? "⚠️" : "✅";
+          return `<span class="ev-req-pill ${cls}" title="Stock ${r.stock} · demandé ${r.quantity}">
+            ${icon} ${esc(r.product_name)} ×${r.quantity}${miss > 0 ? ` (manque ${miss})` : ""}
+          </span>`;
+        }).join("")}
+      </div>`;
+    }
     return `<div class="ev-item" id="ev-item-${ev.id}">
       <div class="ev-item-icon">${icon}</div>
       <div class="ev-item-info">
@@ -3837,9 +3869,10 @@ function renderEventList(events) {
           <span class="ev-item-date">📅 ${formatEventRange(ev)}</span>
           ${ev.notes ? `<span class="ev-item-notes">· ${ev.notes}</span>` : ""}
         </div>
+        ${reqBlock}
       </div>
       <div class="ev-item-actions">
-        <button class="ev-btn-edit" onclick="openEventForm(${ev.id}, '${esc(ev.name)}', '${ev.event_type}', '${ev.date}', '${esc(ev.notes)}', '${ev.end_date || ''}', '${ev.start_time || ''}', '${ev.end_time || ''}')">✏️</button>
+        <button class="ev-btn-edit" onclick="openEventFormById(${ev.id})">✏️</button>
         <button class="ev-btn-del" onclick="deleteEvent(${ev.id})">🗑</button>
       </div>
     </div>`;
@@ -3848,13 +3881,14 @@ function renderEventList(events) {
     <div class="ev-list">${rows}</div>`;
 }
 
-function openEventForm(id=null, name="", type="Concert", date="", notes="", endDate="", startTime="", endTime="") {
+function openEventForm(id=null, name="", type="Concert", date="", notes="", endDate="", startTime="", endTime="", requirements=[]) {
   const area = document.getElementById("ev-form-area");
   if (!area) return;
   const today = new Date().toISOString().slice(0,10);
   const typeOpts = EVENT_TYPES.map(t =>
     `<option value="${t}" ${t === type ? "selected" : ""}>${EVENT_TYPE_ICON[t]||"🎉"} ${t}</option>`
   ).join("");
+  __evReqState = Array.isArray(requirements) ? [...requirements] : [];
   area.innerHTML = `<div class="ev-form">
     <div class="ev-form-title">${id ? "✏️ Modifier l'événement" : "➕ Nouvel événement"}</div>
     <div class="ev-form-grid">
@@ -3886,13 +3920,74 @@ function openEventForm(id=null, name="", type="Concert", date="", notes="", endD
         <label>Notes (optionnel)</label>
         <input id="evf-notes" type="text" placeholder="Ex: 300 personnes, soirée années 80…" value="${notes}"/>
       </div>
+      <div class="ev-field ev-field-full">
+        <label>Besoins spécifiques (boissons demandées par le client)</label>
+        <div id="evf-req-list" class="evf-req-list"></div>
+        <button type="button" class="evf-req-add" onclick="addEventRequirement()">+ Ajouter un besoin</button>
+      </div>
     </div>
     <div class="ev-form-footer">
       <button class="ev-save-btn" onclick="saveEvent(${id || 'null'})">💾 Enregistrer</button>
       <button class="ev-cancel-btn" onclick="cancelEventForm()">Annuler</button>
     </div>
   </div>`;
+  renderEventRequirements();
   area.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+let __evReqState = [];
+
+function renderEventRequirements() {
+  const list = document.getElementById("evf-req-list");
+  if (!list) return;
+  if (__evReqState.length === 0) {
+    list.innerHTML = `<div class="evf-req-empty">Aucun besoin spécifique. Cliquez sur « Ajouter un besoin » pour en définir un.</div>`;
+    return;
+  }
+  const prodOptions = (selId) => (allProducts || [])
+    .filter(p => !p.archived)
+    .map(p => `<option value="${p.id}" ${String(p.id) === String(selId) ? "selected" : ""}>${esc(p.name)}</option>`)
+    .join("");
+  list.innerHTML = __evReqState.map((r, i) => {
+    const p = (allProducts || []).find(x => String(x.id) === String(r.product_id));
+    const stock = p ? p.stock : 0;
+    const unit = p ? p.unit : "";
+    const qty = Number(r.quantity || 0);
+    const missing = qty > stock ? qty - stock : 0;
+    const badge = p
+      ? (missing > 0
+          ? `<span class="evf-req-warn">⚠️ Stock ${stock} ${esc(unit)} · manque ${missing}</span>`
+          : `<span class="evf-req-ok">✅ Stock ${stock} ${esc(unit)} suffisant</span>`)
+      : "";
+    return `<div class="evf-req-row">
+      <select class="evf-req-product" onchange="updateEventRequirement(${i}, 'product_id', this.value)">
+        <option value="">— Produit —</option>
+        ${prodOptions(r.product_id)}
+      </select>
+      <input type="number" class="evf-req-qty" min="0" step="1" value="${qty}"
+             placeholder="Qté"
+             oninput="updateEventRequirement(${i}, 'quantity', this.value)"/>
+      ${badge}
+      <button type="button" class="evf-req-del" onclick="removeEventRequirement(${i})" title="Supprimer">✕</button>
+    </div>`;
+  }).join("");
+}
+
+function addEventRequirement() {
+  __evReqState.push({ product_id: "", quantity: 1, notes: "" });
+  renderEventRequirements();
+}
+
+function updateEventRequirement(i, field, value) {
+  if (!__evReqState[i]) return;
+  if (field === "quantity") value = parseFloat(value) || 0;
+  __evReqState[i][field] = value;
+  renderEventRequirements();
+}
+
+function removeEventRequirement(i) {
+  __evReqState.splice(i, 1);
+  renderEventRequirements();
 }
 
 function cancelEventForm() {
@@ -3914,11 +4009,19 @@ async function saveEvent(id) {
   if (startTime && endTime && (!endDate || endDate === date) && endTime <= startTime) {
     alert("L'heure de fin doit être postérieure à l'heure de début."); return;
   }
+  const requirements = (__evReqState || [])
+    .filter(r => r.product_id && Number(r.quantity) > 0)
+    .map(r => ({
+      product_id: parseInt(r.product_id, 10),
+      quantity: Number(r.quantity),
+      notes: r.notes || "",
+    }));
   const body = {
     name, event_type: type, date, notes,
     end_date: endDate || null,
     start_time: startTime || "",
     end_time: endTime || "",
+    requirements,
   };
   try {
     const opts = { method: id ? "PUT" : "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) };

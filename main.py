@@ -36,7 +36,7 @@ from database import get_db, engine
 from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
     CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
-    SupplierOrder, SupplierOrderItem, Event, ManualLoss, AppSetting, ServiceAlert
+    SupplierOrder, SupplierOrderItem, Event, EventRequirement, ManualLoss, AppSetting, ServiceAlert
 )
 
 Base.metadata.create_all(bind=engine)
@@ -1190,6 +1190,52 @@ def get_alerts(db: Session = Depends(get_db)):
             })
         except Exception:
             pass
+
+    # ── Besoins événements : stock insuffisant pour un événement à venir ──
+    today_dt = datetime.combine(datetime.utcnow().date(), datetime.min.time())
+    upcoming = (
+        db.query(Event)
+        .filter(
+            (Event.date >= today_dt) |
+            ((Event.end_date != None) & (Event.end_date >= today_dt))
+        )
+        .order_by(Event.date.asc())
+        .all()
+    )
+    # Cumul des besoins par produit pour tous les événements à venir
+    cumul = {}   # product_id → [{"event": ev, "qty": q}]
+    for ev in upcoming:
+        for r in (ev.requirements or []):
+            if not r.product or not r.quantity:
+                continue
+            if r.product.archived:
+                continue
+            cumul.setdefault(r.product_id, []).append({"event": ev, "qty": r.quantity, "product": r.product})
+    for pid, entries in cumul.items():
+        p = entries[0]["product"]
+        total_need = sum(e["qty"] for e in entries)
+        if total_need > p.stock:
+            missing = total_need - p.stock
+            if len(entries) == 1:
+                ev = entries[0]["event"]
+                date_str = ev.date.strftime("%d/%m")
+                msg = (f"Besoin événement : {p.name} — {int(entries[0]['qty']) if entries[0]['qty'].is_integer() else entries[0]['qty']} "
+                       f"demandé pour « {ev.name} » ({date_str}), stock actuel {int(p.stock) if float(p.stock).is_integer() else p.stock} "
+                       f"→ manque {int(missing) if float(missing).is_integer() else round(missing, 2)}")
+            else:
+                noms = ", ".join(f"« {e['event'].name} »" for e in entries[:3])
+                if len(entries) > 3:
+                    noms += f" +{len(entries)-3}"
+                msg = (f"Besoin événements : {p.name} — {int(total_need) if total_need.is_integer() else total_need} demandés "
+                       f"({noms}), stock {int(p.stock) if float(p.stock).is_integer() else p.stock} "
+                       f"→ manque {int(missing) if float(missing).is_integer() else round(missing, 2)}")
+            alerts.append({
+                "type": "besoin_evenement",
+                "product_id": pid,
+                "product": p.name,
+                "message": msg,
+                "severity": "high",
+            })
     return alerts
 
 
@@ -3406,17 +3452,35 @@ def flash_control_history(db: Session = Depends(get_db)):
 #  MODULE ÉVÉNEMENTS / BOOST
 # ═══════════════════════════════════════════════════════════════════════════
 
+class EventRequirementIn(BaseModel):
+    product_id: int
+    quantity: float
+    notes: Optional[str] = ""
+
+
 class EventIn(BaseModel):
     name: str
     event_type: str = "Autre"
-    date: str                               # "YYYY-MM-DD" — date de début
-    end_date: Optional[str] = None          # "YYYY-MM-DD" — date de fin (optionnel)
-    start_time: Optional[str] = ""          # "HH:MM" optionnel
-    end_time: Optional[str] = ""            # "HH:MM" optionnel
+    date: str                                       # "YYYY-MM-DD" — date de début
+    end_date: Optional[str] = None                  # "YYYY-MM-DD" — date de fin (optionnel)
+    start_time: Optional[str] = ""                  # "HH:MM" optionnel
+    end_time: Optional[str] = ""                    # "HH:MM" optionnel
     notes: str = ""
+    requirements: Optional[List[EventRequirementIn]] = None
 
 
 def _event_to_dict(e: Event) -> dict:
+    reqs = []
+    for r in (e.requirements or []):
+        reqs.append({
+            "id": r.id,
+            "product_id": r.product_id,
+            "product_name": r.product.name if r.product else "",
+            "unit": r.product.unit if r.product else "",
+            "stock": r.product.stock if r.product else 0,
+            "quantity": r.quantity,
+            "notes": r.notes or "",
+        })
     return {
         "id": e.id,
         "name": e.name,
@@ -3427,6 +3491,7 @@ def _event_to_dict(e: Event) -> dict:
         "end_time": e.end_time or "",
         "notes": e.notes,
         "created_at": e.created_at.strftime("%d/%m/%Y") if e.created_at else "",
+        "requirements": reqs,
     }
 
 
@@ -3436,7 +3501,7 @@ def list_events(db: Session = Depends(get_db)):
     return [_event_to_dict(e) for e in evs]
 
 
-def _apply_event_body(ev: Event, body: EventIn):
+def _apply_event_body(ev: Event, body: EventIn, db: Session):
     ev.name = body.name
     ev.event_type = body.event_type or "Autre"
     ev.date = datetime.strptime(body.date, "%Y-%m-%d")
@@ -3450,13 +3515,25 @@ def _apply_event_body(ev: Event, body: EventIn):
     ev.start_time = (body.start_time or "").strip()
     ev.end_time = (body.end_time or "").strip()
     ev.notes = body.notes
+    # Requirements : on remplace intégralement la liste
+    if body.requirements is not None:
+        for old in list(ev.requirements or []):
+            db.delete(old)
+        for r in body.requirements:
+            if not r.product_id or r.quantity is None or r.quantity <= 0:
+                continue
+            ev.requirements.append(EventRequirement(
+                product_id=r.product_id,
+                quantity=float(r.quantity),
+                notes=(r.notes or "").strip(),
+            ))
 
 
 @app.post("/api/events")
 def create_event(body: EventIn, db: Session = Depends(get_db)):
     ev = Event()
-    _apply_event_body(ev, body)
     db.add(ev)
+    _apply_event_body(ev, body, db)
     db.commit()
     db.refresh(ev)
     return {"id": ev.id}
@@ -3467,7 +3544,7 @@ def update_event(eid: int, body: EventIn, db: Session = Depends(get_db)):
     ev = db.query(Event).get(eid)
     if not ev:
         raise HTTPException(404, "Événement introuvable")
-    _apply_event_body(ev, body)
+    _apply_event_body(ev, body, db)
     db.commit()
     return {"ok": True}
 

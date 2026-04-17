@@ -165,6 +165,21 @@ class Event(Base):
     notes = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    requirements = relationship("EventRequirement", back_populates="event", cascade="all, delete-orphan")
+
+
+class EventRequirement(Base):
+    """Besoin spécifique pour un événement : produit + quantité demandée."""
+    __tablename__ = "event_requirements"
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(Integer, ForeignKey("events.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    quantity = Column(Float, nullable=False, default=0)
+    notes = Column(String, default="")
+
+    event = relationship("Event", back_populates="requirements")
+    product = relationship("Product")
+
 
 class AppSetting(Base):
     """Paires clé-valeur pour stocker l'état de l'app (dernière sync Cashpad, etc.)."""
