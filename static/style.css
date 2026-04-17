@@ -1937,6 +1937,18 @@ html[data-theme="dark"] .pred-card-factor { background: rgba(201,169,97,0.18); c
 .dc-phys-input { background: rgba(59,130,246,0.06); }
 .dc-price-input { background: rgba(201,169,97,0.06); width: 90px; }
 
+/* Livraison partielle — items déjà appliqués au stock */
+.dc-row-applied { opacity: 0.65; background: rgba(22,163,74,0.05); }
+.dc-row-applied td { font-style: italic; }
+.dc-applied-pill {
+  display: inline-block; margin-left: 8px;
+  font-size: 10px; font-weight: 700;
+  padding: 2px 8px; border-radius: 999px;
+  background: rgba(22,163,74,0.15); color: #15803D;
+  vertical-align: middle;
+}
+html[data-theme="dark"] .dc-applied-pill { background: rgba(22,163,74,0.2); color: #4ADE80; }
+
 /* Dashboard card : contrôles livraison */
 .db-dc-row {
   display: flex; justify-content: space-between; align-items: center;

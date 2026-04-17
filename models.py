@@ -226,6 +226,7 @@ class DeliveryCheckItem(Base):
     qty_physical = Column(Float, nullable=True)   # saisi par le serveur (comptage aveugle)
     qty_validated = Column(Float, nullable=True)  # quantité finale validée = entrée en stock
     unit_price_ht = Column(Float, nullable=True)  # prix unitaire HT saisi depuis le BL
+    stock_applied = Column(Boolean, default=False)  # déjà ajouté au stock (évite doublon partiel)
     notes = Column(String, default="")            # "bouteille cassée", etc.
 
     check = relationship("DeliveryCheck", back_populates="items")

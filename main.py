@@ -75,6 +75,12 @@ with engine.connect() as _conn:
         _conn.commit()
     except Exception:
         pass
+    # stock_applied sur delivery_check_items (anti-doublon partiel)
+    try:
+        _conn.execute(_text("ALTER TABLE delivery_check_items ADD COLUMN stock_applied INTEGER DEFAULT 0"))
+        _conn.commit()
+    except Exception:
+        pass
     # vat_rate sur products (0.20 alcool / 0.10 softs)
     try:
         _conn.execute(_text("ALTER TABLE products ADD COLUMN vat_rate REAL DEFAULT 0.20"))
@@ -1021,6 +1027,7 @@ class DeliveryCheckValidateIn(BaseModel):
     validated_by: str
     overrides: Optional[List[dict]] = None  # [{item_id, qty_validated, notes}]
     apply_prices: bool = True   # mettre à jour Product.purchase_price depuis unit_price_ht
+    partial: bool = False        # validation partielle : le reste arrivera plus tard
 
 
 def _delivery_check_dict(c: DeliveryCheck, for_role: str = "manager") -> dict:
@@ -1055,6 +1062,7 @@ def _delivery_check_dict(c: DeliveryCheck, for_role: str = "manager") -> dict:
                 "qty_physical": it.qty_physical,
                 "qty_validated": None if hide_details else it.qty_validated,
                 "unit_price_ht": None if hide_details else it.unit_price_ht,
+                "stock_applied": bool(it.stock_applied),
                 "notes":        it.notes or "",
             }
             for it in (c.items or [])
@@ -1205,7 +1213,10 @@ def validate_delivery_check(cid: int, body: DeliveryCheckValidateIn, db: Session
     override_map = {o.get("item_id"): o for o in (body.overrides or [])}
     applied = []
     for it in c.items:
-        # Par défaut on prend le comptage physique, sinon le BL, sinon 0
+        # Skip items déjà appliqués lors d'une validation partielle précédente
+        if it.stock_applied:
+            continue
+
         qty_final = None
         if it.id in override_map and override_map[it.id].get("qty_validated") is not None:
             try:
@@ -1216,32 +1227,45 @@ def validate_delivery_check(cid: int, body: DeliveryCheckValidateIn, db: Session
                 it.notes = override_map[it.id]["notes"][:500]
         if qty_final is None:
             qty_final = it.qty_physical if it.qty_physical is not None else (it.qty_bl if it.qty_bl is not None else 0)
+
+        # En validation partielle : on ne traite que les items avec une qté > 0
+        if body.partial and (not qty_final or qty_final <= 0):
+            continue
+
         it.qty_validated = qty_final
 
-        # Appliquer au stock
         if it.product_id and qty_final and qty_final > 0:
             p = db.query(Product).get(it.product_id)
             if p:
                 p.stock = (p.stock or 0) + qty_final
+                it.stock_applied = True
                 applied.append({"product_id": p.id, "product_name": p.name, "added": qty_final})
-                # Mise à jour du prix d'achat si un prix a été saisi sur le BL
                 if body.apply_prices and it.unit_price_ht is not None and it.unit_price_ht > 0:
                     old_price = p.purchase_price
                     new_price = float(it.unit_price_ht)
                     if old_price is None or abs(old_price - new_price) > 0.001:
                         p.purchase_price = new_price
-                        p.is_estimated = False  # on a un vrai prix BL maintenant
+                        p.is_estimated = False
 
     c.validated_by = body.validated_by or c.validated_by or ""
-    c.validated_at = datetime.utcnow()
-    c.status = "validated"
+    # Statut final
+    remaining = [it for it in c.items if not it.stock_applied]
+    if body.partial and remaining:
+        c.status = "partial"
+        # ne pas figer validated_at en cas de partiel (attendu la suite)
+    else:
+        c.status = "validated"
+        c.validated_at = datetime.utcnow()
 
-    # Si lié à une commande → passer celle-ci en "received"
+    # Si lié à une commande → maj statut (partial ou received)
     if c.order_id:
         order = db.query(SupplierOrder).get(c.order_id)
         if order and order.status != "received":
-            order.status = "received"
-            order.received_at = datetime.utcnow()
+            if c.status == "validated":
+                order.status = "received"
+                order.received_at = datetime.utcnow()
+            elif c.status == "partial" and order.status != "partial":
+                order.status = "partial"
 
     log_event(
         db, "livraison",

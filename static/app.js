@@ -4799,6 +4799,7 @@ async function loadDeliveryChecks() {
       const buckets = {
         pending_count: { label: "⏳ En attente comptage serveur", rows: [] },
         counted:       { label: "🔎 À valider (compté, en attente direction)", rows: [] },
+        partial:       { label: "📦 Partiels (reste à livrer)", rows: [] },
         validated:     { label: "✅ Validés (stock mis à jour)", rows: [] },
       };
       checks.forEach(c => { (buckets[c.status] || buckets.validated).rows.push(c); });
@@ -4822,14 +4823,17 @@ function renderDcRow(c, role) {
   const dStr = d.toLocaleDateString("fr-FR", { day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" });
   const statusColor = c.status === "pending_count" ? "#f59e0b"
                     : c.status === "counted"       ? "#3b82f6"
+                    : c.status === "partial"       ? "#a855f7"
                     : c.status === "validated"     ? "#16a34a" : "#6b7280";
   const action = (role === "service" && c.status === "pending_count")
     ? `<button class="btn btn-primary btn-sm" onclick="openServerCountingForm(${c.id})">🔎 Compter</button>`
     : (role === "manager" && c.status === "counted")
       ? `<button class="btn btn-primary btn-sm" onclick="openManagerValidationForm(${c.id})">✅ Valider</button>`
-      : (role === "manager" && c.status === "pending_count")
-        ? `<button class="btn btn-outline btn-sm" onclick="openManagerValidationForm(${c.id})">Voir / compter moi-même</button>`
-        : `<button class="btn btn-outline btn-sm" onclick="openManagerValidationForm(${c.id})">Détails</button>`;
+      : (role === "manager" && c.status === "partial")
+        ? `<button class="btn btn-primary btn-sm" onclick="openManagerValidationForm(${c.id})">📦 Finaliser</button>`
+        : (role === "manager" && c.status === "pending_count")
+          ? `<button class="btn btn-outline btn-sm" onclick="openManagerValidationForm(${c.id})">Voir / compter moi-même</button>`
+          : `<button class="btn btn-outline btn-sm" onclick="openManagerValidationForm(${c.id})">Détails</button>`;
   return `<div class="dc-row">
     <div class="dc-row-head">
       <div>
@@ -4845,6 +4849,7 @@ function renderDcRow(c, role) {
       <span class="dc-status-badge" style="background:${statusColor}20;color:${statusColor};border:1px solid ${statusColor}40">
         ${c.status === "pending_count" ? "À compter"
          : c.status === "counted" ? "À valider"
+         : c.status === "partial" ? "Partiel"
          : c.status === "validated" ? "Validé" : c.status}
       </span>
     </div>
@@ -5014,7 +5019,8 @@ async function openManagerValidationForm(cid) {
     </div>` : ""}
     <div class="dc-count-footer" style="gap:10px">
       ${c.status !== "validated" ? `<button class="btn btn-danger btn-sm" onclick="rejectDeliveryCheck()">↩️ Rejeter (faire recompter)</button>` : ""}
-      ${c.status !== "validated" ? `<button class="btn btn-primary" onclick="validateDeliveryCheck()">✅ Valider et mettre à jour le stock</button>` : `<span style="color:#16a34a;font-weight:700">✅ Déjà validé</span>`}
+      ${c.status !== "validated" ? `<button class="btn btn-outline" onclick="validateDeliveryCheck(true)" title="Applique au stock seulement les produits avec quantité > 0, garde les autres en attente du reste de la livraison">📦 Valider partiellement</button>` : ""}
+      ${c.status !== "validated" ? `<button class="btn btn-primary" onclick="validateDeliveryCheck(false)">✅ Valider complet</button>` : `<span style="color:#16a34a;font-weight:700">✅ Déjà validé</span>`}
     </div>
   </div>`;
   _renderManagerValidationRows();
@@ -5039,7 +5045,8 @@ function _renderManagerValidationRows() {
         ? `<span class="dc-ecart dc-ecart-warn" title="BL vs Commande">🟠 ${diffExpBl > 0 ? '+' : ''}${diffExpBl}</span>`
         : ((phys != null || bl != null) ? `<span class="dc-ecart dc-ecart-ok">✓</span>` : `—`);
 
-    const canEditPhys = __dcState.status !== "validated";
+    const isApplied = it.stock_applied;
+    const canEditPhys = __dcState.status !== "validated" && !isApplied;
     const physCell = canEditPhys
       ? `<input type="number" class="dc-phys-input" min="0" step="1" value="${phys != null ? phys : ''}"
                 placeholder="qté comptée" oninput="setDcPhys(${i}, this.value)"/>`
@@ -5054,28 +5061,34 @@ function _renderManagerValidationRows() {
           ? `<div style="font-size:10px;color:var(--text-faint)">actuel €${curPrice.toFixed(3)}</div>`
           : "");
 
-    return `<tr>
-      <td><strong>${esc(it.product_name)}</strong>${it.notes ? `<br><span style="font-size:11px;color:var(--text-muted)">📝 ${esc(it.notes)}</span>` : ""}</td>
+    return `<tr class="${isApplied ? 'dc-row-applied' : ''}">
+      <td><strong>${esc(it.product_name)}</strong>
+        ${isApplied ? '<span class="dc-applied-pill">✓ Déjà reçu</span>' : ''}
+        ${it.notes ? `<br><span style="font-size:11px;color:var(--text-muted)">📝 ${esc(it.notes)}</span>` : ""}
+      </td>
       <td>${exp != null && exp > 0 ? exp : "—"}</td>
       <td>${physCell}</td>
       <td>
-        <input type="number" class="dc-bl-input" min="0" step="1" value="${bl != null ? bl : ''}"
+        ${isApplied ? `<span class="dc-muted">${bl != null ? bl : '—'}</span>`
+        : `<input type="number" class="dc-bl-input" min="0" step="1" value="${bl != null ? bl : ''}"
                placeholder="qté BL"
-               oninput="setDcBl(${i}, this.value)"/>
+               oninput="setDcBl(${i}, this.value)"/>`}
       </td>
       <td>
-        <input type="number" class="dc-price-input" min="0" step="0.001" value="${it.unit_price_ht != null ? it.unit_price_ht : ''}"
+        ${isApplied ? `<span class="dc-muted">${it.unit_price_ht != null ? '€'+it.unit_price_ht.toFixed(3) : '—'}</span>`
+        : `<input type="number" class="dc-price-input" min="0" step="0.001" value="${it.unit_price_ht != null ? it.unit_price_ht : ''}"
                placeholder="€ HT/u"
                oninput="setDcPrice(${i}, this.value)"/>
-        ${priceHint}
+        ${priceHint}`}
       </td>
-      <td>${ecartBadge}</td>
+      <td>${isApplied ? '<span class="dc-ecart dc-ecart-ok">✓ Stock</span>' : ecartBadge}</td>
       <td>
-        <input type="number" class="dc-final-input" min="0" step="1" value="${final}"
-               oninput="setDcFinal(${i}, this.value)"/>
+        ${isApplied ? `<span class="dc-muted">${it.qty_validated != null ? it.qty_validated : 0}</span>`
+        : `<input type="number" class="dc-final-input" min="0" step="1" value="${final}"
+               oninput="setDcFinal(${i}, this.value)"/>`}
       </td>
       <td>
-        ${__dcState.status !== "validated" ? `<button class="btn btn-sm" style="background:transparent;color:#DC2626;border:1px solid #FECACA;font-size:11px" onclick="removeDcItem(${it.id})" title="Retirer">✕</button>` : ""}
+        ${__dcState.status !== "validated" && !isApplied ? `<button class="btn btn-sm" style="background:transparent;color:#DC2626;border:1px solid #FECACA;font-size:11px" onclick="removeDcItem(${it.id})" title="Retirer">✕</button>` : ""}
       </td>
     </tr>`;
   }).join("");
@@ -5118,10 +5131,13 @@ function setDcBl(i, v)    { __dcState.items[i].qty_bl = v === "" ? null : parseF
 function setDcFinal(i, v) { __dcState.items[i].qty_validated = v === "" ? 0 : parseFloat(v); }
 function setDcPhys(i, v)  { __dcState.items[i].qty_physical = v === "" ? null : parseFloat(v); _renderManagerValidationRows(); }
 
-async function validateDeliveryCheck() {
+async function validateDeliveryCheck(partial = false) {
   const name = prompt("Votre nom (pour traçabilité) :", userName || "Direction");
   if (!name) return;
-  if (!confirm("Valider le contrôle ? Le stock sera mis à jour avec les quantités indiquées dans la colonne 'Qté à valider'. Action irréversible.")) return;
+  const msg = partial
+    ? "Valider partiellement ?\n\nSeuls les produits avec une quantité > 0 seront ajoutés au stock.\nLes autres resteront en attente pour la fin de la livraison."
+    : "Valider le contrôle ? Le stock sera mis à jour avec les quantités indiquées dans la colonne 'Qté à valider'. Action irréversible.";
+  if (!confirm(msg)) return;
 
   const blRef = document.getElementById("dc-bl-ref")?.value || "";
   try {
@@ -5153,14 +5169,17 @@ async function validateDeliveryCheck() {
       }),
     });
     // Puis valider
-    await api(`/api/delivery-checks/${__dcState.id}/validate`, {
+    const res = await api(`/api/delivery-checks/${__dcState.id}/validate`, {
       method: "POST", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({
         validated_by: name,
+        partial: !!partial,
         overrides: __dcState.items.map(it => ({ item_id: it.id, qty_validated: it.qty_validated })),
       }),
     });
-    alert("✅ Contrôle validé. Stock mis à jour.");
+    alert(partial
+      ? "📦 Validation partielle enregistrée. Le contrôle reste ouvert pour la suite de la livraison."
+      : "✅ Contrôle validé. Stock mis à jour.");
     allProducts = await api("/api/produits");
     updateAlertBadge();
     switchView("delivery_check");
