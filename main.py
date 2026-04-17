@@ -4777,6 +4777,161 @@ def get_dashboard(db: Session = Depends(get_db)):
 
     day_names = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"]
 
+    # ── Widget 1 : dernière synchro Cashpad ──────────────────────────────
+    last_sync_raw = _get_setting(db, "cashpad_last_sync", "")
+    last_sync_info = {"has_sync": False}
+    if last_sync_raw:
+        try:
+            last_sync_dt = datetime.fromisoformat(last_sync_raw)
+            delta = datetime.utcnow() - last_sync_dt
+            mins = int(delta.total_seconds() // 60)
+            hours = mins // 60
+            days = hours // 24
+            if mins < 60:
+                label = f"il y a {max(mins, 0)} min"
+            elif hours < 24:
+                label = f"il y a {hours} h"
+            elif days < 7:
+                label = f"il y a {days} jour{'s' if days > 1 else ''}"
+            else:
+                label = f"il y a {days} jours"
+            status = "ok" if hours < 24 else ("warn" if hours < 72 else "error")
+            last_sync_info = {
+                "has_sync":    True,
+                "iso":         last_sync_raw,
+                "label":       label,
+                "status":      status,
+                "date_fr":     to_local(last_sync_dt).strftime("%d/%m/%Y %H:%M"),
+            }
+        except Exception:
+            pass
+
+    # ── Widget 2 : commandes fournisseurs en attente (envoyées/partielles) ─
+    pending_orders_q = (
+        db.query(SupplierOrder)
+        .filter(SupplierOrder.status.in_(["sent", "partial"]))
+        .order_by(SupplierOrder.sent_at.asc())
+        .limit(10)
+        .all()
+    )
+    pending_orders = []
+    for o in pending_orders_q:
+        ref_date = o.sent_at or o.created_at
+        days_since = (datetime.utcnow() - ref_date).days if ref_date else 0
+        pending_orders.append({
+            "id":           o.id,
+            "reference":    o.reference,
+            "supplier":     o.supplier.name if o.supplier else "",
+            "status":       o.status,
+            "sent_at":      o.sent_at.isoformat() if o.sent_at else None,
+            "days_since":   days_since,
+            "n_items":      len(o.items or []),
+        })
+
+    # ── Widget 3 : CA par jour de la semaine (4 dernières semaines) ───────
+    range_start = datetime.combine(today - timedelta(days=28), datetime.min.time())
+    weekday_hist = (
+        db.query(StockHistory)
+        .filter(
+            StockHistory.event_type == "import_cashpad",
+            StockHistory.created_at >= range_start,
+        )
+        .all()
+    )
+    # weekday 0 = lundi
+    ca_by_weekday = [0.0] * 7
+    cnt_by_weekday = [0] * 7
+    seen_days = {}   # weekday → set of days
+    for h in weekday_hist:
+        try:
+            data = json.loads(h.data_json or "[]")
+            if not isinstance(data, list):
+                data = [data]
+            day_key = h.created_at.strftime("%Y-%m-%d")
+            wd = h.created_at.weekday()
+            revenue_day = 0.0
+            for item in data:
+                qty   = float(item.get("qty_sold", 0) or 0)
+                price = float(item.get("sale_price_ttc", 0) or 0)
+                revenue_day += qty * price
+            ca_by_weekday[wd] += revenue_day
+            if wd not in seen_days:
+                seen_days[wd] = set()
+            seen_days[wd].add(day_key)
+        except Exception:
+            pass
+    for wd, days_set in seen_days.items():
+        cnt_by_weekday[wd] = len(days_set)
+    ca_weekday = [
+        {
+            "day":      day_names[i],
+            "avg":      round(ca_by_weekday[i] / cnt_by_weekday[i], 2) if cnt_by_weekday[i] else 0,
+            "total":    round(ca_by_weekday[i], 2),
+            "n_days":   cnt_by_weekday[i],
+        }
+        for i in range(7)
+    ]
+
+    # ── Widget 4 : objectif CA saison ─────────────────────────────────────
+    try:
+        goal_amount = float(_get_setting(db, "season_goal_amount", "0") or 0)
+    except Exception:
+        goal_amount = 0.0
+    goal_start = _get_setting(db, "season_goal_start", "")   # "YYYY-MM-DD"
+    goal_end   = _get_setting(db, "season_goal_end",   "")
+
+    season_goal = {"configured": False, "amount": goal_amount, "start": goal_start, "end": goal_end}
+    if goal_amount > 0 and goal_start and goal_end:
+        try:
+            gs = datetime.strptime(goal_start, "%Y-%m-%d").date()
+            ge = datetime.strptime(goal_end,   "%Y-%m-%d").date()
+            if ge >= gs:
+                gs_dt = datetime.combine(gs, datetime.min.time())
+                ge_dt = datetime.combine(ge + timedelta(days=1), datetime.min.time())
+                season_hist = (
+                    db.query(StockHistory)
+                    .filter(
+                        StockHistory.event_type == "import_cashpad",
+                        StockHistory.created_at >= gs_dt,
+                        StockHistory.created_at <  ge_dt,
+                    )
+                    .all()
+                )
+                ca_so_far = 0.0
+                for h in season_hist:
+                    try:
+                        data = json.loads(h.data_json or "[]")
+                        if not isinstance(data, list):
+                            data = [data]
+                        for item in data:
+                            qty   = float(item.get("qty_sold", 0) or 0)
+                            price = float(item.get("sale_price_ttc", 0) or 0)
+                            ca_so_far += qty * price
+                    except Exception:
+                        pass
+                total_days = (ge - gs).days + 1
+                days_elapsed = max(0, min((today - gs).days + 1, total_days)) if today >= gs else 0
+                days_remaining = max(0, (ge - today).days + 1) if today <= ge else 0
+                pct = round((ca_so_far / goal_amount) * 100, 1) if goal_amount > 0 else 0
+                # Rythme nécessaire = (objectif - déjà fait) / jours restants
+                rythme = round((goal_amount - ca_so_far) / days_remaining, 2) if days_remaining > 0 else 0
+                season_goal = {
+                    "configured":       True,
+                    "amount":           round(goal_amount, 2),
+                    "start":            goal_start,
+                    "end":              goal_end,
+                    "ca_so_far":        round(ca_so_far, 2),
+                    "pct":              pct,
+                    "days_elapsed":     days_elapsed,
+                    "days_remaining":   days_remaining,
+                    "total_days":       total_days,
+                    "rythme_daily":     rythme,
+                    "before_start":     today < gs,
+                    "after_end":        today > ge,
+                }
+        except Exception:
+            pass
+
     return {
         "weather":         weather_summary,
         "events_upcoming": events_upcoming,
@@ -4787,4 +4942,37 @@ def get_dashboard(db: Session = Depends(get_db)):
         "ca_n1_date":      target_n1.strftime("%d/%m/%Y"),
         "ca_n1_day":       day_names[target_n1.weekday()],
         "top_products":    top_products,
+        "last_sync":       last_sync_info,
+        "pending_orders":  pending_orders,
+        "ca_weekday":      ca_weekday,
+        "season_goal":     season_goal,
     }
+
+
+# ── Endpoint pour configurer l'objectif de saison ─────────────────────────
+class SeasonGoalIn(BaseModel):
+    amount: float
+    start: str   # "YYYY-MM-DD"
+    end: str
+
+
+@app.get("/api/season-goal")
+def get_season_goal(db: Session = Depends(get_db)):
+    try:
+        amount = float(_get_setting(db, "season_goal_amount", "0") or 0)
+    except Exception:
+        amount = 0
+    return {
+        "amount": amount,
+        "start":  _get_setting(db, "season_goal_start", ""),
+        "end":    _get_setting(db, "season_goal_end", ""),
+    }
+
+
+@app.post("/api/season-goal")
+def set_season_goal(body: SeasonGoalIn, db: Session = Depends(get_db)):
+    _set_setting(db, "season_goal_amount", str(float(body.amount)))
+    _set_setting(db, "season_goal_start", body.start)
+    _set_setting(db, "season_goal_end", body.end)
+    db.commit()
+    return {"ok": True}

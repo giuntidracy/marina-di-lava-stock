@@ -5456,6 +5456,168 @@ async function flashDoCreate(event, index) {
 
 
 // ══════════════════════════════════════════════════════════════════════════
+// TABLEAU DE BORD — widgets
+// ══════════════════════════════════════════════════════════════════════════
+
+function renderLastSyncCard(sync) {
+  if (!sync) return "";
+  if (!sync.has_sync) {
+    return `<div class="db-card db-card-clickable" onclick="switchView('cashpad')" title="Importer depuis Cashpad">
+      <div class="db-card-title">⏱️ Dernière sync Cashpad</div>
+      <p class="db-empty">Aucun import enregistré</p>
+      <button class="db-shortcut-btn" onclick="event.stopPropagation();switchView('cashpad')">→ Importer maintenant</button>
+    </div>`;
+  }
+  const statusClass = sync.status === "ok" ? "db-sync-ok" : sync.status === "warn" ? "db-sync-warn" : "db-sync-error";
+  const icon = sync.status === "ok" ? "✅" : sync.status === "warn" ? "⚠️" : "🔴";
+  return `<div class="db-card db-card-clickable ${statusClass}" onclick="switchView('cashpad')" title="Ouvrir Cashpad">
+    <div class="db-card-title">⏱️ Dernière sync Cashpad</div>
+    <div class="db-sync-row">
+      <span class="db-sync-icon">${icon}</span>
+      <div>
+        <div class="db-sync-label">${esc(sync.label)}</div>
+        <div class="db-sync-date">${esc(sync.date_fr)}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderPendingOrdersCard(orders) {
+  orders = orders || [];
+  if (orders.length === 0) {
+    return `<div class="db-card db-card-clickable" onclick="switchView('orders')" title="Voir les commandes">
+      <div class="db-card-title">🛒 Commandes en attente</div>
+      <p class="db-empty">Aucune commande en attente ✅</p>
+    </div>`;
+  }
+  const rows = orders.slice(0, 5).map(o => {
+    const dayColor = o.days_since >= 5 ? "#dc2626" : o.days_since >= 3 ? "#f59e0b" : "#6b7280";
+    const daysLabel = o.days_since === 0 ? "aujourd'hui" : o.days_since === 1 ? "hier" : `il y a ${o.days_since}j`;
+    return `<div class="db-order-row">
+      <div class="db-order-main">
+        <span class="db-order-ref">${esc(o.reference)}</span>
+        <span class="db-order-sup">${esc(o.supplier || "—")}</span>
+      </div>
+      <span class="db-order-days" style="color:${dayColor}">${daysLabel}</span>
+    </div>`;
+  }).join("");
+  return `<div class="db-card db-card-clickable" onclick="switchView('orders')" title="Voir les commandes">
+    <div class="db-card-title">🛒 Commandes en attente <span class="db-card-badge">${orders.length}</span></div>
+    ${rows}
+  </div>`;
+}
+
+function renderWeekdayCaCard(weekdays) {
+  weekdays = weekdays || [];
+  const hasData = weekdays.some(d => d.n_days > 0);
+  if (!hasData) {
+    return `<div class="db-card db-card-clickable" onclick="switchView('stats')" title="Voir les statistiques">
+      <div class="db-card-title">📊 CA par jour de semaine</div>
+      <p class="db-empty">Pas encore assez de données (moins de 4 semaines d'imports)</p>
+    </div>`;
+  }
+  const maxAvg = Math.max(...weekdays.map(d => d.avg), 1);
+  const bars = weekdays.map(d => {
+    const h = Math.max(4, (d.avg / maxAvg) * 80);
+    const isTop = d.avg === maxAvg && d.avg > 0;
+    return `<div class="db-wd-col" title="${esc(d.day)} : moyenne €${d.avg.toFixed(0)} sur ${d.n_days} jour(s)">
+      <div class="db-wd-val">${d.avg > 0 ? "€" + d.avg.toFixed(0) : "—"}</div>
+      <div class="db-wd-bar-wrap"><div class="db-wd-bar ${isTop ? 'db-wd-bar-top' : ''}" style="height:${h}px"></div></div>
+      <div class="db-wd-day">${esc(d.day.slice(0,3))}</div>
+    </div>`;
+  }).join("");
+  return `<div class="db-card db-card-full db-card-clickable" onclick="switchView('stats')" title="Voir les statistiques">
+    <div class="db-card-title">📊 CA moyen par jour de la semaine <span class="db-card-sub">(4 dernières semaines)</span></div>
+    <div class="db-wd-grid">${bars}</div>
+  </div>`;
+}
+
+function renderSeasonGoalCard(goal) {
+  if (!goal) return "";
+  if (!goal.configured) {
+    return `<div class="db-card" style="cursor:default">
+      <div class="db-card-title">🎯 Objectif saison</div>
+      <p class="db-empty">Pas d'objectif défini</p>
+      <button class="db-shortcut-btn" onclick="openSeasonGoalModal()">＋ Définir un objectif</button>
+    </div>`;
+  }
+  const pct = Math.min(goal.pct || 0, 100);
+  const pctColor = pct >= 100 ? "#16a34a" : pct >= 75 ? "#84cc16" : pct >= 50 ? "#f59e0b" : "#dc2626";
+  let subLine;
+  if (goal.before_start) {
+    subLine = `Saison non commencée`;
+  } else if (goal.after_end) {
+    subLine = pct >= 100 ? `🏆 Objectif atteint !` : `Saison terminée (${pct.toFixed(1)}%)`;
+  } else {
+    const rythme = goal.rythme_daily || 0;
+    subLine = goal.days_remaining > 0
+      ? `Reste ${goal.days_remaining}j · il faut €${rythme.toFixed(0)}/jour`
+      : `Dernier jour !`;
+  }
+  const fmt = v => (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", maximumFractionDigits:0 });
+  return `<div class="db-card db-card-full">
+    <div class="db-card-title">🎯 Objectif saison
+      <button class="db-goal-edit" onclick="openSeasonGoalModal()" title="Modifier l'objectif">✏️</button>
+    </div>
+    <div class="db-goal-amounts">
+      <span class="db-goal-done">${fmt(goal.ca_so_far)}</span>
+      <span class="db-goal-sep">/ ${fmt(goal.amount)}</span>
+      <span class="db-goal-pct" style="color:${pctColor}">${pct.toFixed(1)}%</span>
+    </div>
+    <div class="db-goal-bar-wrap">
+      <div class="db-goal-bar" style="width:${pct}%;background:${pctColor}"></div>
+    </div>
+    <div class="db-goal-sub">${subLine}</div>
+  </div>`;
+}
+
+async function openSeasonGoalModal() {
+  let current = { amount: 0, start: "", end: "" };
+  try { current = await api("/api/season-goal"); } catch(_) {}
+  const thisYear = new Date().getFullYear();
+  openModal(`
+    <h3 style="margin-bottom:16px">🎯 Objectif CA saison</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
+      Définissez un objectif de chiffre d'affaires à atteindre sur la période de la saison.
+      La progression se base sur les imports Cashpad.
+    </p>
+    <div class="form-group">
+      <label>Objectif CA (€)</label>
+      <input type="number" id="sg-amount" step="100" min="0" value="${current.amount || 0}" placeholder="150000"/>
+    </div>
+    <div class="form-group">
+      <label>Date de début</label>
+      <input type="date" id="sg-start" value="${current.start || thisYear + '-05-01'}"/>
+    </div>
+    <div class="form-group">
+      <label>Date de fin</label>
+      <input type="date" id="sg-end" value="${current.end || thisYear + '-09-30'}"/>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="saveSeasonGoal()">💾 Enregistrer</button>
+    </div>`);
+}
+
+async function saveSeasonGoal() {
+  const amount = parseFloat(document.getElementById("sg-amount").value) || 0;
+  const start = document.getElementById("sg-start").value;
+  const end = document.getElementById("sg-end").value;
+  if (amount <= 0) { alert("Objectif invalide."); return; }
+  if (!start || !end) { alert("Dates requises."); return; }
+  if (end < start) { alert("La date de fin doit être postérieure à la date de début."); return; }
+  try {
+    await api("/api/season-goal", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ amount, start, end }),
+    });
+    closeModal();
+    renderDashboard(document.getElementById("app"));
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // TABLEAU DE BORD
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -5673,6 +5835,11 @@ async function renderDashboard(el) {
           <div class="db-card-title">📦 Top 3 produits vendus cette semaine</div>
           ${topsHtml}
         </div>
+
+        ${renderLastSyncCard(data.last_sync)}
+        ${renderPendingOrdersCard(data.pending_orders)}
+        ${renderWeekdayCaCard(data.ca_weekday)}
+        ${renderSeasonGoalCard(data.season_goal)}
 
         <div class="db-card db-card-full db-card-clickable" id="db-manque-gagner" onclick="switchView('shrinkage')" title="Voir la démarque">
           <div class="db-card-title">💸 Manque à gagner (ruptures)</div>
