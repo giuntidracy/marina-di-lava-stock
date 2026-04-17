@@ -32,7 +32,7 @@ from pydantic import BaseModel
 _sessions: dict = {}       # token → {role, expires}
 _pin_failures: dict = {}   # ip → {count, locked_until}
 
-from database import get_db, engine
+from database import get_db, engine, SessionLocal
 from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
     CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
@@ -355,6 +355,182 @@ def log_event(db: Session, event_type: str, description: str, data: dict = None)
     return h
 
 
+def _build_backup_zip() -> tuple:
+    """
+    Construit un ZIP des tables importantes en CSV.
+    Retourne (bytes, filename).
+    """
+    import csv
+    import zipfile
+    from io import StringIO, BytesIO
+
+    db = SessionLocal()
+    try:
+        def _csv(header, rows):
+            buf = StringIO()
+            w = csv.writer(buf, delimiter=";")
+            w.writerow(header)
+            w.writerows(rows)
+            return buf.getvalue().encode("utf-8-sig")
+
+        zip_buf = BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Produits
+            zf.writestr("products.csv", _csv(
+                ["id","name","category","stock","unit","alert_threshold","purchase_price",
+                 "sale_price_ttc","vat_rate","supplier_id","archived","is_estimated"],
+                [[p.id, p.name, p.category, p.stock, p.unit, p.alert_threshold,
+                  p.purchase_price, p.sale_price_ttc, p.vat_rate, p.supplier_id,
+                  bool(p.archived), bool(p.is_estimated)]
+                 for p in db.query(Product).all()]
+            ))
+            # Fournisseurs
+            zf.writestr("suppliers.csv", _csv(
+                ["id","name","contact","phone","email","categories"],
+                [[s.id, s.name, s.contact, s.phone, s.email, s.categories]
+                 for s in db.query(Supplier).all()]
+            ))
+            # Cocktails
+            zf.writestr("cocktails.csv", _csv(
+                ["id","name","sale_price_ttc"],
+                [[c.id, c.name, c.sale_price_ttc] for c in db.query(Cocktail).all()]
+            ))
+            zf.writestr("cocktail_ingredients.csv", _csv(
+                ["cocktail_id","product_id","dose_cl"],
+                [[i.cocktail_id, i.product_id, i.dose_cl] for i in db.query(CocktailIngredient).all()]
+            ))
+            # Historique stock
+            zf.writestr("stock_history.csv", _csv(
+                ["id","event_type","description","data_json","created_at"],
+                [[h.id, h.event_type, h.description, h.data_json,
+                  h.created_at.isoformat() if h.created_at else ""]
+                 for h in db.query(StockHistory).all()]
+            ))
+            # Commandes fournisseur
+            zf.writestr("supplier_orders.csv", _csv(
+                ["id","reference","supplier_id","status","notes","created_at","sent_at","received_at"],
+                [[o.id, o.reference, o.supplier_id, o.status, o.notes,
+                  o.created_at.isoformat() if o.created_at else "",
+                  o.sent_at.isoformat() if o.sent_at else "",
+                  o.received_at.isoformat() if o.received_at else ""]
+                 for o in db.query(SupplierOrder).all()]
+            ))
+            zf.writestr("supplier_order_items.csv", _csv(
+                ["order_id","product_id","product_name","qty_ordered","unit_price_ht"],
+                [[i.order_id, i.product_id, i.product_name, i.qty_ordered, i.unit_price_ht]
+                 for i in db.query(SupplierOrderItem).all()]
+            ))
+            # Événements
+            zf.writestr("events.csv", _csv(
+                ["id","name","event_type","date","end_date","start_time","end_time","notes"],
+                [[e.id, e.name, e.event_type,
+                  e.date.isoformat() if e.date else "",
+                  e.end_date.isoformat() if e.end_date else "",
+                  e.start_time, e.end_time, e.notes]
+                 for e in db.query(Event).all()]
+            ))
+            # Contrôles livraison
+            zf.writestr("delivery_checks.csv", _csv(
+                ["id","supplier_id","order_id","status","checked_by","validated_by",
+                 "bl_reference","created_at","validated_at"],
+                [[c.id, c.supplier_id, c.order_id, c.status, c.checked_by,
+                  c.validated_by, c.bl_reference,
+                  c.created_at.isoformat() if c.created_at else "",
+                  c.validated_at.isoformat() if c.validated_at else ""]
+                 for c in db.query(DeliveryCheck).all()]
+            ))
+            # Historique prix
+            zf.writestr("price_history.csv", _csv(
+                ["product_id","old_price","new_price","source","supplier_id","reference","changed_at"],
+                [[h.product_id, h.old_price, h.new_price, h.source, h.supplier_id, h.reference,
+                  h.changed_at.isoformat() if h.changed_at else ""]
+                 for h in db.query(PriceHistory).all()]
+            ))
+            # Pertes manuelles
+            zf.writestr("manual_losses.csv", _csv(
+                ["product_id","quantity","reason","notes","date","staff_name"],
+                [[l.product_id, l.quantity, l.reason, l.notes,
+                  l.date.isoformat() if l.date else "",
+                  l.staff_name]
+                 for l in db.query(ManualLoss).all()]
+            ))
+
+        data = zip_buf.getvalue()
+        ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        return data, f"marina-backup-{ts}.zip"
+    finally:
+        db.close()
+
+
+def _send_mailjet_with_attachment(subject: str, html: str, to_emails: list,
+                                   attachment_bytes: bytes, attachment_name: str,
+                                   attachment_mime: str = "application/zip") -> bool:
+    """Envoie un email via Mailjet avec un fichier joint."""
+    import urllib.request as _urllib
+    mailjet_key    = os.getenv("MAILJET_API_KEY", "").strip()
+    mailjet_secret = os.getenv("MAILJET_SECRET_KEY", "").strip()
+    if not mailjet_key or not mailjet_secret or not to_emails:
+        return False
+    from_addr = os.getenv("FROM_EMAIL", "marinadilava.commandes@gmail.com").strip()
+    creds = base64.b64encode(f"{mailjet_key}:{mailjet_secret}".encode()).decode()
+    b64 = base64.standard_b64encode(attachment_bytes).decode()
+    payload = json.dumps({
+        "Messages": [{
+            "From":     {"Email": from_addr, "Name": "Marina di Lava Backup"},
+            "To":       [{"Email": e.strip()} for e in to_emails if e.strip()],
+            "Subject":  subject,
+            "HTMLPart": html,
+            "Attachments": [{
+                "ContentType":   attachment_mime,
+                "Filename":      attachment_name,
+                "Base64Content": b64,
+            }],
+        }]
+    }).encode("utf-8")
+    try:
+        req = _urllib.Request(
+            "https://api.mailjet.com/v3.1/send",
+            data=payload,
+            headers={"Authorization": f"Basic {creds}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with _urllib.urlopen(req, timeout=30) as resp:
+            return 200 <= resp.status < 300
+    except Exception as e:
+        print(f"[Backup email] ❌ {e}")
+        return False
+
+
+def _run_weekly_backup():
+    """Job scheduler : backup + envoi email aux destinataires configurés."""
+    db = SessionLocal()
+    try:
+        recipients_raw = _get_setting(db, "backup_emails", "").strip()
+        recipients = [e.strip() for e in recipients_raw.split(",") if e.strip()]
+        if not recipients:
+            print("[Backup] skippé — aucun destinataire configuré")
+            return
+    finally:
+        db.close()
+
+    try:
+        data, filename = _build_backup_zip()
+    except Exception as e:
+        print(f"[Backup] échec construction ZIP : {e}")
+        return
+
+    subject = f"📦 Backup Marina di Lava — {datetime.utcnow().strftime('%d/%m/%Y')}"
+    html = f"""<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px">
+      <h2 style="color:#14532D">📦 Backup hebdomadaire</h2>
+      <p>Archive complète des données Marina di Lava ci-jointe.</p>
+      <p><strong>Fichier</strong> : {filename}<br>
+         <strong>Taille</strong> : {len(data)/1024:.1f} KB</p>
+      <p style="color:#666;font-size:12px;margin-top:20px">Conservez ce mail — c'est votre parachute en cas de crash serveur.</p>
+    </div>"""
+    ok = _send_mailjet_with_attachment(subject, html, recipients, data, filename)
+    print(f"[Backup] {'✓ envoyé' if ok else '❌ échec envoi'} à {len(recipients)} destinataire(s)")
+
+
 def _send_mailjet_email(subject: str, html_body: str, to_emails: list, from_name: str = "Marina di Lava Alertes") -> bool:
     """
     Envoie un email via Mailjet. Retourne True si ok, False sinon.
@@ -472,6 +648,59 @@ def _trigger_rupture_alerts(db: Session, context: str = ""):
         </div></div>"""
     _send_mailjet_email(subject, html, recipients, from_name="Marina di Lava Alertes")
     db.commit()
+
+
+class BackupSettingsIn(BaseModel):
+    emails: str
+
+
+@app.get("/api/backup-settings")
+def get_backup_settings(db: Session = Depends(get_db)):
+    return {"emails": _get_setting(db, "backup_emails", "")}
+
+
+@app.post("/api/backup-settings")
+def set_backup_settings(body: BackupSettingsIn, db: Session = Depends(get_db)):
+    _set_setting(db, "backup_emails", (body.emails or "").strip())
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/backup/run")
+def run_backup_now(db: Session = Depends(get_db)):
+    """Lance un backup + envoi email (manuel)."""
+    recipients_raw = _get_setting(db, "backup_emails", "").strip()
+    recipients = [e.strip() for e in recipients_raw.split(",") if e.strip()]
+    if not recipients:
+        raise HTTPException(400, "Aucun destinataire configuré dans les paramètres.")
+    try:
+        data, filename = _build_backup_zip()
+    except Exception as e:
+        raise HTTPException(500, f"Erreur construction backup : {e}")
+    html = f"""<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px">
+      <h2 style="color:#14532D">📦 Backup manuel Marina di Lava</h2>
+      <p>Archive ci-jointe.</p>
+      <p><strong>Fichier</strong> : {filename}<br><strong>Taille</strong> : {len(data)/1024:.1f} KB</p>
+    </div>"""
+    subject = f"📦 Backup Marina di Lava — {datetime.utcnow().strftime('%d/%m/%Y %H:%M')}"
+    ok = _send_mailjet_with_attachment(subject, html, recipients, data, filename)
+    if not ok:
+        raise HTTPException(500, "Échec envoi — vérifiez MAILJET_API_KEY/SECRET.")
+    return {"ok": True, "size_kb": round(len(data)/1024, 1), "sent_to": recipients}
+
+
+@app.get("/api/backup/download")
+def download_backup():
+    """Télécharge directement le ZIP de backup (sans email)."""
+    from fastapi.responses import Response
+    try:
+        data, filename = _build_backup_zip()
+    except Exception as e:
+        raise HTTPException(500, f"Erreur : {e}")
+    return Response(
+        content=data, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 class AlertSettingsIn(BaseModel):
@@ -5811,8 +6040,10 @@ try:
     _scheduler.add_job(_auto_sync_job, "interval", minutes=30, id="cashpad_sync", replace_existing=True)
     _scheduler.add_job(_weekly_snapshot_job, "cron", day_of_week="mon", hour=2, minute=0,
                        id="weekly_snapshot", replace_existing=True)
+    _scheduler.add_job(_run_weekly_backup, "cron", day_of_week="sun", hour=3, minute=0,
+                       id="weekly_backup", replace_existing=True)
     _scheduler.start()
-    print("[Cashpad] 🔄 Scheduler démarré — sync toutes les 30 min + snapshot hebdo lundi 02:00")
+    print("[Cashpad] 🔄 Scheduler démarré — sync 30min + snapshot lundi 02h + backup dimanche 03h")
 
 except Exception as _sched_err:
     print(f"[Cashpad] ⚠️ Scheduler non démarré : {_sched_err}")

@@ -5019,6 +5019,11 @@ async function renderDeliveryCheck(el) {
         <div id="alert-settings-area" style="font-size:12px;color:var(--text-muted)">Chargement…</div>
       </div>
 
+      <div style="margin-top:14px;padding:14px;background:var(--surface-alt);border-radius:10px;border:1px solid var(--border)">
+        <div style="font-weight:800;font-size:13px;margin-bottom:6px">📦 Backup automatique hebdomadaire</div>
+        <div id="backup-settings-area" style="font-size:12px;color:var(--text-muted)">Chargement…</div>
+      </div>
+
       <div style="margin-top:14px;display:flex;gap:12px;flex-wrap:wrap">
         <button class="btn" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA;font-weight:600" onclick="adminResetStocks()">
           🔄 Remettre tous les stocks à 0
@@ -5041,7 +5046,65 @@ async function renderDeliveryCheck(el) {
     ` : ""}
   </div>`;
   loadDeliveryChecks();
-  if (isManager) { loadRecentImports(); loadAlertSettings(); }
+  if (isManager) { loadRecentImports(); loadAlertSettings(); loadBackupSettings(); }
+}
+
+async function loadBackupSettings() {
+  const el = document.getElementById("backup-settings-area");
+  if (!el) return;
+  try {
+    const s = await api("/api/backup-settings");
+    el.innerHTML = `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:1 1 300px">
+          <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin-bottom:4px">Emails (séparés par ,)</label>
+          <input type="text" id="backup-emails-input" value="${esc(s.emails || '')}" placeholder="jm@marinadilava.fr, backup@..."
+                 style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px"/>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="saveBackupSettings()">💾 Sauver</button>
+        <button class="btn btn-outline btn-sm" onclick="runBackupNow()">📦 Backup maintenant</button>
+        <button class="btn btn-outline btn-sm" onclick="downloadBackup()" title="Télécharge directement sans email">⬇ Télécharger</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
+        Un ZIP de toutes les tables (produits, ventes, événements, commandes, historique prix…) est envoyé chaque <strong>dimanche 03h00</strong> aux destinataires configurés. Parachute en cas de crash Railway.
+      </div>
+    `;
+  } catch(e) { el.innerHTML = `Erreur : ${esc(e.message)}`; }
+}
+
+async function saveBackupSettings() {
+  const emails = document.getElementById("backup-emails-input")?.value || "";
+  try {
+    await api("/api/backup-settings", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ emails }),
+    });
+    alert("✓ Paramètres backup enregistrés");
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function runBackupNow() {
+  if (!confirm("Lancer un backup maintenant et l'envoyer par email ?")) return;
+  try {
+    const r = await api("/api/backup/run", { method: "POST" });
+    alert(`✓ Backup envoyé (${r.size_kb} KB) à : ${r.sent_to.join(", ")}`);
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function downloadBackup() {
+  try {
+    const r = await fetch("/api/backup/download", {
+      headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `marina-backup-${new Date().toISOString().slice(0,10)}.zip`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch(e) { alert("Erreur : " + e.message); }
 }
 
 async function loadAlertSettings() {
