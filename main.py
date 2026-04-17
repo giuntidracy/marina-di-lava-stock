@@ -68,6 +68,21 @@ with engine.connect() as _conn:
         _conn.commit()
     except Exception:
         pass
+    # vat_rate sur products (0.20 alcool / 0.10 softs)
+    try:
+        _conn.execute(_text("ALTER TABLE products ADD COLUMN vat_rate REAL DEFAULT 0.20"))
+        _conn.commit()
+        # Initialiser les taux selon la catégorie pour les produits existants
+        _CAT_VAT_10 = ["Eaux", "Sodas", "Cocktails SA"]
+        _conn.execute(_text(
+            "UPDATE products SET vat_rate = 0.10 WHERE category IN ('Eaux','Sodas','Cocktails SA')"
+        ))
+        _conn.execute(_text(
+            "UPDATE products SET vat_rate = 0.20 WHERE category NOT IN ('Eaux','Sodas','Cocktails SA')"
+        ))
+        _conn.commit()
+    except Exception:
+        pass
     # end_date / start_time / end_time sur events
     for _col, _ddl in [
         ("end_date",   "ALTER TABLE events ADD COLUMN end_date DATETIME"),
@@ -177,13 +192,14 @@ def calc_product(p: Product) -> dict:
     marge = None
     marge_color = "gray"
     valeur_stock = None
+    vat_rate = p.vat_rate if p.vat_rate is not None else 0.20
 
     if p.purchase_price is not None:
         cout_unitaire = p.purchase_price  # déjà en prix/unité individuelle
         valeur_stock = p.stock * cout_unitaire
 
     if cout_unitaire is not None and p.sale_price_ttc:
-        prix_ht = p.sale_price_ttc / 1.10
+        prix_ht = p.sale_price_ttc / (1 + vat_rate)
         if prix_ht > 0:
             marge = (prix_ht - cout_unitaire) / prix_ht * 100
             if marge >= 70:
@@ -222,6 +238,7 @@ def calc_product(p: Product) -> dict:
         "is_estimated": p.is_estimated,
         "barcode": p.barcode or "",
         "archived": bool(p.archived),
+        "vat_rate": vat_rate,
         "cout_unitaire": round(cout_unitaire, 4) if cout_unitaire is not None else None,
         "marge": round(marge, 1) if marge is not None else None,
         "marge_color": marge_color,
@@ -265,11 +282,19 @@ def calc_cocktail(c: Cocktail) -> dict:
                 "cost": None,
             })
 
+    # TVA du cocktail : 20 % si au moins un ingrédient est à 20 % (alcool), sinon 10 %
+    cocktail_vat = 0.10
+    for ing in c.ingredients:
+        p = ing.product
+        if p and (p.vat_rate is not None) and p.vat_rate >= 0.20:
+            cocktail_vat = 0.20
+            break
+
     marge = None
     marge_color = "gray"
     prix_vente_ht = None
     if c.sale_price_ttc:
-        prix_vente_ht = c.sale_price_ttc / 1.10
+        prix_vente_ht = c.sale_price_ttc / (1 + cocktail_vat)
         if prix_vente_ht > 0 and cout_matiere is not None:
             marge = (prix_vente_ht - cout_matiere) / prix_vente_ht * 100
             if marge >= 70:
@@ -289,6 +314,7 @@ def calc_cocktail(c: Cocktail) -> dict:
         "cout_matiere": round(cout_matiere, 4),
         "marge": round(marge, 1) if marge is not None else None,
         "marge_color": marge_color,
+        "vat_rate": cocktail_vat,
         "ingredients": ingredients_detail,
     }
 
@@ -865,6 +891,7 @@ class ProductIn(BaseModel):
     sale_price_ttc: Optional[float] = None
     is_estimated: bool = False
     barcode: str = ""
+    vat_rate: float = 0.20
 
 
 @app.get("/api/produits")
@@ -1163,7 +1190,8 @@ def get_alerts(db: Session = Depends(get_db)):
             })
         if p.purchase_price and p.sale_price_ttc:
             cout = p.purchase_price  # déjà en prix/unité individuelle
-            ht = p.sale_price_ttc / 1.10
+            vat_r = p.vat_rate if p.vat_rate is not None else 0.20
+            ht = p.sale_price_ttc / (1 + vat_r)
             if ht > 0:
                 marge = (ht - cout) / ht * 100
                 if marge < 50 and not p.is_estimated:

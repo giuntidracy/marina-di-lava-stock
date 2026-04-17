@@ -799,13 +799,14 @@ function exportStockCSV() {
   if (alert === "low")  rows = rows.filter(p => p.stock > 0 && p.stock <= p.alert_threshold);
   if (search) rows = rows.filter(p => p.name.toLowerCase().includes(search));
 
-  const headers = ["Produit","Catégorie","Fournisseur","Stock","Unité","Seuil","Coût unitaire","PV TTC","PV HT","Marge HT %","Valeur stock","Estimé"];
+  const headers = ["Produit","Catégorie","Fournisseur","Stock","Unité","Seuil","Coût unitaire","PV TTC","TVA %","PV HT","Marge HT %","Valeur stock","Estimé"];
   const csvRows = [headers.join(";")];
   rows.forEach(p => {
-    const pvHT = p.sale_price_ttc ? (p.sale_price_ttc / 1.10).toFixed(4) : "";
+    const vat = (p.vat_rate != null ? p.vat_rate : 0.20);
+    const pvHT = p.sale_price_ttc ? (p.sale_price_ttc / (1 + vat)).toFixed(4) : "";
     csvRows.push([
       p.name, p.category, p.supplier_name || "", p.stock, p.unit, p.alert_threshold,
-      p.cout_unitaire ?? "", p.sale_price_ttc ?? "", pvHT,
+      p.cout_unitaire ?? "", p.sale_price_ttc ?? "", (vat * 100).toFixed(0), pvHT,
       p.marge !== null ? p.marge.toFixed(1) : "",
       p.valeur_stock !== null ? p.valeur_stock.toFixed(2) : "",
       p.is_estimated ? "oui" : "non"
@@ -867,7 +868,7 @@ function filterStock() {
       <td>${esc(p.category)}</td>
       <td class="${stockClass(p.stock, p.alert_threshold)}">${fmtStock(p)}</td>
       <td class="col-desktop">${p.cout_unitaire !== null ? "€" + p.cout_unitaire.toFixed(3) : "—"}</td>
-      <td class="col-desktop">${p.sale_price_ttc !== null ? "€" + p.sale_price_ttc.toFixed(2) : "—"}</td>
+      <td class="col-desktop">${p.sale_price_ttc !== null ? "€" + p.sale_price_ttc.toFixed(2) + `<span class="vat-tag">${Math.round((p.vat_rate != null ? p.vat_rate : 0.20) * 100)}%</span>` : "—"}</td>
       <td class="col-desktop">${margePill(p.marge, p.marge_color, p.is_estimated)}</td>
       <td class="col-desktop">${p.valeur_stock !== null ? "€" + p.valeur_stock.toFixed(2) : "—"}</td>
       <td>${renderSupplierCell(p)}</td>
@@ -1039,6 +1040,14 @@ function openProductForm(id) {
           <label>Prix vente TTC</label>
           <input type="number" name="sale_price_ttc" step="0.01" value="${p && p.sale_price_ttc !== null ? p.sale_price_ttc : ''}"/>
         </div>
+        <div class="form-group">
+          <label>TVA</label>
+          <select name="vat_rate">
+            <option value="0.20" ${!p || p.vat_rate == null || Math.abs(p.vat_rate - 0.20) < 0.001 ? 'selected' : ''}>20 % (alcool)</option>
+            <option value="0.10" ${p && Math.abs((p.vat_rate || 0) - 0.10) < 0.001 ? 'selected' : ''}>10 % (softs, eaux, cocktails SA)</option>
+            <option value="0.055" ${p && Math.abs((p.vat_rate || 0) - 0.055) < 0.001 ? 'selected' : ''}>5,5 %</option>
+          </select>
+        </div>
       </div>
       <div class="form-row-3">
         <div class="form-group">
@@ -1161,6 +1170,7 @@ async function submitProductForm(e, id) {
     sale_price_ttc:  fd.get("sale_price_ttc")  ? parseFloat(fd.get("sale_price_ttc"))  : null,
     is_estimated:    fd.get("is_estimated") === "on",
     barcode:         fd.get("barcode") || "",
+    vat_rate:        fd.get("vat_rate") ? parseFloat(fd.get("vat_rate")) : 0.20,
   };
   try {
     let pid = id;
@@ -1204,7 +1214,7 @@ function renderCocktails(el) {
             <tr>
               <td><strong>${esc(c.name)}</strong></td>
               <td>${c.sale_price_ttc !== null ? "€"+c.sale_price_ttc.toFixed(2) : "—"}</td>
-              <td>${c.sale_price_ttc !== null ? "€"+(c.sale_price_ttc/1.10).toFixed(2) : "—"}</td>
+              <td>${c.sale_price_ttc !== null ? "€"+(c.sale_price_ttc / (1 + (c.vat_rate != null ? c.vat_rate : 0.20))).toFixed(2) : "—"}</td>
               <td>€${c.cout_matiere.toFixed(3)}</td>
               <td>${margePill(c.marge, c.marge_color, false)}</td>
               <td style="font-size:12px;color:var(--text-muted)">

@@ -228,6 +228,16 @@ html[data-theme="dark"] ::-webkit-scrollbar-track { background: transparent; }
 html[data-theme="dark"] .estimated-tag { background: rgba(245,158,11,.2); color: #FDE68A; }
 html[data-theme="dark"] .archived-badge { background: #4B5563; }
 
+/* TVA tag (sur prix TTC) */
+.vat-tag {
+  display: inline-block; margin-left: 6px;
+  font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 999px;
+  background: rgba(201,169,97,0.15); color: #9C7B2E;
+  vertical-align: middle;
+}
+html[data-theme="dark"] .vat-tag { background: rgba(201,169,97,0.2); color: #E5C878; }
+
 /* Bouton theme-toggle dans la top bar */
 .theme-toggle-btn {
   background: transparent; border: 1px solid var(--border);

@@ -33,6 +33,7 @@ class Product(Base):
     is_estimated = Column(Boolean, default=False)
     barcode = Column(String, default="")
     archived = Column(Boolean, default=False)
+    vat_rate = Column(Float, default=0.20)   # 0.20 pour alcool, 0.10 pour softs/restauration
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
