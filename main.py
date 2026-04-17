@@ -4503,7 +4503,7 @@ def get_dashboard(db: Session = Depends(get_db)):
             ((Event.end_date != None) & (Event.end_date >= today_dt))
         )
         .order_by(Event.date.asc())
-        .limit(3)
+        .limit(15)
         .all()
     )
     events_upcoming = [

@@ -2183,6 +2183,9 @@ details[open] .history-details summary::before { content: '▼'; }
 .db-event-row:last-child { border-bottom: none; }
 .db-event-clickable { cursor: pointer; transition: background .15s, padding .15s; border-radius: 6px; }
 .db-event-clickable:hover { background: var(--input-bg, rgba(255,255,255,.05)); padding-left: 8px; padding-right: 8px; }
+.db-events-scroll { max-height: 320px; overflow-y: auto; padding-right: 4px; }
+.db-events-scroll::-webkit-scrollbar { width: 6px; }
+.db-events-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 .db-event-date {
   font-size: 12px;
   font-weight: 700;

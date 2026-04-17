@@ -5576,7 +5576,7 @@ async function renderDashboard(el) {
 
         <div class="db-card">
           <div class="db-card-title">📅 Prochains événements</div>
-          ${eventsHtml}
+          <div class="db-events-scroll">${eventsHtml}</div>
         </div>
 
         <div class="db-card db-card-full">
