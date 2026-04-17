@@ -2181,6 +2181,8 @@ details[open] .history-details summary::before { content: '▼'; }
   border-bottom: 1px solid var(--border);
 }
 .db-event-row:last-child { border-bottom: none; }
+.db-event-clickable { cursor: pointer; transition: background .15s, padding .15s; border-radius: 6px; }
+.db-event-clickable:hover { background: var(--input-bg, rgba(255,255,255,.05)); padding-left: 8px; padding-right: 8px; }
 .db-event-date {
   font-size: 12px;
   font-weight: 700;

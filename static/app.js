@@ -5454,7 +5454,7 @@ async function renderDashboard(el) {
   } else {
     eventsHtml = events.map(ev => {
       const dStr = formatEventRange(ev, { short: true });
-      return `<div class="db-event-row">
+      return `<div class="db-event-row db-event-clickable" onclick="switchView('events')" title="Ouvrir les événements">
         <span class="db-event-date">${dStr}</span>
         <span class="db-event-name">${esc(ev.name)}</span>
         <span class="db-event-type">${esc(ev.event_type || "")}</span>
