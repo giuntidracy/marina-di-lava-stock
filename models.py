@@ -158,7 +158,10 @@ class Event(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)          # "Concert vendredi soir"
     event_type = Column(String, default="Autre")   # "Concert", "Soirée", "Brunch"…
-    date = Column(DateTime, nullable=False)
+    date = Column(DateTime, nullable=False)        # date de début
+    end_date = Column(DateTime, nullable=True)     # date de fin (null = événement 1 jour)
+    start_time = Column(String, default="")        # "HH:MM" optionnel
+    end_time = Column(String, default="")          # "HH:MM" optionnel
     notes = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 

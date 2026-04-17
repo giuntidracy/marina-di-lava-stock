@@ -68,6 +68,17 @@ with engine.connect() as _conn:
         _conn.commit()
     except Exception:
         pass
+    # end_date / start_time / end_time sur events
+    for _col, _ddl in [
+        ("end_date",   "ALTER TABLE events ADD COLUMN end_date DATETIME"),
+        ("start_time", "ALTER TABLE events ADD COLUMN start_time TEXT DEFAULT ''"),
+        ("end_time",   "ALTER TABLE events ADD COLUMN end_time TEXT DEFAULT ''"),
+    ]:
+        try:
+            _conn.execute(_text(_ddl))
+            _conn.commit()
+        except Exception:
+            pass
 
     # app_settings table
     try:
@@ -3398,32 +3409,53 @@ def flash_control_history(db: Session = Depends(get_db)):
 class EventIn(BaseModel):
     name: str
     event_type: str = "Autre"
-    date: str          # "YYYY-MM-DD"
+    date: str                               # "YYYY-MM-DD" — date de début
+    end_date: Optional[str] = None          # "YYYY-MM-DD" — date de fin (optionnel)
+    start_time: Optional[str] = ""          # "HH:MM" optionnel
+    end_time: Optional[str] = ""            # "HH:MM" optionnel
     notes: str = ""
+
+
+def _event_to_dict(e: Event) -> dict:
+    return {
+        "id": e.id,
+        "name": e.name,
+        "event_type": e.event_type,
+        "date": e.date.strftime("%Y-%m-%d"),
+        "end_date": e.end_date.strftime("%Y-%m-%d") if e.end_date else None,
+        "start_time": e.start_time or "",
+        "end_time": e.end_time or "",
+        "notes": e.notes,
+        "created_at": e.created_at.strftime("%d/%m/%Y") if e.created_at else "",
+    }
 
 
 @app.get("/api/events")
 def list_events(db: Session = Depends(get_db)):
     evs = db.query(Event).order_by(Event.date.desc()).all()
-    return [
-        {
-            "id": e.id, "name": e.name, "event_type": e.event_type,
-            "date": e.date.strftime("%Y-%m-%d"),
-            "notes": e.notes,
-            "created_at": e.created_at.strftime("%d/%m/%Y") if e.created_at else "",
-        }
-        for e in evs
-    ]
+    return [_event_to_dict(e) for e in evs]
+
+
+def _apply_event_body(ev: Event, body: EventIn):
+    ev.name = body.name
+    ev.event_type = body.event_type or "Autre"
+    ev.date = datetime.strptime(body.date, "%Y-%m-%d")
+    if body.end_date:
+        end = datetime.strptime(body.end_date, "%Y-%m-%d")
+        if end < ev.date:
+            raise HTTPException(400, "La date de fin doit être postérieure à la date de début.")
+        ev.end_date = end
+    else:
+        ev.end_date = None
+    ev.start_time = (body.start_time or "").strip()
+    ev.end_time = (body.end_time or "").strip()
+    ev.notes = body.notes
 
 
 @app.post("/api/events")
 def create_event(body: EventIn, db: Session = Depends(get_db)):
-    ev = Event(
-        name=body.name,
-        event_type=body.event_type or "Autre",
-        date=datetime.strptime(body.date, "%Y-%m-%d"),
-        notes=body.notes,
-    )
+    ev = Event()
+    _apply_event_body(ev, body)
     db.add(ev)
     db.commit()
     db.refresh(ev)
@@ -3435,10 +3467,7 @@ def update_event(eid: int, body: EventIn, db: Session = Depends(get_db)):
     ev = db.query(Event).get(eid)
     if not ev:
         raise HTTPException(404, "Événement introuvable")
-    ev.name = body.name
-    ev.event_type = body.event_type or "Autre"
-    ev.date = datetime.strptime(body.date, "%Y-%m-%d")
-    ev.notes = body.notes
+    _apply_event_body(ev, body)
     db.commit()
     return {"ok": True}
 
@@ -3484,7 +3513,19 @@ def get_events_analysis(db: Session = Depends(get_db)):
                 daily_consumption[day][pid] = daily_consumption[day].get(pid, 0) + qty
 
     # ── 2. Baseline : jours sans événement ───────────────────────────────
-    all_event_days = {ev.date.strftime("%Y-%m-%d") for ev in events}
+    def _event_days(ev):
+        start = ev.date.date() if hasattr(ev.date, "date") else ev.date
+        end = (ev.end_date.date() if ev.end_date and hasattr(ev.end_date, "date") else (ev.end_date or start))
+        if end < start:
+            end = start
+        days = []
+        cur = start
+        while cur <= end:
+            days.append(cur.strftime("%Y-%m-%d"))
+            cur += timedelta(days=1)
+        return days
+
+    all_event_days = {d for ev in events for d in _event_days(ev)}
     non_event_days = {d: c for d, c in daily_consumption.items() if d not in all_event_days}
 
     baseline: dict = {}
@@ -3510,12 +3551,19 @@ def get_events_analysis(db: Session = Depends(get_db)):
         n_with_data = 0
         event_list = []
         for ev in evs:
-            day = ev.date.strftime("%Y-%m-%d")
-            event_list.append({"id": ev.id, "name": ev.name, "date": ev.date.strftime("%d/%m/%Y")})
-            if day in daily_consumption:
+            days = _event_days(ev)
+            date_label = ev.date.strftime("%d/%m/%Y")
+            if ev.end_date and ev.end_date != ev.date:
+                date_label = f"{ev.date.strftime('%d/%m/%Y')} → {ev.end_date.strftime('%d/%m/%Y')}"
+            event_list.append({"id": ev.id, "name": ev.name, "date": date_label})
+            had_data = False
+            for day in days:
+                if day in daily_consumption:
+                    had_data = True
+                    for pid, qty in daily_consumption[day].items():
+                        event_consumption[pid] += qty
+            if had_data:
                 n_with_data += 1
-                for pid, qty in daily_consumption[day].items():
-                    event_consumption[pid] += qty
 
         if not event_consumption:
             results.append({
@@ -4369,10 +4417,14 @@ def get_dashboard(db: Session = Depends(get_db)):
             except Exception:
                 weather_summary = {"configured": True, "stale": True}
 
-    # ── Prochains événements ──────────────────────────────────────────────
+    # ── Prochains événements (inclut événements multi-jours en cours) ─────
+    today_dt = datetime.combine(today, datetime.min.time())
     upcoming_events_q = (
         db.query(Event)
-        .filter(Event.date >= datetime.combine(today, datetime.min.time()))
+        .filter(
+            (Event.date >= today_dt) |
+            ((Event.end_date != None) & (Event.end_date >= today_dt))
+        )
         .order_by(Event.date.asc())
         .limit(3)
         .all()
@@ -4383,6 +4435,9 @@ def get_dashboard(db: Session = Depends(get_db)):
             "name":       ev.name,
             "event_type": ev.event_type,
             "date":       ev.date.isoformat(),
+            "end_date":   ev.end_date.isoformat() if ev.end_date else None,
+            "start_time": ev.start_time or "",
+            "end_time":   ev.end_time or "",
         }
         for ev in upcoming_events_q
     ]

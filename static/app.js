@@ -3757,6 +3757,27 @@ function formatDate(iso) {
   return d.toLocaleDateString("fr-FR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" });
 }
 
+function formatEventRange(ev, opts = {}) {
+  if (!ev || !ev.date) return "";
+  const short = !!opts.short;
+  const fmt = d => {
+    const o = new Date(d);
+    return o.toLocaleDateString("fr-FR", short
+      ? { day: "numeric", month: "short" }
+      : { day: "2-digit", month: "2-digit", year: "numeric" });
+  };
+  const startStr = fmt(ev.date);
+  const hasRange = ev.end_date && ev.end_date !== ev.date;
+  let out = hasRange ? `${startStr} → ${fmt(ev.end_date)}` : startStr;
+  if (ev.start_time || ev.end_time) {
+    const t = ev.start_time && ev.end_time
+      ? `${ev.start_time} – ${ev.end_time}`
+      : (ev.start_time || ev.end_time);
+    out += ` · ${t}`;
+  }
+  return out;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  MODULE ÉVÉNEMENTS / BOOST ÉVÉNEMENTIEL
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3806,18 +3827,19 @@ function renderEventList(events) {
   }
   const rows = events.map(ev => {
     const icon = EVENT_TYPE_ICON[ev.event_type] || "🎉";
+    const esc = s => String(s || "").replace(/'/g, "\\'");
     return `<div class="ev-item" id="ev-item-${ev.id}">
       <div class="ev-item-icon">${icon}</div>
       <div class="ev-item-info">
         <div class="ev-item-name">${ev.name}</div>
         <div class="ev-item-meta">
           <span class="ev-badge">${ev.event_type}</span>
-          <span class="ev-item-date">📅 ${ev.date}</span>
+          <span class="ev-item-date">📅 ${formatEventRange(ev)}</span>
           ${ev.notes ? `<span class="ev-item-notes">· ${ev.notes}</span>` : ""}
         </div>
       </div>
       <div class="ev-item-actions">
-        <button class="ev-btn-edit" onclick="openEventForm(${ev.id}, '${ev.name.replace(/'/g,"\\'")}', '${ev.event_type}', '${ev.date}', '${(ev.notes||"").replace(/'/g,"\\'")}')">✏️</button>
+        <button class="ev-btn-edit" onclick="openEventForm(${ev.id}, '${esc(ev.name)}', '${ev.event_type}', '${ev.date}', '${esc(ev.notes)}', '${ev.end_date || ''}', '${ev.start_time || ''}', '${ev.end_time || ''}')">✏️</button>
         <button class="ev-btn-del" onclick="deleteEvent(${ev.id})">🗑</button>
       </div>
     </div>`;
@@ -3826,7 +3848,7 @@ function renderEventList(events) {
     <div class="ev-list">${rows}</div>`;
 }
 
-function openEventForm(id=null, name="", type="Concert", date="", notes="") {
+function openEventForm(id=null, name="", type="Concert", date="", notes="", endDate="", startTime="", endTime="") {
   const area = document.getElementById("ev-form-area");
   if (!area) return;
   const today = new Date().toISOString().slice(0,10);
@@ -3838,15 +3860,27 @@ function openEventForm(id=null, name="", type="Concert", date="", notes="") {
     <div class="ev-form-grid">
       <div class="ev-field">
         <label>Nom de l'événement</label>
-        <input id="evf-name" type="text" placeholder="Ex: Concert Rock, Soirée DJ…" value="${name}"/>
+        <input id="evf-name" type="text" placeholder="Ex: Concert Rock, Tournoi Bridge…" value="${name}"/>
       </div>
       <div class="ev-field">
         <label>Type</label>
         <select id="evf-type">${typeOpts}</select>
       </div>
       <div class="ev-field">
-        <label>Date</label>
+        <label>Date de début</label>
         <input id="evf-date" type="date" value="${date || today}"/>
+      </div>
+      <div class="ev-field">
+        <label>Date de fin <span class="ev-hint">(optionnel)</span></label>
+        <input id="evf-end-date" type="date" value="${endDate || ''}" placeholder="Si événement sur plusieurs jours"/>
+      </div>
+      <div class="ev-field">
+        <label>Heure de début <span class="ev-hint">(optionnel)</span></label>
+        <input id="evf-start-time" type="time" value="${startTime || ''}"/>
+      </div>
+      <div class="ev-field">
+        <label>Heure de fin <span class="ev-hint">(optionnel)</span></label>
+        <input id="evf-end-time" type="time" value="${endTime || ''}"/>
       </div>
       <div class="ev-field ev-field-full">
         <label>Notes (optionnel)</label>
@@ -3867,13 +3901,25 @@ function cancelEventForm() {
 }
 
 async function saveEvent(id) {
-  const name  = document.getElementById("evf-name").value.trim();
-  const type  = document.getElementById("evf-type").value;
-  const date  = document.getElementById("evf-date").value;
-  const notes = document.getElementById("evf-notes").value.trim();
+  const name      = document.getElementById("evf-name").value.trim();
+  const type      = document.getElementById("evf-type").value;
+  const date      = document.getElementById("evf-date").value;
+  const endDate   = document.getElementById("evf-end-date").value;
+  const startTime = document.getElementById("evf-start-time").value;
+  const endTime   = document.getElementById("evf-end-time").value;
+  const notes     = document.getElementById("evf-notes").value.trim();
   if (!name) { alert("Nom de l'événement requis"); return; }
-  if (!date) { alert("Date requise"); return; }
-  const body = { name, event_type: type, date, notes };
+  if (!date) { alert("Date de début requise"); return; }
+  if (endDate && endDate < date) { alert("La date de fin doit être postérieure à la date de début."); return; }
+  if (startTime && endTime && (!endDate || endDate === date) && endTime <= startTime) {
+    alert("L'heure de fin doit être postérieure à l'heure de début."); return;
+  }
+  const body = {
+    name, event_type: type, date, notes,
+    end_date: endDate || null,
+    start_time: startTime || "",
+    end_time: endTime || "",
+  };
   try {
     const opts = { method: id ? "PUT" : "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) };
     if (id) {
@@ -5304,8 +5350,7 @@ async function renderDashboard(el) {
       <button class="db-shortcut-btn" onclick="switchView('events')">＋ Ajouter un événement</button>`;
   } else {
     eventsHtml = events.map(ev => {
-      const d = new Date(ev.date);
-      const dStr = d.toLocaleDateString("fr-FR", { day:"numeric", month:"short" });
+      const dStr = formatEventRange(ev, { short: true });
       return `<div class="db-event-row">
         <span class="db-event-date">${dStr}</span>
         <span class="db-event-name">${esc(ev.name)}</span>
