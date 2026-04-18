@@ -1346,7 +1346,7 @@ function renderCocktails(el) {
       <button class="btn btn-primary" onclick="openCocktailForm(null)">+ Nouveau cocktail</button>
     </div>
     <div class="table-wrap">
-      <table>
+      <table class="cocktails-table">
         <thead>
           <tr><th>Cocktail</th><th>PV TTC</th><th>PV HT</th><th>Coût matière</th><th>Marge HT</th><th>Ingrédients</th><th></th></tr>
         </thead>

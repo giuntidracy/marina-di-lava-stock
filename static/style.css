@@ -1349,6 +1349,30 @@ details[open] .history-details summary::before { content: '▼'; }
   .reserve-qty-btn { width: 44px; height: 44px; }
 }
 
+/* Resserrements propres pour iPhone étroit (≤430px) */
+@media (max-width: 430px) {
+  /* Tables : padding réduit + cellule actions qui wrap */
+  th, td { padding: 7px 6px; font-size: 12px; }
+  td[style*="white-space:nowrap"],
+  td[style*="white-space: nowrap"] {
+    white-space: normal !important;
+  }
+  td[style*="white-space:nowrap"] .btn,
+  td[style*="white-space: nowrap"] .btn {
+    margin: 2px 2px 0 0;
+  }
+  /* Stock actions : 5 boutons trop à l'étroit, on wrap */
+  tbody td:last-child .btn-sm { padding: 6px 8px; font-size: 12px; min-height: 36px; }
+
+  /* Cocktails table : masquer PV HT et Coût matière sur mobile */
+  .cocktails-table th:nth-child(3),
+  .cocktails-table td:nth-child(3),
+  .cocktails-table th:nth-child(4),
+  .cocktails-table td:nth-child(4) {
+    display: none;
+  }
+}
+
 /* ══════════════════════════════════════════════
    SCROLLBAR
 ══════════════════════════════════════════════ */
@@ -1618,9 +1642,13 @@ html[data-theme="dark"] .ord-best-badge {
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 12px;
 }
+@media (max-width: 430px) {
+  .pred-grid { grid-template-columns: 1fr; gap: 8px; }
+}
 .pred-card {
   border-radius: var(--radius); padding: 14px 16px;
   border: 1.5px solid; position: relative; overflow: hidden;
+  word-break: break-word; overflow-wrap: break-word;
 }
 .pred-card::before {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
@@ -2572,6 +2600,12 @@ html[data-theme="dark"] .sh-auto-loss-eur { color: #F87171; }
   background: linear-gradient(180deg, rgba(201,169,97,0.025), transparent 60%);
   border-radius: 10px;
   margin-top: 4px;
+}
+@media (max-width: 430px) {
+  .db-wd-grid { gap: 3px; padding: 12px 4px 4px; }
+  .db-wd-val { font-size: 10px; }
+  .db-wd-day { font-size: 10px; letter-spacing: -.2px; }
+  .db-wd-bar-wrap { height: 70px; }
 }
 .db-wd-col { display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; }
 .db-wd-val { font-size: 11px; font-weight: 700; color: var(--text); height: 14px; letter-spacing: -.2px; }
