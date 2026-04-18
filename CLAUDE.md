@@ -57,4 +57,7 @@ Règles de travail pour Claude Code, inspirées des 4 règles de Boris Cherny (c
 
 ## Règles spécifiques au projet Marina di Lava Stock
 
-*(à ajouter au fur et à mesure via la règle 03)*
+### R-01 — Cache-buster après modif frontend
+À chaque modification de `static/app.js` ou `static/style.css`, **incrémenter le paramètre `?v=...`** dans `static/index.html` (lignes `<link rel="stylesheet">` et `<script src="/static/app.js">`). Sinon Safari iOS (et navigateurs en général) servent l'ancienne version depuis le cache → l'utilisateur ne voit jamais le nouveau code, même après reload.
+
+Format conseillé : `?v=YYYYMMDDa` (a → b → c si plusieurs déploiements le même jour).
