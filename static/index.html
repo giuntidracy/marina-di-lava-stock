@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Marina di Lava — Gestion Stock</title>
-<link rel="stylesheet" href="/static/style.css?v=20260418d"/>
+<link rel="stylesheet" href="/static/style.css?v=20260418e"/>
 </head>
 <body>
 
@@ -62,28 +62,23 @@
         <button class="nav-item" data-view="dashboard"><span class="nav-icon">🏠</span><span class="nav-label">Tableau de bord</span></button>
       </div>
 
-      <div class="nav-group" id="navg-quotidien">
-        <span class="nav-group-label">Au quotidien</span>
-        <button class="nav-item" data-view="cashpad"><span class="nav-icon">💳</span><span class="nav-label">Import Cashpad</span></button>
+      <div class="nav-group" id="navg-ops">
+        <span class="nav-group-label">Opérations</span>
+        <button class="nav-item" data-view="orders"><span class="nav-icon">🛒</span><span class="nav-label">Commandes</span></button>
+        <button class="nav-item" data-view="delivery_check"><span class="nav-icon">🚚</span><span class="nav-label">Contrôle livraison</span><span id="dc-badge" class="nav-badge hidden">0</span></button>
         <button class="nav-item" data-view="inventory"><span class="nav-icon">🍸</span><span class="nav-label">Sortie Réserve</span></button>
         <button class="nav-item" data-view="flash"><span class="nav-icon">📸</span><span class="nav-label">Inventaire Flash</span></button>
-        <button class="nav-item" data-view="delivery_check"><span class="nav-icon">🚚</span><span class="nav-label">Contrôle livraison</span><span id="dc-badge" class="nav-badge hidden">0</span></button>
-        <button class="nav-item" data-view="alerts"><span class="nav-icon">🚨</span><span class="nav-label">Alertes</span><span id="alert-badge" class="nav-badge hidden">0</span></button>
+        <button class="nav-item" data-view="cashpad"><span class="nav-icon">💳</span><span class="nav-label">Import Cashpad</span></button>
+        <button class="nav-item" data-view="events"><span class="nav-icon">🎉</span><span class="nav-label">Événements</span></button>
         <button class="nav-item" data-view="service_alert"><span class="nav-icon">🚨</span><span class="nav-label">Alerte Stock</span></button>
       </div>
 
       <div class="nav-group" id="navg-stock">
-        <span class="nav-group-label">Stock</span>
+        <span class="nav-group-label">Stock &amp; Marges</span>
         <button class="nav-item" data-view="stock"><span class="nav-icon">📦</span><span class="nav-label">Stock &amp; Marges</span></button>
         <button class="nav-item" data-view="cocktails"><span class="nav-icon">🍹</span><span class="nav-label">Cocktails &amp; Marges</span></button>
+        <button class="nav-item" data-view="alerts"><span class="nav-icon">🚨</span><span class="nav-label">Alertes</span><span id="alert-badge" class="nav-badge hidden">0</span></button>
         <button class="nav-item" data-view="shrinkage"><span class="nav-icon">📉</span><span class="nav-label">Démarque</span></button>
-      </div>
-
-      <div class="nav-group" id="navg-gestion">
-        <span class="nav-group-label">Gestion</span>
-        <button class="nav-item" data-view="orders"><span class="nav-icon">🛒</span><span class="nav-label">Commandes</span></button>
-        <button class="nav-item" data-view="suppliers"><span class="nav-icon">🏪</span><span class="nav-label">Fournisseurs</span></button>
-        <button class="nav-item" data-view="events"><span class="nav-icon">🎉</span><span class="nav-label">Événements</span></button>
       </div>
 
       <div class="nav-group" id="navg-analyse">
@@ -94,6 +89,7 @@
 
       <div class="nav-group" id="navg-config">
         <span class="nav-group-label">Configuration</span>
+        <button class="nav-item" data-view="suppliers"><span class="nav-icon">🏪</span><span class="nav-label">Fournisseurs</span></button>
         <button class="nav-item" data-view="mapping"><span class="nav-icon">🗺️</span><span class="nav-label">Mapping Cashpad</span></button>
         <button class="nav-item" data-view="admin"><span class="nav-icon">⚙️</span><span class="nav-label">Administration</span></button>
       </div>
@@ -157,6 +153,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-<script src="/static/app.js?v=20260418d"></script>
+<script src="/static/app.js?v=20260418e"></script>
 </body>
 </html>
