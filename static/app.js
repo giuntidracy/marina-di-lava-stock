@@ -186,6 +186,7 @@ const VIEW_TITLES = {
   inventory:"Sortie Réserve", flash:"Inventaire Flash", service_alert:"Alerte Stock",
   stats:"Statistiques", history:"Historique",
   events:"Événements", suppliers:"Fournisseurs", orders:"Commandes", mapping:"Mapping Cashpad",
+  admin:"Administration",
 };
 
 function switchView(view) {
@@ -244,6 +245,7 @@ function renderView(view) {
     case "flash":     renderFlash(app); break;
     case "service_alert": renderServiceAlert(app); break;
     case "delivery_check": renderDeliveryCheck(app); break;
+    case "admin":     renderAdmin(app); break;
   }
 }
 
@@ -2196,18 +2198,33 @@ async function adminResetStocks() {
 }
 
 async function adminClearImports() {
+  const includeValidated = confirm(
+    "Inclure aussi les livraisons déjà VALIDÉES ?\n\n" +
+    "• OK : supprime TOUT et rollback le stock (les quantités validées sont retirées du stock).\n" +
+    "• Annuler : supprime seulement les non-validées (pending / counted / partial). Stock intouché."
+  );
   showAdminPinModal({
     title: '🗑 Supprimer tous les BL',
-    warning: '⚠️ Cette action va supprimer <strong>tous les bons de livraison</strong>.<br>Les stocks <strong>ne seront PAS modifiés</strong>.<br><strong>Action irréversible.</strong>',
+    warning: includeValidated
+      ? '⚠️ Supprime <strong>TOUS</strong> les contrôles (y compris validés) + historique imports IA. Le stock est <strong>décrémenté</strong> pour les livraisons validées.<br><strong>Action irréversible.</strong>'
+      : '⚠️ Supprime les contrôles <strong>non-validés</strong> (pending / counted / partial) + historique imports IA. Les livraisons validées et le stock <strong>ne sont PAS modifiés</strong>.<br><strong>Action irréversible.</strong>',
     confirmLabel: 'Confirmer la suppression',
     onConfirm: async (pin) => {
       const res = await api("/api/admin/clear-imports", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin })
+        body: JSON.stringify({ pin, include_validated: includeValidated })
       });
-      loadRecentImports();
-      alert(`✓ ${res.deleted} bon(s) de livraison supprimé(s).`);
+      if (currentView === "delivery_check") loadDeliveryChecks();
+      loadRecentImports && loadRecentImports();
+      if (res.stock_rollbacks > 0) {
+        allProducts = await api("/api/produits");
+        updateAlertBadge();
+      }
+      alert(
+        `✓ ${res.delivery_checks_deleted} contrôle(s) + ${res.import_logs_deleted} import(s) IA supprimé(s).` +
+        (res.stock_rollbacks > 0 ? `\nStock décrémenté sur ${res.stock_rollbacks} items.` : "")
+      );
     }
   });
 }
@@ -5098,6 +5115,60 @@ function fmtEur(v) {
 
 
 // ══════════════════════════════════════════════════════════════════════════
+// ADMINISTRATION (manager uniquement)
+// ══════════════════════════════════════════════════════════════════════════
+
+async function renderAdmin(el) {
+  if (userRole !== "manager") {
+    el.innerHTML = `<div class="dc-empty" style="color:#DC2626">Accès réservé à la direction.</div>`;
+    return;
+  }
+  el.innerHTML = `<div class="dc-wrap">
+    <div class="dc-header">
+      <div>
+        <h2 class="dc-title">⚙️ Administration</h2>
+        <p class="dc-sub">Paramètres système, alertes, sauvegardes et actions destructives.</p>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;padding:14px;background:var(--surface-alt);border-radius:10px;border:1px solid var(--border)">
+      <div style="font-weight:800;font-size:13px;margin-bottom:6px">📧 Alertes rupture par email</div>
+      <div id="alert-settings-area" style="font-size:12px;color:var(--text-muted)">Chargement…</div>
+    </div>
+
+    <div style="margin-top:14px;padding:14px;background:var(--surface-alt);border-radius:10px;border:1px solid var(--border)">
+      <div style="font-weight:800;font-size:13px;margin-bottom:6px">📦 Backup automatique hebdomadaire</div>
+      <div id="backup-settings-area" style="font-size:12px;color:var(--text-muted)">Chargement…</div>
+    </div>
+
+    <div style="margin-top:20px;padding:14px;background:#FEF2F2;border-radius:10px;border:1px solid #FECACA">
+      <div style="font-weight:800;font-size:13px;margin-bottom:10px;color:#991B1B">⚠️ Actions destructives</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <button class="btn" style="background:#fff;color:#DC2626;border:1px solid #FECACA;font-weight:600" onclick="adminResetStocks()">
+          🔄 Remettre tous les stocks à 0
+        </button>
+        <button class="btn" style="background:#fff;color:#DC2626;border:1px solid #FECACA;font-weight:600" onclick="adminClearImports()">
+          🗑 Supprimer tous les BL
+        </button>
+      </div>
+    </div>
+
+    <div style="margin-top:18px;padding:14px;background:linear-gradient(135deg,#7f1d1d,#991b1b);color:#fff;border-radius:10px">
+      <div style="font-weight:800;font-size:14px;margin-bottom:6px">🧹 Réinitialisation saison</div>
+      <div style="font-size:12px;opacity:0.9;margin-bottom:10px;line-height:1.5">
+        Purge toutes les données de rodage avant l'ouverture de la saison.
+        <strong>Conserve</strong> : produits, cocktails, fournisseurs, mappings, événements, objectif saison.
+      </div>
+      <button class="btn" style="background:#fff;color:#991b1b;font-weight:800;border:none" onclick="adminResetSeason()">
+        🚀 Réinitialiser la saison
+      </button>
+    </div>
+  </div>`;
+  loadAlertSettings();
+  loadBackupSettings();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // CONTRÔLE LIVRAISON (serveur + direction, flux 2-étapes)
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -5123,43 +5194,10 @@ async function renderDeliveryCheck(el) {
       <summary><strong>📋 Historique des imports (7 derniers jours)</strong></summary>
       <div id="recent-imports-list" style="margin-top:10px">Chargement…</div>
     </details>
-
-    <details class="dc-admin-panel" style="margin-top:20px">
-      <summary style="color:#DC2626"><strong>⚙️ Zone d'administration</strong></summary>
-
-      <div style="margin-top:14px;padding:14px;background:var(--surface-alt);border-radius:10px;border:1px solid var(--border)">
-        <div style="font-weight:800;font-size:13px;margin-bottom:6px">📧 Alertes rupture par email</div>
-        <div id="alert-settings-area" style="font-size:12px;color:var(--text-muted)">Chargement…</div>
-      </div>
-
-      <div style="margin-top:14px;padding:14px;background:var(--surface-alt);border-radius:10px;border:1px solid var(--border)">
-        <div style="font-weight:800;font-size:13px;margin-bottom:6px">📦 Backup automatique hebdomadaire</div>
-        <div id="backup-settings-area" style="font-size:12px;color:var(--text-muted)">Chargement…</div>
-      </div>
-
-      <div style="margin-top:14px;display:flex;gap:12px;flex-wrap:wrap">
-        <button class="btn" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA;font-weight:600" onclick="adminResetStocks()">
-          🔄 Remettre tous les stocks à 0
-        </button>
-        <button class="btn" style="background:#FEF2F2;color:#DC2626;border:1px solid #FECACA;font-weight:600" onclick="adminClearImports()">
-          🗑 Supprimer tous les BL
-        </button>
-      </div>
-      <div style="margin-top:18px;padding:14px;background:linear-gradient(135deg,#7f1d1d,#991b1b);color:#fff;border-radius:10px">
-        <div style="font-weight:800;font-size:14px;margin-bottom:6px">🧹 Réinitialisation saison</div>
-        <div style="font-size:12px;opacity:0.9;margin-bottom:10px;line-height:1.5">
-          Purge toutes les données de rodage avant l'ouverture de la saison.
-          <strong>Conserve</strong> : produits, cocktails, fournisseurs, mappings, événements, objectif saison.
-        </div>
-        <button class="btn" style="background:#fff;color:#991b1b;font-weight:800;border:none" onclick="adminResetSeason()">
-          🚀 Réinitialiser la saison
-        </button>
-      </div>
-    </details>
     ` : ""}
   </div>`;
   loadDeliveryChecks();
-  if (isManager) { loadRecentImports(); loadAlertSettings(); loadBackupSettings(); }
+  if (isManager) { loadRecentImports(); }
 }
 
 async function loadBackupSettings() {
@@ -5370,6 +5408,7 @@ function renderDcRow(c, role) {
            : c.status === "validated" ? "Validé" : c.status}
         </span>
         ${skippedBadge}
+        ${role === "manager" ? `<button class="btn btn-sm" style="background:transparent;color:#DC2626;border:1px solid #FECACA;font-size:12px;padding:4px 8px;margin-left:4px" onclick="deleteDeliveryCheck(${c.id}, '${c.status}', '${esc(c.supplier_name).replace(/'/g, "\\'")}')" title="Supprimer ce BL">🗑</button>` : ""}
       </div>
     </div>
     <div class="dc-row-footer">
@@ -5377,6 +5416,29 @@ function renderDcRow(c, role) {
       ${action}
     </div>
   </div>`;
+}
+
+async function deleteDeliveryCheck(cid, status, supplierName) {
+  if (status === "validated") {
+    if (!confirm(
+      `Supprimer cette livraison VALIDÉE (${supplierName}) ?\n\n` +
+      `Les quantités validées seront DÉCRÉMENTÉES du stock.\n` +
+      `Action irréversible.`
+    )) return;
+    if (!confirm("Confirme une dernière fois : rollback du stock + suppression ?")) return;
+    try {
+      await api(`/api/delivery-checks/${cid}?rollback_stock=true`, { method: "DELETE" });
+      allProducts = await api("/api/produits");
+      updateAlertBadge();
+      loadDeliveryChecks();
+    } catch(e) { alert("Erreur : " + e.message); }
+  } else {
+    if (!confirm(`Supprimer cette livraison (${supplierName}) ?\nAucun impact stock.`)) return;
+    try {
+      await api(`/api/delivery-checks/${cid}`, { method: "DELETE" });
+      loadDeliveryChecks();
+    } catch(e) { alert("Erreur : " + e.message); }
+  }
 }
 
 // ─────────── SERVEUR : comptage aveugle ─────────────────────────────────
