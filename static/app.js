@@ -5762,14 +5762,11 @@ async function openServerCountingForm(cid) {
       <label style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">
         + Un produit que tu trouves dans le carton mais qui n'est pas listé ?
       </label>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <select id="dc-srv-add-product" style="flex:1;min-width:220px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)">
-          <option value="">— Choisir un produit —</option>
-          ${(allProducts || []).filter(p => !p.archived)
-            .sort((a,b) => a.name.localeCompare(b.name))
-            .map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.unit)})</option>`).join("")}
-        </select>
-        <button class="btn btn-outline btn-sm" onclick="serverAddItemToDc()">+ Ajouter</button>
+      <div style="position:relative">
+        <input type="text" id="dc-srv-add-search" placeholder="Tape les premières lettres (ex: Pago, Coca, Ricard…)"
+               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px"
+               oninput="srvFilterAddProducts()" autocomplete="off"/>
+        <div id="dc-srv-add-results" style="position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:280px;overflow-y:auto;z-index:50;display:none;box-shadow:var(--shadow-md)"></div>
       </div>
     </div>
     <div class="dc-count-footer">
@@ -5827,23 +5824,64 @@ async function uploadBlPhotoServer(cid, file) {
   } catch(e) { alert("Erreur : " + e.message); }
 }
 
-async function serverAddItemToDc() {
-  const sel = document.getElementById("dc-srv-add-product");
-  const pid = sel?.value ? parseInt(sel.value, 10) : null;
-  if (!pid) { alert("Choisis un produit"); return; }
+function srvFilterAddProducts() {
+  const q = (document.getElementById("dc-srv-add-search")?.value || "").toLowerCase().trim();
+  const results = document.getElementById("dc-srv-add-results");
+  if (!results) return;
+  if (q.length < 2) {
+    results.style.display = "none";
+    results.innerHTML = "";
+    return;
+  }
+  // IDs déjà présents dans le contrôle (pour ne pas les reproposer)
+  const alreadyIds = new Set();
+  // __dcState.items contient des items déjà ajoutés mais sans product_id côté state.
+  // On filtre juste sur le nom : si le nom matche un item existant, on le marque "déjà".
+  const existingNames = new Set((__dcState?.items || []).map(it => (it.product_name || "").toLowerCase()));
+
+  const matches = (allProducts || [])
+    .filter(p => !p.archived)
+    .filter(p => p.name.toLowerCase().includes(q) || (p.category || "").toLowerCase().includes(q))
+    .slice(0, 10);
+
+  if (matches.length === 0) {
+    results.innerHTML = `<div style="padding:12px;color:var(--text-muted);font-size:13px">Aucun produit trouvé pour "${esc(q)}"</div>`;
+    results.style.display = "block";
+    return;
+  }
+  results.innerHTML = matches.map(p => {
+    const already = existingNames.has(p.name.toLowerCase());
+    return `<div onclick="${already ? '' : `srvPickAddProduct(${p.id})`}"
+                 style="padding:10px 12px;border-bottom:1px solid var(--border);${already ? 'opacity:.5;cursor:not-allowed' : 'cursor:pointer'};display:flex;justify-content:space-between;align-items:center;gap:10px"
+                 ${already ? '' : `onmouseover="this.style.background='var(--surface-alt)'" onmouseout="this.style.background=''"`}>
+      <div>
+        <strong>${esc(p.name)}</strong>
+        <div style="font-size:11px;color:var(--text-muted)">${esc(p.category || "")} · ${esc(p.unit || "")}</div>
+      </div>
+      ${already ? '<span style="font-size:11px;color:var(--text-muted)">déjà dans la liste</span>' : '<span style="font-size:18px;color:var(--primary)">+</span>'}
+    </div>`;
+  }).join("");
+  results.style.display = "block";
+}
+
+async function srvPickAddProduct(productId) {
   try {
-    const updated = await api(`/api/delivery-checks/${__dcState.id}/items`, {
+    await api(`/api/delivery-checks/${__dcState.id}/items`, {
       method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ product_id: pid, qty_expected: 0 })
+      body: JSON.stringify({ product_id: productId, qty_expected: 0 })
     });
-    // Rafraîchir depuis la version aveugle
     const c = await api(`/api/delivery-checks/${__dcState.id}?role=service`);
     __dcState.items = c.items.map(it => ({
       id: it.id, product_name: it.product_name, unit: it.unit,
       qty_physical: it.qty_physical || 0, notes: it.notes || "",
     }));
     _renderServerCountingRows();
-    sel.value = "";
+    // Reset search
+    const inp = document.getElementById("dc-srv-add-search");
+    const res = document.getElementById("dc-srv-add-results");
+    if (inp) inp.value = "";
+    if (res) { res.innerHTML = ""; res.style.display = "none"; }
+    showToast && showToast("✓ Ajouté");
   } catch(e) { alert("Erreur : " + e.message); }
 }
 
