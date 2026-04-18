@@ -1589,6 +1589,28 @@ html[data-theme="dark"] .ord-best-badge {
   .ord-qty-input { width: 64px; }
   .ord-price-input { width: 80px; }
 }
+@media (max-width: 430px) {
+  /* Supplier cards : header en colonne pour que le bouton ne déborde pas */
+  .ord-supplier-header { flex-direction: column; align-items: stretch; gap: 10px; }
+  .ord-new-btn { width: 100%; white-space: normal; }
+  .ord-supplier-card { padding: 12px 14px; }
+
+  /* Historique commandes : masquer "Date" et "Lignes" (redondant avec Référence et moins essentiel) */
+  .kpi-table th:nth-child(3), .kpi-table td:nth-child(3),
+  .kpi-table th:nth-child(6), .kpi-table td:nth-child(6) {
+    display: none;
+  }
+
+  /* Cartes alertes service : éviter débordement */
+  .ord-alerts-grid { grid-template-columns: 1fr; }
+  .ord-alert-actions { flex-wrap: wrap; }
+  .ord-alert-actions .btn { flex: 1 1 auto; }
+
+  /* KPI summary (Brouillons/Envoyées/Reçues) compactes */
+  .stock-summary { gap: 8px; }
+  .summary-card { flex: 1 1 calc(50% - 4px); min-width: 0; padding: 12px; }
+  .summary-card .s-value { font-size: 22px; }
+}
 
 /* ══════════════════════════════════════════════
    BARCODE SCANNER
