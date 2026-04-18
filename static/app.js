@@ -4775,12 +4775,12 @@ async function loadReconciliation(period) {
                         : "dc-ecart-ok";
           const icon = r.severity === "danger" ? "🔴" : r.severity === "warn" ? "🟠" : r.severity === "info" ? "ℹ️" : "✓";
           return `<tr>
-            <td><strong>${esc(r.product_name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${esc(r.category)}</span></td>
-            <td>${r.sortie_qty} ${esc(r.unit)}</td>
-            <td>${r.ventes_qty} ${esc(r.unit)}</td>
-            <td><span class="dc-ecart ${gapClass}">${icon} ${r.gap > 0 ? '+' : ''}${r.gap} ${esc(r.unit)}</span></td>
-            <td class="sh-auto-loss-eur">${r.loss_eur > 0 ? '€' + r.loss_eur.toFixed(2) : '—'}</td>
-            <td>${(r.sortie_staff || []).map(s => esc(s)).join(", ") || '<span style="color:var(--text-faint)">—</span>'}</td>
+            <td data-label="Produit"><strong>${esc(r.product_name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${esc(r.category)}</span></td>
+            <td data-label="Sortie réserve">${r.sortie_qty} ${esc(r.unit)}</td>
+            <td data-label="Vendu Cashpad">${r.ventes_qty} ${esc(r.unit)}</td>
+            <td data-label="Écart"><span class="dc-ecart ${gapClass}">${icon} ${r.gap > 0 ? '+' : ''}${r.gap} ${esc(r.unit)}</span></td>
+            <td class="sh-auto-loss-eur" data-label="Valeur €">${r.loss_eur > 0 ? '€' + r.loss_eur.toFixed(2) : '—'}</td>
+            <td data-label="Par">${(r.sortie_staff || []).map(s => esc(s)).join(", ") || '<span style="color:var(--text-faint)">—</span>'}</td>
           </tr>`;
         }).join("") +
         `</tbody></table>`;
@@ -4858,15 +4858,15 @@ async function loadDemarqueAuto() {
       </tr></thead><tbody>`;
       loss.slice(0, 20).forEach(it => {
         html += `<tr>
-          <td><strong>${esc(it.product_name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${esc(it.category)}</span></td>
-          <td>${it.stock_start}</td>
-          <td>${it.livraisons > 0 ? '+' + it.livraisons : '—'}</td>
-          <td>${it.ventes > 0 ? '−' + it.ventes : '—'}</td>
-          <td>${it.pertes_declarees > 0 ? '−' + it.pertes_declarees : '—'}</td>
-          <td>${it.theoretical_end}</td>
-          <td>${it.stock_end}</td>
-          <td class="sh-auto-ecart-loss">⚠️ −${it.ecart} ${esc(it.unit)}</td>
-          <td class="sh-auto-loss-eur">€${it.loss_eur.toFixed(2)}</td>
+          <td data-label="Produit"><strong>${esc(it.product_name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${esc(it.category)}</span></td>
+          <td data-label="Stock début">${it.stock_start}</td>
+          <td data-label="+ Livraisons">${it.livraisons > 0 ? '+' + it.livraisons : '—'}</td>
+          <td data-label="− Ventes">${it.ventes > 0 ? '−' + it.ventes : '—'}</td>
+          <td data-label="− Pertes décl.">${it.pertes_declarees > 0 ? '−' + it.pertes_declarees : '—'}</td>
+          <td data-label="Stock théorique">${it.theoretical_end}</td>
+          <td data-label="Stock réel">${it.stock_end}</td>
+          <td class="sh-auto-ecart-loss" data-label="Écart">⚠️ −${it.ecart} ${esc(it.unit)}</td>
+          <td class="sh-auto-loss-eur" data-label="Perte €">€${it.loss_eur.toFixed(2)}</td>
         </tr>`;
       });
       html += `</tbody></table>`;
