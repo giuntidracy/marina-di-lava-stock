@@ -78,3 +78,14 @@ Checklist avant de dire "mobile fixé" pour une page :
 3. Ensuite seulement dire "prêt à tester".
 
 Exemple d'erreur : la page Démarque a 3 tables (`.sh-table` + 2× `.sh-auto-table`), j'en ai fixé 1 puis annoncé "prêt", obligeant l'utilisateur à clear Safari pour rien.
+
+### R-04 — Le même bug signalé 2× = arrêter de blâmer le navigateur de l'utilisateur
+Si l'utilisateur signale le même problème une 2ème fois après un "fix", **j'arrête immédiatement de dire "c'est ton cache / clear Safari"**. À partir de la 2ème plainte, je creuse le root cause côté code/serveur jusqu'à trouver :
+- Les headers HTTP du serveur (ex: `index.html` sans `Cache-Control: no-store` → Safari iOS ressert l'ancien HTML même avec `?v=` bumpé).
+- Le pipeline de déploiement (Railway a-t-il redéployé ? logs ?).
+- Un CDN ou proxy intermédiaire.
+- Une autre instance de code qui n'a pas été modifiée (cf R-03).
+
+Ne jamais boucler sur "clear le cache" comme seule réponse — c'est une échappatoire, pas un diagnostic.
+
+Exemple d'erreur : l'utilisateur voyait l'ancien dropdown comptage 3× de suite, j'ai répondu "clear Safari" à chaque fois au lieu de découvrir qu'`index.html` n'avait pas de header `no-cache` → fix root cause = 5 lignes dans `main.py`.
