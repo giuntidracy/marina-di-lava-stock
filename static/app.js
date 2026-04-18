@@ -2430,8 +2430,10 @@ async function analyzeDelivery() {
   const resultEl = document.getElementById("delivery-result");
   resultEl.innerHTML = `<div class="info-box">⏳ Analyse par Claude AI en cours…</div>`;
 
+  // Compresse les photos avant envoi (pas les PDF) : iPhone 4 Mo → ~300 Ko
+  const toUpload = await compressImageForUpload(file, 1800, 0.85);
   const fd = new FormData();
-  fd.append("file", file);
+  fd.append("file", toUpload);
 
   try {
     const res = await api("/api/import/livraison", { method: "POST", body: fd });
@@ -4176,6 +4178,40 @@ function esc(str) {
   return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
+/**
+ * Compresse une image (Blob ou File) côté client : redimensionnée à maxDim et
+ * encodée en JPEG quality. Si pas une image (ex: PDF) ou erreur, retourne le fichier original.
+ * Utile pour les uploads mobiles 4G : photo iPhone 4 Mo → ~300 Ko.
+ */
+async function compressImageForUpload(file, maxDim = 1600, quality = 0.85) {
+  if (!file || !file.type || !file.type.startsWith("image/")) return file;
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = URL.createObjectURL(file);
+    });
+    let { width, height } = img;
+    if (Math.max(width, height) > maxDim) {
+      const r = maxDim / Math.max(width, height);
+      width = Math.round(width * r);
+      height = Math.round(height * r);
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+    const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", quality));
+    URL.revokeObjectURL(img.src);
+    if (!blob) return file;
+    // Wrap as File pour conserver un nom (et faciliter FormData côté backend)
+    return new File([blob], (file.name || "photo").replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+  } catch (e) {
+    return file;
+  }
+}
+
 function fmt(n) {
   if (n === null || n === undefined) return "—";
   const v = parseFloat(n);
@@ -5753,10 +5789,11 @@ async function blOnlyRemoveItem(itemId) {
 
 async function uploadBlOnlyPhoto(cid, file) {
   if (!file) return;
-  if (file.size > 5 * 1024 * 1024) { alert("Fichier trop gros (max 5 MB)"); return; }
+  if (file.size > 20 * 1024 * 1024) { alert("Fichier trop gros (max 20 MB avant compression)"); return; }
   try {
+    const compressed = await compressImageForUpload(file, 1600, 0.85);
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", compressed);
     const r = await fetch(`/api/delivery-checks/${cid}/photo`, {
       method: "POST",
       headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
@@ -5949,10 +5986,11 @@ function setDcPrice(i, v) {
 
 async function uploadBlPhoto(cid, file) {
   if (!file) return;
-  if (file.size > 5 * 1024 * 1024) { alert("Fichier trop gros (max 5 MB)"); return; }
+  if (file.size > 20 * 1024 * 1024) { alert("Fichier trop gros (max 20 MB avant compression)"); return; }
   try {
+    const compressed = await compressImageForUpload(file, 1600, 0.85);
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", compressed);
     const r = await fetch(`/api/delivery-checks/${cid}/photo`, {
       method: "POST",
       headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
@@ -5977,11 +6015,13 @@ async function viewBlPhoto(cid) {
       <h3 style="margin-bottom:12px">🖼 Photo du BL</h3>
       <div style="text-align:center;padding:10px 0;max-height:75vh;overflow:auto">
         ${isPdf
-          ? `<embed src="${url}" type="application/pdf" style="width:100%;height:70vh"/>`
+          ? `<iframe src="${url}" style="width:100%;height:70vh;border:none;border-radius:8px"></iframe>
+             <div style="font-size:12px;color:var(--text-muted);margin-top:6px">Si le PDF ne s'affiche pas (Safari iOS), utilise le bouton Télécharger.</div>`
           : `<img src="${url}" alt="Photo BL" style="max-width:100%;max-height:70vh;border-radius:8px;box-shadow:var(--shadow-md)"/>`}
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
         <a href="${url}" download="BL-${cid}.${isPdf ? 'pdf' : 'jpg'}" class="btn btn-outline">⬇ Télécharger</a>
+        ${isPdf ? `<a href="${url}" target="_blank" rel="noopener" class="btn btn-outline">↗ Ouvrir</a>` : ""}
         <button class="btn btn-outline" onclick="closeModal()">Fermer</button>
       </div>`);
   } catch(e) { alert("Erreur : " + e.message); }
