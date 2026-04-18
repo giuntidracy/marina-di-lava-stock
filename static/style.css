@@ -1349,6 +1349,31 @@ details[open] .history-details summary::before { content: '▼'; }
   .reserve-qty-btn { width: 44px; height: 44px; }
 }
 
+/* Sortie Réserve : lignes empilées sur mobile (nom au-dessus, contrôles en dessous) */
+@media (max-width: 600px) {
+  .inv-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .inv-row > div:last-child {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    align-items: center;
+  }
+  .inv-input { width: 100%; max-width: 180px; }
+
+  /* Sorties du jour + résumé post-submit : empiler texte et bouton */
+  .result-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 0;
+  }
+  .result-item .btn { width: 100%; }
+}
+
 /* Resserrements propres pour iPhone étroit (≤430px) */
 @media (max-width: 430px) {
   /* Tables : padding réduit + cellule actions qui wrap */
