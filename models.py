@@ -208,6 +208,7 @@ class DeliveryCheck(Base):
     bl_photo = Column(Text, default="")            # base64 du BL photographié
     bl_photo_type = Column(String, default="")     # mime type (image/jpeg, image/png, application/pdf)
     notes = Column(Text, default="")
+    skipped_count = Column(Boolean, default=False)  # validé depuis BL seul, sans comptage serveur
     created_at = Column(DateTime, default=datetime.utcnow)
     counted_at = Column(DateTime, nullable=True)
     validated_at = Column(DateTime, nullable=True)

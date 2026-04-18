@@ -5297,7 +5297,21 @@ async function loadDeliveryChecks() {
         validated:     { label: "✅ Validés (stock mis à jour)", rows: [] },
       };
       checks.forEach(c => { (buckets[c.status] || buckets.validated).rows.push(c); });
-      let html = "";
+
+      // Compteur "sans comptage ce mois"
+      const now = new Date();
+      const skippedThisMonth = checks.filter(c => {
+        if (!c.skipped_count || !c.validated_at) return false;
+        const v = new Date(c.validated_at);
+        return v.getFullYear() === now.getFullYear() && v.getMonth() === now.getMonth();
+      }).length;
+      const skippedBanner = skippedThisMonth > 0
+        ? `<div style="background:#78350f15;border:1px solid #b4530940;border-radius:10px;padding:10px 14px;margin-bottom:14px;color:#b45309;font-size:13px;font-weight:600">
+             ⚡ ${skippedThisMonth} livraison${skippedThisMonth > 1 ? 's' : ''} validée${skippedThisMonth > 1 ? 's' : ''} sans comptage ce mois-ci
+           </div>`
+        : "";
+
+      let html = skippedBanner;
       Object.values(buckets).forEach(b => {
         if (b.rows.length === 0) return;
         html += `<div class="dc-bucket">
@@ -5319,15 +5333,26 @@ function renderDcRow(c, role) {
                     : c.status === "counted"       ? "#3b82f6"
                     : c.status === "partial"       ? "#a855f7"
                     : c.status === "validated"     ? "#16a34a" : "#6b7280";
-  const action = (role === "service" && c.status === "pending_count")
-    ? `<button class="btn btn-primary btn-sm" onclick="openServerCountingForm(${c.id})">🔎 Compter</button>`
-    : (role === "manager" && c.status === "counted")
-      ? `<button class="btn btn-primary btn-sm" onclick="openManagerValidationForm(${c.id})">✅ Valider</button>`
-      : (role === "manager" && c.status === "partial")
-        ? `<button class="btn btn-primary btn-sm" onclick="openManagerValidationForm(${c.id})">📦 Finaliser</button>`
-        : (role === "manager" && c.status === "pending_count")
-          ? `<button class="btn btn-outline btn-sm" onclick="openManagerValidationForm(${c.id})">Voir / compter moi-même</button>`
-          : `<button class="btn btn-outline btn-sm" onclick="openManagerValidationForm(${c.id})">Détails</button>`;
+  let action;
+  if (role === "service" && c.status === "pending_count") {
+    action = `<button class="btn btn-primary btn-sm" onclick="openServerCountingForm(${c.id})">🔎 Compter</button>`;
+  } else if (role === "manager" && c.status === "counted") {
+    action = `<button class="btn btn-primary btn-sm" onclick="openManagerValidationForm(${c.id})">✅ Valider</button>`;
+  } else if (role === "manager" && c.status === "partial") {
+    action = `<button class="btn btn-primary btn-sm" onclick="openManagerValidationForm(${c.id})">📦 Finaliser</button>`;
+  } else if (role === "manager" && c.status === "pending_count") {
+    action = `<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+      <button class="btn btn-outline btn-sm" onclick="openManagerValidationForm(${c.id})">Voir / compter moi-même</button>
+      <button class="btn btn-sm" style="background:#78350f20;color:#b45309;border:1px solid #b4530940;font-weight:700" onclick="openBlOnlyForm(${c.id})" title="Pas eu le temps de compter ? Valide directement depuis le BL reçu par email.">⚡ Valider depuis BL seul</button>
+    </div>`;
+  } else {
+    action = `<button class="btn btn-outline btn-sm" onclick="openManagerValidationForm(${c.id})">Détails</button>`;
+  }
+
+  const skippedBadge = (c.status === "validated" && c.skipped_count)
+    ? `<span class="dc-status-badge" style="background:#78350f20;color:#b45309;border:1px solid #b4530940;margin-left:6px" title="Validé depuis BL seul, sans comptage serveur">⚡ Sans comptage</span>`
+    : "";
+
   return `<div class="dc-row">
     <div class="dc-row-head">
       <div>
@@ -5340,12 +5365,15 @@ function renderDcRow(c, role) {
           ${c.validated_by ? ` · ✅ validé par ${esc(c.validated_by)}` : ""}
         </div>
       </div>
-      <span class="dc-status-badge" style="background:${statusColor}20;color:${statusColor};border:1px solid ${statusColor}40">
-        ${c.status === "pending_count" ? "À compter"
-         : c.status === "counted" ? "À valider"
-         : c.status === "partial" ? "Partiel"
-         : c.status === "validated" ? "Validé" : c.status}
-      </span>
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px">
+        <span class="dc-status-badge" style="background:${statusColor}20;color:${statusColor};border:1px solid ${statusColor}40">
+          ${c.status === "pending_count" ? "À compter"
+           : c.status === "counted" ? "À valider"
+           : c.status === "partial" ? "Partiel"
+           : c.status === "validated" ? "Validé" : c.status}
+        </span>
+        ${skippedBadge}
+      </div>
     </div>
     <div class="dc-row-footer">
       <span style="font-size:12px;color:var(--text-muted)">${(c.items || []).length} produit(s)</span>
@@ -5460,6 +5488,186 @@ async function submitServerCounts() {
 }
 
 let __dcState = null;
+
+// ─────────── DIRECTION : validation BL seul (sans comptage serveur) ──────
+async function openBlOnlyForm(cid) {
+  const c = await api(`/api/delivery-checks/${cid}?role=manager`);
+  if (c.status !== "pending_count") {
+    alert("Ce contrôle n'est plus en attente de comptage.");
+    return;
+  }
+  __dcState = {
+    id: c.id,
+    bl_reference: c.bl_reference || "",
+    has_photo: !!c.has_photo,
+    items: c.items.map(it => ({
+      ...it,
+      qty_bl: it.qty_bl != null ? it.qty_bl : (it.qty_expected || 0),
+    })),
+  };
+
+  const app = document.getElementById("app");
+  app.innerHTML = `<div class="dc-wrap">
+    <div class="dc-count-header">
+      <button class="btn btn-outline" onclick="switchView('delivery_check')">← Retour</button>
+      <div>
+        <h2 class="dc-title">⚡ Valider depuis BL seul — ${esc(c.supplier_name)}</h2>
+        <p class="dc-sub">Aucun comptage serveur effectué. Saisis directement les quantités du BL reçu — elles entreront en stock telles quelles.</p>
+      </div>
+    </div>
+    <div style="background:#78350f15;border:1px solid #b4530940;border-radius:10px;padding:12px 14px;margin-bottom:14px;color:#b45309;font-size:13px;line-height:1.5">
+      ⚠️ <strong>Mode dégradé</strong> : cette livraison sera marquée <em>"sans comptage"</em> pour traçabilité. Préfère le comptage serveur quand c'est possible.
+    </div>
+    <div class="dc-form-meta">
+      <label>N° BL : <input type="text" id="dc-bl-ref" value="${esc(c.bl_reference)}" placeholder="ex: BL-20260501-123"/></label>
+      <div class="dc-photo-zone" id="dc-bl-only-photo-zone">
+        ${c.has_photo
+          ? `<button class="btn btn-outline btn-sm" onclick="viewBlPhoto(${c.id})">🖼 Voir photo BL</button>
+             <button class="btn btn-outline btn-sm" onclick="deleteBlOnlyPhoto(${c.id})" style="color:#DC2626">🗑</button>`
+          : `<label class="btn btn-outline btn-sm" style="cursor:pointer">
+               📷 Joindre photo / PDF du BL
+               <input type="file" accept="image/*,application/pdf" style="display:none"
+                      onchange="uploadBlOnlyPhoto(${c.id}, this.files[0])"/>
+             </label>`}
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="dc-val-table">
+        <thead><tr>
+          <th>Produit</th>
+          <th>Commandé</th>
+          <th>Qté BL (→ stock)</th>
+          <th>Prix u. HT</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="dc-blonly-tbody"></tbody>
+      </table>
+    </div>
+    <div class="dc-add-product-zone">
+      <label style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">
+        + Ajouter un produit au BL
+      </label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="dc-blonly-add-product" style="flex:1;min-width:220px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)">
+          <option value="">— Choisir un produit —</option>
+          ${(allProducts || []).filter(p => !p.archived)
+            .sort((a,b) => a.name.localeCompare(b.name))
+            .map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.unit)})</option>`).join("")}
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="blOnlyAddItem(${c.id})">+ Ajouter</button>
+      </div>
+    </div>
+    <div class="dc-count-footer" style="gap:10px">
+      <button class="btn btn-primary" onclick="submitBlOnlyValidation()">⚡ Valider depuis BL seul</button>
+    </div>
+  </div>`;
+  _renderBlOnlyRows();
+}
+
+function _renderBlOnlyRows() {
+  const tbody = document.getElementById("dc-blonly-tbody");
+  if (!tbody) return;
+  if (__dcState.items.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-muted);font-style:italic">Aucun produit — ajoutez-en ci-dessous</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = __dcState.items.map((it, i) => {
+    const curPrice = it.current_purchase_price;
+    const priceHint = (curPrice != null && (it.unit_price_ht == null || it.unit_price_ht === ""))
+      ? `<div style="font-size:10px;color:var(--text-faint)">actuel €${curPrice.toFixed(3)}</div>`
+      : "";
+    return `<tr>
+      <td><strong>${esc(it.product_name)}</strong></td>
+      <td>${it.qty_expected != null && it.qty_expected > 0 ? it.qty_expected : "—"}</td>
+      <td><input type="number" class="dc-bl-input" min="0" step="1" value="${it.qty_bl != null ? it.qty_bl : ''}"
+                 placeholder="qté BL" oninput="setBlOnlyQty(${i}, this.value)"/></td>
+      <td><input type="number" class="dc-price-input" min="0" step="0.001" value="${it.unit_price_ht != null ? it.unit_price_ht : ''}"
+                 placeholder="€ HT/u" oninput="setBlOnlyPrice(${i}, this.value)"/>
+          ${priceHint}</td>
+      <td><button class="btn btn-sm" style="background:transparent;color:#DC2626;border:1px solid #FECACA;font-size:11px" onclick="blOnlyRemoveItem(${it.id})" title="Retirer">✕</button></td>
+    </tr>`;
+  }).join("");
+}
+
+function setBlOnlyQty(i, v)   { __dcState.items[i].qty_bl = v === "" ? null : parseFloat(v); }
+function setBlOnlyPrice(i, v) { __dcState.items[i].unit_price_ht = v === "" ? null : parseFloat(v); }
+
+async function blOnlyAddItem(cid) {
+  const sel = document.getElementById("dc-blonly-add-product");
+  const pid = sel?.value ? parseInt(sel.value, 10) : null;
+  if (!pid) { alert("Choisissez un produit"); return; }
+  try {
+    const updated = await api(`/api/delivery-checks/${cid}/items`, {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ product_id: pid, qty_expected: 0 })
+    });
+    __dcState.items = updated.items.map(it => ({
+      ...it,
+      qty_bl: it.qty_bl != null ? it.qty_bl : (it.qty_expected || 0),
+    }));
+    _renderBlOnlyRows();
+    sel.value = "";
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function blOnlyRemoveItem(itemId) {
+  if (!confirm("Retirer ce produit du BL ?")) return;
+  try {
+    await api(`/api/delivery-checks/${__dcState.id}/items/${itemId}`, { method: "DELETE" });
+    __dcState.items = __dcState.items.filter(it => it.id !== itemId);
+    _renderBlOnlyRows();
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function uploadBlOnlyPhoto(cid, file) {
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { alert("Fichier trop gros (max 5 MB)"); return; }
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch(`/api/delivery-checks/${cid}/photo`, {
+      method: "POST",
+      headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
+      body: fd,
+    });
+    if (!r.ok) throw new Error((await r.json().catch(()=>({detail:r.statusText}))).detail);
+    openBlOnlyForm(cid);
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function deleteBlOnlyPhoto(cid) {
+  if (!confirm("Supprimer la photo du BL ?")) return;
+  try {
+    await api(`/api/delivery-checks/${cid}/photo`, { method: "DELETE" });
+    openBlOnlyForm(cid);
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function submitBlOnlyValidation() {
+  const name = prompt("Votre nom (pour traçabilité) :", userName || "Direction");
+  if (!name) return;
+  if (!confirm("Valider depuis BL seul ?\n\nLes quantités du BL entreront directement en stock. Aucun comptage physique n'aura lieu. Cette livraison sera marquée \"sans comptage\".")) return;
+
+  const blRef = document.getElementById("dc-bl-ref")?.value || "";
+  try {
+    await api(`/api/delivery-checks/${__dcState.id}/validate-bl-only`, {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        validated_by: name,
+        bl_reference: blRef,
+        bls: __dcState.items.map(it => ({
+          item_id: it.id,
+          qty_bl: it.qty_bl,
+          unit_price_ht: it.unit_price_ht,
+        })),
+      }),
+    });
+    alert("✅ Contrôle validé depuis BL seul. Stock mis à jour.");
+    allProducts = await api("/api/produits");
+    updateAlertBadge();
+    switchView("delivery_check");
+  } catch(e) { alert("Erreur : " + e.message); }
+}
 
 // ─────────── DIRECTION : validation 3 colonnes ───────────────────────────
 async function openManagerValidationForm(cid) {
