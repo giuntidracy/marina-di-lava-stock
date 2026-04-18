@@ -1911,12 +1911,36 @@ def delete_bl_photo(cid: int, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/delivery-checks/{cid}")
-def delete_delivery_check(cid: int, db: Session = Depends(get_db)):
+def delete_delivery_check(cid: int, rollback_stock: bool = False, db: Session = Depends(get_db)):
+    """
+    Supprime un contrôle de livraison.
+    - pending/counted/partial : suppression directe.
+    - validated : nécessite rollback_stock=true (décrémente le stock appliqué).
+    """
     c = db.query(DeliveryCheck).get(cid)
     if not c:
         raise HTTPException(404)
+
     if c.status == "validated":
-        raise HTTPException(400, "Un contrôle validé ne peut pas être supprimé.")
+        if not rollback_stock:
+            raise HTTPException(
+                400,
+                "Contrôle validé — ajouter ?rollback_stock=true pour le supprimer et décrémenter le stock.",
+            )
+        # Rollback : décrémente le stock pour chaque item appliqué
+        rolled = []
+        for it in c.items:
+            if it.stock_applied and it.qty_validated and it.product_id:
+                p = db.query(Product).get(it.product_id)
+                if p:
+                    p.stock = max(0, (p.stock or 0) - it.qty_validated)
+                    rolled.append({"product_id": p.id, "product_name": p.name, "removed": it.qty_validated})
+        log_event(
+            db, "livraison",
+            f"Suppression contrôle validé #{c.id} — rollback stock sur {len(rolled)} items",
+            {"delivery_check_id": c.id, "rollback": rolled},
+        )
+
     db.delete(c)
     db.commit()
     return {"ok": True}
@@ -4407,16 +4431,51 @@ def admin_reset_stocks(body: AdminActionIn, db: Session = Depends(get_db)):
     return {"ok": True, "products_reset": count}
 
 
+class AdminClearImportsIn(BaseModel):
+    pin: str
+    include_validated: bool = False   # si True, supprime aussi les validés ET rollback le stock
+
+
 @app.delete("/api/admin/clear-imports")
-def admin_clear_imports(body: AdminActionIn, db: Session = Depends(get_db)):
-    """Supprime tous les bons de livraison — nécessite le PIN gérant."""
+def admin_clear_imports(body: AdminClearImportsIn, db: Session = Depends(get_db)):
+    """
+    Supprime tous les contrôles de livraison + l'historique des imports.
+    - Par défaut : supprime les pending_count / counted / partial (aucun impact stock).
+    - include_validated=True : supprime aussi les validés, en décrémentant le stock.
+    Requiert le PIN gérant.
+    """
     _verify_admin_pin(body.pin)
-    count = db.query(ImportLog).filter(ImportLog.import_type == "delivery").count()
+
+    # Rollback stock pour les validés si demandé
+    rolled_back = 0
+    if body.include_validated:
+        for c in db.query(DeliveryCheck).filter(DeliveryCheck.status == "validated").all():
+            for it in c.items:
+                if it.stock_applied and it.qty_validated and it.product_id:
+                    p = db.query(Product).get(it.product_id)
+                    if p:
+                        p.stock = max(0, (p.stock or 0) - it.qty_validated)
+                        rolled_back += 1
+
+    # Supprimer les DeliveryChecks (les items sont cascade)
+    q = db.query(DeliveryCheck)
+    if not body.include_validated:
+        q = q.filter(DeliveryCheck.status != "validated")
+    dc_count = q.count()
+    q.delete(synchronize_session=False)
+
+    # Supprimer l'historique des imports IA (livraisons)
+    imp_count = db.query(ImportLog).filter(ImportLog.import_type == "delivery").count()
     db.query(ImportLog).filter(ImportLog.import_type == "delivery").delete(synchronize_session=False)
-    log_event(db, "admin_clear_imports",
-              f"Suppression de {count} bon(s) de livraison", {})
+
+    log_event(
+        db, "admin_clear_imports",
+        f"Suppression de {dc_count} contrôle(s) de livraison + {imp_count} import(s) IA"
+        + (f" (rollback stock sur {rolled_back} items)" if rolled_back else ""),
+        {"delivery_checks": dc_count, "import_logs": imp_count, "stock_rollbacks": rolled_back},
+    )
     db.commit()
-    return {"ok": True, "deleted": count}
+    return {"ok": True, "delivery_checks_deleted": dc_count, "import_logs_deleted": imp_count, "stock_rollbacks": rolled_back}
 
 
 # ── Snapshots stock (pour démarque auto hebdomadaire) ─────────────────────
