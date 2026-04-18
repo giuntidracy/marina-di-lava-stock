@@ -16,7 +16,7 @@ let inactivityTimer = null;
 
 // Onglets accessibles par rôle
 const SERVICE_VIEWS = ["inventory","service_alert","delivery_check"];
-const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery_check","inventory","service_alert","flash","stats","history","suppliers","orders","mapping","events","shrinkage"];
+const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery_check","inventory","flash","stats","history","suppliers","orders","mapping","admin","events","shrinkage"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
@@ -1456,11 +1456,13 @@ async function deleteCocktail(id, name) {
 async function renderAlerts(el) {
   el.innerHTML = `
     <div class="section-header"><span class="section-title">Alertes actives</span></div>
+    <div id="service-alerts-area"></div>
     <div id="weather-widget-area"></div>
     <div id="alerts-body">Chargement…</div>`;
 
   // Charge météo en parallèle (non bloquant)
   loadWeatherWidget();
+  loadServiceAlertsInAlertsView();
 
   try {
     const [alerts, predictions] = await Promise.all([
@@ -1566,6 +1568,40 @@ async function renderAlerts(el) {
   } catch (e) {
     document.getElementById("alerts-body").innerHTML = `<div class="info-box">Erreur : ${esc(e.message)}</div>`;
   }
+}
+
+async function loadServiceAlertsInAlertsView() {
+  const area = document.getElementById("service-alerts-area");
+  if (!area) return;
+  try {
+    const alerts = await api("/api/service-alerts?status=open");
+    if (!alerts.length) { area.innerHTML = ""; return; }
+
+    const rows = alerts.map(a => `
+      <div class="sa-alert-row-dir" style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:200px">
+          <strong>${esc(a.product_name)}</strong>
+          ${a.is_rupture ? '<span class="sa-badge-rupture">RUPTURE</span>' : `<span class="sa-badge-low">${a.reported_stock} restant</span>`}
+          <small style="color:var(--text-muted);display:block;margin-top:2px">signalé par ${esc(a.staff_name)} · ${esc(a.supplier_name || "sans fournisseur")}</small>
+          ${a.notes ? `<small style="color:var(--text-muted);font-style:italic">📝 ${esc(a.notes)}</small>` : ""}
+        </div>
+        <button class="btn btn-sm btn-outline" onclick="saAckAlertFromAlertsView(${a.id})">✓ Vu</button>
+      </div>
+    `).join("");
+
+    area.innerHTML = `<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+      <div style="font-weight:800;font-size:14px;margin-bottom:8px;color:#991B1B">🚨 Signalé par un serveur (${alerts.length})</div>
+      ${rows}
+    </div>`;
+  } catch(e) { area.innerHTML = ""; }
+}
+
+async function saAckAlertFromAlertsView(id) {
+  try {
+    await api(`/api/service-alerts/${id}/acknowledge`, { method: "PUT" });
+    loadServiceAlertsInAlertsView();
+    updateAlertBadge && updateAlertBadge();
+  } catch(e) { alert("Erreur : " + e.message); }
 }
 
 function toggleAllAlerts(checked) {
