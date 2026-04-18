@@ -5762,11 +5762,19 @@ async function openServerCountingForm(cid) {
       <label style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">
         + Un produit que tu trouves dans le carton mais qui n'est pas listé ?
       </label>
-      <div style="position:relative">
-        <input type="text" id="dc-srv-add-search" placeholder="Tape les premières lettres (ex: Pago, Coca, Ricard…)"
-               style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px"
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch;margin-bottom:8px">
+        <select id="dc-srv-add-category" onchange="srvFilterAddProducts()"
+                style="flex:0 0 auto;min-width:150px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px">
+          <option value="">Toutes catégories</option>
+          ${[...new Set((allProducts || []).filter(p => !p.archived).map(p => p.category).filter(Boolean))].sort().map(c => `<option>${esc(c)}</option>`).join("")}
+        </select>
+        <input type="text" id="dc-srv-add-search" placeholder="Tape les premières lettres (ex: Pago, Coca…)"
+               style="flex:1;min-width:180px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px"
                oninput="srvFilterAddProducts()" autocomplete="off"/>
-        <div id="dc-srv-add-results" style="position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:280px;overflow-y:auto;z-index:50;display:none;box-shadow:var(--shadow-md)"></div>
+        <button class="btn btn-gold" onclick="openSrvAiFinder()" title="Décris le produit à l'IA">🤖 IA</button>
+      </div>
+      <div style="position:relative">
+        <div id="dc-srv-add-results" style="position:absolute;top:0;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;max-height:280px;overflow-y:auto;z-index:50;display:none;box-shadow:var(--shadow-md)"></div>
       </div>
     </div>
     <div class="dc-count-footer">
@@ -5826,23 +5834,22 @@ async function uploadBlPhotoServer(cid, file) {
 
 function srvFilterAddProducts() {
   const q = (document.getElementById("dc-srv-add-search")?.value || "").toLowerCase().trim();
+  const cat = document.getElementById("dc-srv-add-category")?.value || "";
   const results = document.getElementById("dc-srv-add-results");
   if (!results) return;
-  if (q.length < 2) {
+  // Si ni catégorie ni recherche, cacher
+  if (q.length < 2 && !cat) {
     results.style.display = "none";
     results.innerHTML = "";
     return;
   }
-  // IDs déjà présents dans le contrôle (pour ne pas les reproposer)
-  const alreadyIds = new Set();
-  // __dcState.items contient des items déjà ajoutés mais sans product_id côté state.
-  // On filtre juste sur le nom : si le nom matche un item existant, on le marque "déjà".
   const existingNames = new Set((__dcState?.items || []).map(it => (it.product_name || "").toLowerCase()));
 
   const matches = (allProducts || [])
     .filter(p => !p.archived)
-    .filter(p => p.name.toLowerCase().includes(q) || (p.category || "").toLowerCase().includes(q))
-    .slice(0, 10);
+    .filter(p => !cat || p.category === cat)
+    .filter(p => !q || q.length < 2 || p.name.toLowerCase().includes(q) || (p.category || "").toLowerCase().includes(q))
+    .slice(0, 15);
 
   if (matches.length === 0) {
     results.innerHTML = `<div style="padding:12px;color:var(--text-muted);font-size:13px">Aucun produit trouvé pour "${esc(q)}"</div>`;
@@ -5862,6 +5869,63 @@ function srvFilterAddProducts() {
     </div>`;
   }).join("");
   results.style.display = "block";
+}
+
+function openSrvAiFinder() {
+  openModal(`
+    <h3 style="margin-bottom:8px">🤖 Trouver un produit avec l'IA</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
+      Décris ce que tu vois sur la bouteille ou dans le carton. L'IA va te proposer les produits du catalogue qui correspondent le mieux.
+    </p>
+    <div class="form-group">
+      <textarea id="srv-ai-desc" rows="3" placeholder="ex: bouteille bleue de gin avec carafe ovale, ou jus de fruits rouge marque Pago…"
+                style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px;font-family:inherit"></textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="srvAiFind()">✨ Chercher</button>
+    </div>
+    <div id="srv-ai-results" style="margin-top:14px"></div>
+  `);
+  setTimeout(() => document.getElementById("srv-ai-desc")?.focus(), 80);
+}
+
+async function srvAiFind() {
+  const desc = document.getElementById("srv-ai-desc")?.value || "";
+  const resultsEl = document.getElementById("srv-ai-results");
+  if (!resultsEl) return;
+  resultsEl.innerHTML = `<div class="info-box">⏳ Analyse en cours…</div>`;
+  try {
+    const r = await api("/api/inventory/find-product", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ description: desc }),
+    });
+    const cands = r.candidates || [];
+    if (cands.length === 0) {
+      resultsEl.innerHTML = `<div class="info-box">Aucun produit correspondant trouvé. Essaie une description plus précise.</div>`;
+      return;
+    }
+    resultsEl.innerHTML = cands.map((c, i) => `
+      <div style="padding:12px 14px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:180px">
+          <div style="font-weight:700">${i === 0 ? '🎯 ' : ''}${esc(c.name)}</div>
+          <div style="font-size:12px;color:var(--text-muted)">${esc(c.category)} · ${esc(c.unit)}</div>
+          ${c.reason ? `<div style="font-size:11px;color:var(--text-muted);font-style:italic;margin-top:3px">${esc(c.reason)}</div>` : ""}
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="srvAiPick(${c.id})">+ Ajouter</button>
+      </div>
+    `).join("");
+  } catch(e) {
+    resultsEl.innerHTML = `<div class="info-box" style="color:#DC2626">Erreur : ${esc(e.message)}</div>`;
+  }
+}
+
+async function srvAiPick(productId) {
+  try {
+    await srvPickAddProduct(productId);
+    closeModal();
+  } catch(e) { alert("Erreur : " + e.message); }
 }
 
 async function srvPickAddProduct(productId) {

@@ -5301,6 +5301,83 @@ def flash_test_api():
         return {"ok": False, "key": masked, "error": f"{type(e).__name__}: {str(e)}"}
 
 
+class FindProductIn(BaseModel):
+    description: str
+
+
+@app.post("/api/inventory/find-product")
+def find_product_ai(body: FindProductIn, db: Session = Depends(get_db)):
+    """
+    IA : reçoit une description libre (ex: "bouteille bleue de gin en carafe")
+    et retourne jusqu'à 3 produits du catalogue qui correspondent le mieux.
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(400, "Clé API Anthropic non configurée.")
+    desc = (body.description or "").strip()
+    if len(desc) < 3:
+        raise HTTPException(400, "Description trop courte (min 3 caractères).")
+
+    # Catalogue actif (non archivé) — envoyé au modèle
+    products = db.query(Product).filter(
+        (Product.archived == False) | (Product.archived == None)
+    ).all()
+    if not products:
+        return {"candidates": []}
+
+    # Compact catalogue : id, nom, catégorie, unité
+    catalog = "\n".join(
+        f"{p.id}|{p.name}|{p.category or ''}|{p.unit or ''}"
+        for p in products
+    )
+
+    import anthropic as _anthropic
+    client = _anthropic.Anthropic(api_key=api_key)
+    prompt = (
+        "Tu aides un serveur de bar à retrouver un produit dans le catalogue. "
+        "Voici le catalogue (format: id|nom|catégorie|unité), un produit par ligne:\n\n"
+        f"{catalog}\n\n"
+        f"Description donnée par le serveur: \"{desc}\"\n\n"
+        "Retourne les 1 à 3 produits qui correspondent le mieux, au format JSON strict:\n"
+        '{"candidates":[{"id":123,"reason":"courte raison"}, ...]}\n'
+        "Classe du meilleur au moins bon. Si rien ne correspond vraiment, retourne une liste vide."
+    )
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                text += block.text
+        # Extraire le JSON même si entouré de texte
+        import re, json as _json
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if not m:
+            return {"candidates": []}
+        data = _json.loads(m.group(0))
+        raw_candidates = data.get("candidates", [])[:3]
+        # Enrichir avec les infos produit
+        out = []
+        for c in raw_candidates:
+            pid = c.get("id")
+            p = next((x for x in products if x.id == pid), None)
+            if not p:
+                continue
+            out.append({
+                "id": p.id,
+                "name": p.name,
+                "category": p.category or "",
+                "unit": p.unit or "",
+                "reason": (c.get("reason") or "").strip()[:120],
+            })
+        return {"candidates": out}
+    except Exception as e:
+        raise HTTPException(500, f"Erreur IA : {str(e)[:160]}")
+
+
 @app.post("/api/inventory/flash-analyze")
 async def flash_analyze_photo(
     file: UploadFile = File(...),
