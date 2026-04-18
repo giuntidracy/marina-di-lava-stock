@@ -7469,6 +7469,35 @@ function renderStockValueTrendCard(s) {
   </div>`;
 }
 
+function renderDormantProductsCard(d) {
+  if (!d) return "";
+  const fmt = v => (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", maximumFractionDigits:0 });
+  if (!d.count) {
+    return `<div class="db-card db-card-clickable" onclick="switchView('stock')" title="Voir le stock">
+      <div class="db-card-title">💤 Produits dormants <span class="db-card-sub">· ${d.days}j</span></div>
+      <div class="db-sync-row">
+        <span class="db-sync-icon">✅</span>
+        <div>
+          <div class="db-sync-label">Aucun dormant</div>
+          <div class="db-sync-date">Tout tourne sur ${d.days} jours</div>
+        </div>
+      </div>
+    </div>`;
+  }
+  const rows = (d.top || []).map(p => `
+    <div class="db-top-row">
+      <span class="db-top-name">${esc(p.name)}</span>
+      <span class="db-top-qty">${p.stock} ${esc(p.unit)} · ${fmt(p.immobilized)}</span>
+    </div>
+  `).join("");
+  const borderColor = d.total_immob > 500 ? "#dc2626" : d.total_immob > 100 ? "#f59e0b" : "var(--border)";
+  return `<div class="db-card db-card-clickable" onclick="switchView('stock')" title="Voir le stock" style="border-left:4px solid ${borderColor}">
+    <div class="db-card-title">💤 Produits dormants <span class="db-card-badge" style="background:${borderColor}20;color:${borderColor}">${d.count}</span></div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${fmt(d.total_immob)} immobilisés · non vendus sur ${d.days}j</div>
+    <div style="margin-top:8px">${rows}</div>
+  </div>`;
+}
+
 function renderNextEventCoverageCard(e) {
   if (!e) {
     return `<div class="db-card db-card-clickable" onclick="switchView('events')" title="Ajouter un événement">
@@ -7781,6 +7810,7 @@ async function renderDashboard(el) {
         ${renderMonthlyGoalCard(data.monthly_goal)}
         ${renderCriticalAlertsCard(data.critical_alerts)}
         ${renderNextEventCoverageCard(data.next_event_coverage)}
+        ${renderDormantProductsCard(data.dormant_products)}
 
         <div class="db-card db-card-clickable" onclick="switchView('stats')" title="Voir les statistiques">
           <div class="db-card-title">📦 Top 3 produits <span class="db-card-sub">· cette semaine</span></div>

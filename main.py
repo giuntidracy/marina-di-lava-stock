@@ -7053,6 +7053,50 @@ def get_dashboard(db: Session = Depends(get_db)):
         "critical_alerts": _dashboard_critical_alerts(db),
         "stock_value_trend": _dashboard_stock_value_trend(db),
         "next_event_coverage": _dashboard_next_event_coverage(db),
+        "dormant_products": _dashboard_dormant_products(db),
+    }
+
+
+def _dashboard_dormant_products(db: Session, days: int = 30) -> dict:
+    """
+    Produits en stock n'ayant été vendus dans aucun import Cashpad
+    des `days` derniers jours. Retourne top 3 par valeur immobilisée.
+    """
+    since = datetime.utcnow() - timedelta(days=days)
+    # Ensemble des noms produits vendus sur la période
+    sold_names: set = set()
+    for h in db.query(StockHistory).filter(
+        StockHistory.event_type.in_(["import_cashpad", "cashpad_sync"]),
+        StockHistory.created_at >= since,
+    ).all():
+        for item in extract_sales(h):
+            name = (item.get("product_name") or item.get("name") or "").strip().lower()
+            if name:
+                sold_names.add(name)
+
+    # Produits actifs avec stock > 0 + purchase_price défini, non vendus
+    candidates = db.query(Product).filter(
+        (Product.archived == False) | (Product.archived == None),
+        Product.stock > 0,
+        Product.purchase_price > 0,
+    ).all()
+    dormant = []
+    for p in candidates:
+        if p.name.strip().lower() not in sold_names:
+            dormant.append({
+                "id":        p.id,
+                "name":      p.name,
+                "stock":     round(float(p.stock or 0), 2),
+                "unit":      p.unit or "u",
+                "immobilized": round(float(p.stock or 0) * float(p.purchase_price or 0), 2),
+            })
+    dormant.sort(key=lambda x: -x["immobilized"])
+    total_immob = round(sum(d["immobilized"] for d in dormant), 2)
+    return {
+        "days":         days,
+        "count":        len(dormant),
+        "total_immob":  total_immob,
+        "top":          dormant[:3],
     }
 
 
