@@ -16,14 +16,98 @@ let inactivityTimer = null;
 
 // Onglets accessibles par rôle
 const SERVICE_VIEWS = ["inventory","service_alert","delivery_check"];
-const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery_check","inventory","flash","stats","history","suppliers","orders","mapping","admin","events","shrinkage"];
+const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery_check","inventory","flash","stats","history","suppliers","orders","mapping","admin","staff","events","shrinkage"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
-  const res = await api("/api/auth/service", { method: "POST" });
-  authToken = res.token;
-  userRole = "service";
-  startApp();
+  // Essaie d'abord le mode libre (fonctionne si aucun staff n'est créé).
+  // Si le backend exige un PIN, on montre l'écran staff.
+  try {
+    const res = await fetch("/api/auth/service", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.token) {
+      authToken = data.token;
+      userRole = "service";
+      userName = data.user_name || "";
+      startApp();
+      return;
+    }
+    // Backend refuse → afficher le choix serveur
+    await showStaffLoginScreen();
+  } catch(e) {
+    alert("Erreur : " + e.message);
+  }
+}
+
+async function showStaffLoginScreen() {
+  try {
+    const staff = await api("/api/staff/public");
+    if (!staff || staff.length === 0) {
+      // Aucun staff actif, retry mode libre
+      const res = await api("/api/auth/service", { method: "POST", headers: {"Content-Type":"application/json"}, body: "{}" });
+      authToken = res.token;
+      userRole = "service";
+      userName = "";
+      startApp();
+      return;
+    }
+    const loginBox = document.getElementById("login-box");
+    loginBox.innerHTML = `
+      <img src="/static/logo.png" alt="Marina Di Lava" style="height:64px;object-fit:contain;margin-bottom:10px;filter:drop-shadow(0 4px 16px rgba(0,0,0,.4))"/>
+      <div class="login-sub" style="margin-bottom:20px">Choisis ton prénom</div>
+      <div id="staff-tiles" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-bottom:14px;max-width:420px">
+        ${staff.map(s => `
+          <button class="login-btn service-btn" style="padding:16px 10px;flex-direction:column;gap:6px" onclick="startStaffPin(${s.id}, '${esc(s.name).replace(/'/g,"\\'")}')">
+            <span style="font-size:28px">🍸</span>
+            <span class="login-btn-label" style="font-size:14px">${esc(s.name)}</span>
+          </button>
+        `).join("")}
+      </div>
+      <button class="back-btn" onclick="location.reload()">← Retour</button>
+    `;
+  } catch(e) {
+    alert("Erreur : " + e.message);
+  }
+}
+
+function startStaffPin(staffId, staffName) {
+  const loginBox = document.getElementById("login-box");
+  loginBox.innerHTML = `
+    <img src="/static/logo.png" alt="Marina Di Lava" style="height:64px;object-fit:contain;margin-bottom:10px;filter:drop-shadow(0 4px 16px rgba(0,0,0,.4))"/>
+    <div class="login-sub" style="margin-bottom:14px">Salut <strong>${esc(staffName)}</strong> 👋</div>
+    <p class="pin-label">Ton PIN</p>
+    <input id="staff-pin-input" type="password" inputmode="numeric" maxlength="8" placeholder="••••" autocomplete="off"
+           onkeydown="if(event.key==='Enter') submitStaffPin(${staffId})"/>
+    <button class="login-btn manager-btn" style="margin-top:14px;justify-content:center;font-size:15px;font-weight:700" onclick="submitStaffPin(${staffId})">Valider</button>
+    <p id="staff-pin-error" class="pin-error hidden">PIN incorrect</p>
+    <button class="back-btn" onclick="showStaffLoginScreen()">← Retour</button>
+  `;
+  setTimeout(() => document.getElementById("staff-pin-input")?.focus(), 80);
+}
+
+async function submitStaffPin(staffId) {
+  const pin = document.getElementById("staff-pin-input")?.value || "";
+  if (!pin) return;
+  try {
+    const res = await api("/api/auth/service", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ staff_id: staffId, pin }),
+    });
+    authToken = res.token;
+    userRole = "service";
+    userName = res.user_name || "";
+    startApp();
+  } catch(e) {
+    const errEl = document.getElementById("staff-pin-error");
+    if (errEl) { errEl.textContent = e.message || "PIN incorrect"; errEl.classList.remove("hidden"); }
+    const inp = document.getElementById("staff-pin-input");
+    if (inp) { inp.value = ""; inp.focus(); }
+  }
 }
 
 async function loginManager() {
@@ -86,6 +170,8 @@ function startApp() {
   if (roleBadge) {
     if (userRole === "manager" && userName) {
       roleBadge.innerHTML = `${userPhoto ? `<img src="${esc(userPhoto)}" class="sidebar-avatar"/>` : ""}<span>${esc(userName)}</span>`;
+    } else if (userRole === "service" && userName) {
+      roleBadge.innerHTML = `<span>🍸 ${esc(userName)}</span>`;
     } else {
       roleBadge.textContent = userRole === "manager" ? "Direction" : "🍸 Service";
     }
@@ -186,7 +272,7 @@ const VIEW_TITLES = {
   inventory:"Sortie Réserve", flash:"Inventaire Flash", service_alert:"Alerte Stock",
   stats:"Statistiques", history:"Historique",
   events:"Événements", suppliers:"Fournisseurs", orders:"Commandes", mapping:"Mapping Cashpad",
-  admin:"Administration",
+  admin:"Administration", staff:"Login serveurs",
 };
 
 function switchView(view) {
@@ -246,6 +332,7 @@ function renderView(view) {
     case "service_alert": renderServiceAlert(app); break;
     case "delivery_check": renderDeliveryCheck(app); break;
     case "admin":     renderAdmin(app); break;
+    case "staff":     renderStaff(app); break;
   }
 }
 
@@ -5238,6 +5325,137 @@ async function renderAdmin(el) {
   </div>`;
   loadAlertSettings();
   loadBackupSettings();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// LOGIN SERVEURS (gestion des staff, direction uniquement)
+// ══════════════════════════════════════════════════════════════════════════
+
+async function renderStaff(el) {
+  if (userRole !== "manager") {
+    el.innerHTML = `<div class="dc-empty" style="color:#DC2626">Accès réservé à la direction.</div>`;
+    return;
+  }
+  el.innerHTML = `<div class="dc-wrap">
+    <div class="section-header">
+      <span class="section-title">👥 Login serveurs</span>
+      <button class="btn btn-primary" onclick="openStaffForm(null)">+ Ajouter un serveur</button>
+    </div>
+    <div class="info-box" style="margin-bottom:16px;font-size:13px">
+      ℹ️ Tant qu'aucun serveur n'est créé, l'écran Service reste en mode libre (pas de PIN). Dès qu'un seul serveur est créé ici, <strong>tous les serveurs devront entrer leur PIN</strong> pour se connecter. Toi (direction) tu continues à te connecter avec ton PIN actuel.
+    </div>
+    <div id="staff-list">Chargement…</div>
+  </div>`;
+  loadStaff();
+}
+
+async function loadStaff() {
+  const container = document.getElementById("staff-list");
+  if (!container) return;
+  try {
+    const staff = await api("/api/staff");
+    if (staff.length === 0) {
+      container.innerHTML = `<div class="info-box">Aucun serveur pour l'instant — cliquez sur <strong>+ Ajouter un serveur</strong>.</div>`;
+      return;
+    }
+    container.innerHTML = `<div class="table-wrap"><table class="mobile-cards-table">
+      <thead><tr><th>Nom</th><th>PIN</th><th>Statut</th><th>Créé</th><th></th></tr></thead>
+      <tbody>
+        ${staff.map(s => `
+          <tr>
+            <td data-label="Nom"><strong>${esc(s.name)}</strong></td>
+            <td data-label="PIN" style="font-family:monospace;letter-spacing:2px"><strong>${esc(s.pin)}</strong></td>
+            <td data-label="Statut">
+              ${s.is_active
+                ? '<span class="marge-pill marge-ok">Actif</span>'
+                : '<span class="marge-pill" style="background:var(--gray-bg);color:var(--gray-text)">Inactif</span>'}
+            </td>
+            <td data-label="Créé" style="font-size:12px;color:var(--text-muted)">${esc(s.created_at)}</td>
+            <td data-label="Actions" style="white-space:nowrap">
+              <button class="btn btn-outline btn-sm" onclick='openStaffForm(${JSON.stringify(s)})'>✏️</button>
+              <button class="btn btn-sm" style="background:transparent;color:${s.is_active ? '#B45309' : '#16A34A'};border:1px solid var(--border)" onclick="toggleStaffActive(${s.id}, ${!s.is_active})" title="${s.is_active ? 'Désactiver' : 'Réactiver'}">${s.is_active ? '⏸' : '▶️'}</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteStaff(${s.id},'${esc(s.name).replace(/'/g,"\\'")}')">🗑</button>
+            </td>
+          </tr>`).join("")}
+      </tbody>
+    </table></div>`;
+  } catch(e) {
+    container.innerHTML = `<div class="info-box" style="color:#DC2626">Erreur : ${esc(e.message)}</div>`;
+  }
+}
+
+function openStaffForm(existing) {
+  const isEdit = !!existing;
+  openModal(`
+    <h3 style="margin-bottom:14px">${isEdit ? "Modifier " + esc(existing.name) : "Nouveau serveur"}</h3>
+    <form id="staff-form" onsubmit="submitStaffForm(event, ${isEdit ? existing.id : 'null'})">
+      <div class="form-group">
+        <label>Prénom *</label>
+        <input type="text" name="name" required value="${isEdit ? esc(existing.name) : ''}" placeholder="Jean"/>
+      </div>
+      <div class="form-group">
+        <label>PIN * (3 à 8 chiffres — que TU choisis pour lui)</label>
+        <input type="text" name="pin" required inputmode="numeric" pattern="[0-9]{3,8}" maxlength="8" value="${isEdit ? esc(existing.pin) : ''}" placeholder="1234"/>
+      </div>
+      ${isEdit ? `
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" name="is_active" ${existing.is_active ? 'checked' : ''}/>
+          <span>Compte actif</span>
+        </label>
+      </div>` : ""}
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Annuler</button>
+        <button type="submit" class="btn btn-primary">${isEdit ? 'Enregistrer' : 'Créer'}</button>
+      </div>
+    </form>
+  `);
+}
+
+async function submitStaffForm(event, staffId) {
+  event.preventDefault();
+  const fd = new FormData(event.target);
+  const body = {
+    name: fd.get("name"),
+    pin: fd.get("pin"),
+    is_active: staffId ? !!fd.get("is_active") : true,
+  };
+  try {
+    if (staffId) {
+      await api(`/api/staff/${staffId}`, {
+        method: "PUT",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(body),
+      });
+    } else {
+      await api("/api/staff", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(body),
+      });
+    }
+    closeModal();
+    loadStaff();
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function toggleStaffActive(staffId, newActive) {
+  try {
+    await api(`/api/staff/${staffId}`, {
+      method: "PUT",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ name: "", pin: "", is_active: newActive }),
+    });
+    loadStaff();
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function deleteStaff(staffId, name) {
+  if (!confirm(`Supprimer définitivement ${name} ?\n\nLes sorties réserve et signalements historiques gardent son nom, mais il ne pourra plus se connecter.`)) return;
+  try {
+    await api(`/api/staff/${staffId}`, { method: "DELETE" });
+    loadStaff();
+  } catch(e) { alert("Erreur : " + e.message); }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
