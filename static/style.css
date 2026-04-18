@@ -1889,7 +1889,11 @@ html[data-theme="dark"] .pred-card-factor { background: rgba(201,169,97,0.18); c
 .dc-row-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 .dc-row-sup { font-weight: 700; font-size: 15px; }
 .dc-row-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-.dc-row-footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.dc-row-footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .dc-row-footer > div[style*="flex"] { width: 100%; }
+  .dc-row-footer > div[style*="flex"] > .btn { flex: 1 1 auto; }
+}
 .dc-status-badge { font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px; text-transform: uppercase; letter-spacing: .5px; }
 
 /* Serveur — comptage */
