@@ -1349,6 +1349,48 @@ details[open] .history-details summary::before { content: '▼'; }
   .reserve-qty-btn { width: 44px; height: 44px; }
 }
 
+/* ── Fixes dimensions mobile étroit (iPhone &amp; petits écrans) ── */
+@media (max-width: 640px) {
+  /* Empêche tout débordement horizontal global */
+  html, body { overflow-x: hidden; max-width: 100%; }
+  main { padding: 12px; max-width: 100%; }
+
+  /* KPI cards : on force 2 colonnes puis full-width sur très petit */
+  .stock-summary { gap: 10px; }
+  .summary-card { min-width: 0; flex: 1 1 calc(50% - 10px); padding: 14px 14px; }
+  .summary-card .s-value { font-size: 22px; }
+
+  /* Tables : scroll horizontal bien contenu */
+  .table-wrap { max-width: 100%; -webkit-overflow-scrolling: touch; }
+  .table-wrap table { min-width: 520px; }
+
+  /* Filters plus compacts */
+  .filters { padding: 10px 12px; gap: 6px; }
+  .filters select, .filters input[type="text"] { font-size: 13px; }
+
+  /* Commandes — supplier cards pleine largeur + header qui wrap */
+  .ord-supplier-grid { grid-template-columns: 1fr; gap: 10px; }
+  .ord-supplier-card { padding: 14px; }
+  .ord-supplier-header { flex-wrap: wrap; }
+  .ord-supplier-header > div:first-child { min-width: 0; flex: 1 1 100%; word-break: break-word; }
+  .ord-new-btn { width: 100%; justify-content: center; }
+  .ord-supplier-meta { word-break: break-all; }
+
+  /* Contrôle livraison — boutons du footer wrappent et prennent toute la largeur */
+  .dc-count-footer { justify-content: stretch; flex-direction: column; }
+  .dc-count-footer .btn { width: 100%; white-space: normal; }
+  .dc-wrap { padding: 16px 12px 60px; max-width: 100%; }
+  .dc-val-table { min-width: 560px; }
+
+  /* Titres de page plus compacts */
+  .section-title { font-size: 16px; }
+}
+
+@media (max-width: 420px) {
+  /* iPhone SE / très petit : 1 seule colonne pour les KPI */
+  .summary-card { flex: 1 1 100%; }
+}
+
 /* ══════════════════════════════════════════════
    SCROLLBAR
 ══════════════════════════════════════════════ */
