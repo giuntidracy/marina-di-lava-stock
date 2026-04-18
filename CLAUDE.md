@@ -66,3 +66,13 @@ Format conseillé : `?v=YYYYMMDDa` (a → b → c si plusieurs déploiements le 
 Avant d'ajouter un widget dashboard, une card, une métrique ou une nouvelle section UI, **relire tout ce qui est déjà rendu** dans la même vue (`renderDashboard`, `renderStock`, etc.) pour éviter les doublons. Chercher par mot-clé (`Valeur stock`, `Alertes`, `Marge`…) dans `app.js`. Un KPI dans `db-kpi-row` compte aussi comme existant.
 
 Exemple d'erreur à ne pas reproduire : ajouter un widget "Valeur du stock" alors qu'il y en avait déjà un dans le `db-kpi-row` en haut du dashboard.
+
+### R-03 — Inventorier TOUS les éléments cibles avant un fix ciblé
+Quand on corrige un problème visuel sur une page (table qui déborde, layout cassé, etc.), **d'abord grepper tous les éléments similaires sur la page** (ex: `grep "class=\"sh-.*-table\"" renderShrinkage`) avant de coder le fix. Sinon on corrige 1 sur 3 et l'utilisateur fait la manip cache pour rien.
+
+Checklist avant de dire "mobile fixé" pour une page :
+1. Lister toutes les `<table>` et grilles de la vue concernée.
+2. Vérifier que chaque élément identifié a bien le correctif.
+3. Ensuite seulement dire "prêt à tester".
+
+Exemple d'erreur : la page Démarque a 3 tables (`.sh-table` + 2× `.sh-auto-table`), j'en ai fixé 1 puis annoncé "prêt", obligeant l'utilisateur à clear Safari pour rien.
