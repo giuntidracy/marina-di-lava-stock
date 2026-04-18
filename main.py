@@ -6805,9 +6805,29 @@ def get_dashboard(db: Session = Depends(get_db)):
 
     day_names = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"]
 
-    # ── Widget 1 : dernière synchro Cashpad ──────────────────────────────
+    # ── Widget 1 : santé Cashpad (dernière sync + activité 24h) ───────────
     last_sync_raw = _get_setting(db, "cashpad_last_sync", "")
-    last_sync_info = {"has_sync": False}
+    # Activité des 24 dernières heures
+    since_24h = datetime.utcnow() - timedelta(hours=24)
+    tx_24h = 0
+    ca_24h = 0.0
+    hist_24h = (
+        db.query(StockHistory)
+        .filter(
+            StockHistory.event_type.in_(["import_cashpad", "cashpad_sync"]),
+            StockHistory.created_at >= since_24h,
+        )
+        .all()
+    )
+    for h in hist_24h:
+        for item in extract_sales(h):
+            qty = float(item.get("qty_sold", 0) or 0)
+            price = float(item.get("sale_price_ttc", 0) or 0)
+            if qty > 0:
+                tx_24h += 1
+                ca_24h += qty * price
+
+    last_sync_info = {"has_sync": False, "tx_24h": tx_24h, "ca_24h": round(ca_24h, 2)}
     if last_sync_raw:
         try:
             last_sync_dt = datetime.fromisoformat(last_sync_raw)
@@ -6823,13 +6843,21 @@ def get_dashboard(db: Session = Depends(get_db)):
                 label = f"il y a {days} jour{'s' if days > 1 else ''}"
             else:
                 label = f"il y a {days} jours"
-            status = "ok" if hours < 24 else ("warn" if hours < 72 else "error")
+            # Santé : combine fraîcheur + activité
+            if hours >= 24:
+                status = "error"
+            elif hours >= 4 or tx_24h == 0:
+                status = "warn"
+            else:
+                status = "ok"
             last_sync_info = {
                 "has_sync":    True,
                 "iso":         last_sync_raw,
                 "label":       label,
                 "status":      status,
                 "date_fr":     to_local(last_sync_dt).strftime("%d/%m/%Y %H:%M"),
+                "tx_24h":      tx_24h,
+                "ca_24h":      round(ca_24h, 2),
             }
         except Exception:
             pass
