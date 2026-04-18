@@ -7223,9 +7223,11 @@ async function flashDoCreate(event, index) {
 
 function renderLastSyncCard(sync) {
   if (!sync) return "";
+  const fmtEur = v => (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", maximumFractionDigits:0 });
+
   if (!sync.has_sync) {
     return `<div class="db-card db-card-clickable db-sync-empty" onclick="switchView('cashpad')" title="Importer depuis Cashpad">
-      <div class="db-card-title">⏱️ Dernière sync Cashpad</div>
+      <div class="db-card-title">🔌 Santé Cashpad</div>
       <div class="db-sync-row">
         <span class="db-sync-icon">📭</span>
         <div>
@@ -7235,16 +7237,21 @@ function renderLastSyncCard(sync) {
       </div>
     </div>`;
   }
+
   const statusClass = sync.status === "ok" ? "db-sync-ok" : sync.status === "warn" ? "db-sync-warn" : "db-sync-error";
-  const icon = sync.status === "ok" ? "✅" : sync.status === "warn" ? "⚠️" : "🔴";
+  const icon = sync.status === "ok" ? "🟢" : sync.status === "warn" ? "🟠" : "🔴";
+  const statusLabel = sync.status === "ok" ? "Connecté" : sync.status === "warn" ? "Activité anormale" : "Sync en retard";
+  const tx = sync.tx_24h || 0;
+  const ca = sync.ca_24h || 0;
+  const tx24hHint = tx === 0
+    ? `<span style="color:#dc2626;font-weight:600">⚠️ 0 vente 24h</span>`
+    : `<strong>${tx}</strong> vente${tx > 1 ? 's' : ''} · <strong>${fmtEur(ca)}</strong>`;
+
   return `<div class="db-card db-card-clickable ${statusClass}" onclick="switchView('cashpad')" title="Ouvrir Cashpad">
-    <div class="db-card-title">⏱️ Dernière sync Cashpad</div>
-    <div class="db-sync-row">
-      <span class="db-sync-icon">${icon}</span>
-      <div>
-        <div class="db-sync-label">${esc(sync.label)}</div>
-        <div class="db-sync-date">${esc(sync.date_fr)}</div>
-      </div>
+    <div class="db-card-title">🔌 Santé Cashpad <span class="db-card-sub">· ${icon} ${esc(statusLabel)}</span></div>
+    <div style="display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:13px">
+      <div><span style="color:var(--text-muted)">Dernière sync :</span> ${esc(sync.label)}</div>
+      <div><span style="color:var(--text-muted)">Activité 24h :</span> ${tx24hHint}</div>
     </div>
   </div>`;
 }
