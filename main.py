@@ -850,6 +850,27 @@ def auth_pin(body: PinIn, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(401, f"Code PIN incorrect — {remaining} tentative(s) restante(s)")
 
 
+def _apply_exif_orientation(content: bytes, content_type: str) -> tuple[bytes, str]:
+    """
+    Réoriente une image selon ses données EXIF (photos iPhone portrait/paysage).
+    Retourne (bytes, mime). Pour PDF ou si Pillow échoue, retourne tel quel.
+    """
+    if content_type and "pdf" in content_type.lower():
+        return content, content_type
+    try:
+        import io as _io
+        from PIL import Image as _Image, ImageOps as _ImageOps
+        img = _Image.open(_io.BytesIO(content))
+        img = _ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        buf = _io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:
+        return content, content_type or "image/jpeg"
+
+
 @app.post("/api/auth/avatar")
 async def upload_avatar(file: UploadFile = File(...), request: Request = None, db: Session = Depends(get_db)):
     """Upload une photo de profil — stockée en base (persistant sur Railway)."""
@@ -870,6 +891,9 @@ async def upload_avatar(file: UploadFile = File(...), request: Request = None, d
     ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "jpg"
     media_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
     media_type = media_map.get(ext, "image/jpeg")
+
+    # Réoriente l'avatar selon EXIF (iPhone) — pas pour les PDF (impossible ici)
+    content, media_type = _apply_exif_orientation(content, media_type)
 
     b64 = base64.standard_b64encode(content).decode("utf-8")
     _set_setting(db, f"avatar_{slug}_data", b64)
@@ -1879,6 +1903,8 @@ async def upload_bl_photo(cid: int, file: UploadFile = File(...), db: Session = 
     fname = (file.filename or "").lower()
     ext = fname.rsplit(".", 1)[-1] if "." in fname else "jpg"
     media_type = file.content_type or ext_map.get(ext, "image/jpeg")
+    # Réoriente la photo selon EXIF (iPhone) — bypass pour PDF
+    content, media_type = _apply_exif_orientation(content, media_type)
     c.bl_photo = base64.standard_b64encode(content).decode("utf-8")
     c.bl_photo_type = media_type
     db.commit()
@@ -3799,7 +3825,12 @@ def _parse_auchan_pdf(content_bytes):
 async def analyze_delivery(file: UploadFile = File(...)):
     import os
     content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(400, detail="Fichier trop volumineux (max 10 Mo).")
     is_pdf = file.filename.lower().endswith(".pdf")
+    # Pour les photos : réoriente selon EXIF (iPhone) avant envoi à l'IA
+    if not is_pdf:
+        content, _ = _apply_exif_orientation(content, "image/jpeg")
 
     # ── Pour les PDF : parsers déterministes (pdfplumber) ──
     if is_pdf:
@@ -5150,12 +5181,13 @@ async def flash_analyze_photo(
     if len(content) > 20 * 1024 * 1024:
         raise HTTPException(400, detail="Image trop volumineuse (max 20 Mo)")
 
-    # Compresser l'image pour éviter les timeouts API (photos téléphone = 5-12 Mo)
+    # Compresser + réorienter EXIF (photos téléphone = 5-12 Mo, souvent en portrait iPhone)
     try:
-        from PIL import Image
+        from PIL import Image, ImageOps
         img = Image.open(io.BytesIO(content))
+        img = ImageOps.exif_transpose(img)
         # Convertir RGBA/P → RGB si nécessaire
-        if img.mode in ("RGBA", "P"):
+        if img.mode in ("RGBA", "P", "LA"):
             img = img.convert("RGB")
         # Redimensionner si > 1600px de large (suffisant pour identifier des bouteilles)
         max_dim = 1600
