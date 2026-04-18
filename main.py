@@ -788,7 +788,16 @@ def extract_sales(h) -> list:
 
 @app.get("/")
 def root():
-    return FileResponse("static/index.html")
+    # index.html = jamais caché → on veut que Safari iOS voie immédiatement
+    # les nouvelles versions de app.js et style.css référencées par ?v=...
+    return FileResponse(
+        "static/index.html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 class PinIn(BaseModel):
