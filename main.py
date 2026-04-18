@@ -37,7 +37,7 @@ from models import (
     Base, Supplier, Product, Cocktail, CocktailIngredient,
     CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
     SupplierOrder, SupplierOrderItem, Event, EventRequirement, ManualLoss, AppSetting, ServiceAlert,
-    StockSnapshot, DeliveryCheck, DeliveryCheckItem, PriceHistory,
+    Staff, StockSnapshot, DeliveryCheck, DeliveryCheckItem, PriceHistory,
     OrderTemplate, OrderTemplateItem
 )
 
@@ -194,7 +194,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # ── Middleware auth ────────────────────────────────────────────────────────
-OPEN_PATHS = {"/api/auth", "/api/auth/service"}
+OPEN_PATHS = {"/api/auth", "/api/auth/service", "/api/staff/public"}
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -794,12 +794,144 @@ def root():
 class PinIn(BaseModel):
     pin: str
 
+class ServiceLoginIn(BaseModel):
+    pin: Optional[str] = None
+    staff_id: Optional[int] = None
+
+
+@app.get("/api/staff/public")
+def list_staff_public(db: Session = Depends(get_db)):
+    """Liste publique (sans PIN) pour l'écran de login service."""
+    rows = db.query(Staff).filter(Staff.is_active == True).order_by(Staff.name).all()
+    return [{"id": s.id, "name": s.name, "slug": s.slug} for s in rows]
+
+
 @app.post("/api/auth/service")
-def auth_service():
-    """Connexion service — pas de PIN, accès limité."""
+def auth_service(body: ServiceLoginIn = None, db: Session = Depends(get_db)):
+    """
+    Connexion service.
+    - Si aucun staff n'est créé : connexion directe sans PIN (mode simple).
+    - Sinon : staff_id + PIN requis → retour user_name dans la session.
+    """
+    staff_exists = db.query(Staff).filter(Staff.is_active == True).count() > 0
+
+    if not staff_exists:
+        token = secrets.token_urlsafe(32)
+        _sessions[token] = {
+            "role": "service",
+            "user_name": "",
+            "expires": datetime.utcnow() + timedelta(hours=12),
+        }
+        return {"ok": True, "role": "service", "token": token, "user_name": ""}
+
+    if not body or not body.staff_id or not body.pin:
+        raise HTTPException(400, detail="Choisissez votre nom et entrez votre PIN.")
+
+    staff = db.query(Staff).get(body.staff_id)
+    if not staff or not staff.is_active or staff.pin != body.pin:
+        raise HTTPException(401, detail="PIN incorrect.")
+
     token = secrets.token_urlsafe(32)
-    _sessions[token] = {"role": "service", "expires": datetime.utcnow() + timedelta(minutes=30)}
-    return {"ok": True, "role": "service", "token": token}
+    _sessions[token] = {
+        "role": "service",
+        "user_name": staff.name,
+        "staff_id": staff.id,
+        "expires": datetime.utcnow() + timedelta(hours=12),
+    }
+    return {
+        "ok": True, "role": "service", "token": token,
+        "user_name": staff.name, "staff_id": staff.id,
+    }
+
+
+# ── Gestion Staff (direction uniquement) ─────────────────────────────────
+class StaffIn(BaseModel):
+    name: str
+    pin: str
+    is_active: Optional[bool] = True
+
+
+def _slugify_staff(name: str) -> str:
+    import re, unicodedata
+    s = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode("ascii")
+    s = re.sub(r"[^a-zA-Z0-9]+", "", s).lower()
+    return s or "staff"
+
+
+def _require_manager_session(request: Request):
+    auth = request.headers.get("Authorization", "") if request else ""
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    session = _sessions.get(token)
+    if not session or session.get("role") != "manager":
+        raise HTTPException(401, detail="Accès réservé à la direction.")
+
+
+@app.get("/api/staff")
+def list_staff(request: Request, db: Session = Depends(get_db)):
+    _require_manager_session(request)
+    rows = db.query(Staff).order_by(Staff.is_active.desc(), Staff.name).all()
+    return [
+        {
+            "id": s.id, "name": s.name, "slug": s.slug, "pin": s.pin,
+            "is_active": bool(s.is_active),
+            "created_at": s.created_at.strftime("%d/%m/%Y %H:%M") if s.created_at else "",
+        }
+        for s in rows
+    ]
+
+
+@app.post("/api/staff")
+def create_staff(body: StaffIn, request: Request, db: Session = Depends(get_db)):
+    _require_manager_session(request)
+    name = (body.name or "").strip()
+    pin = (body.pin or "").strip()
+    if not name or not pin:
+        raise HTTPException(400, detail="Nom et PIN requis.")
+    if not pin.isdigit() or not (3 <= len(pin) <= 8):
+        raise HTTPException(400, detail="PIN : 3 à 8 chiffres.")
+    # Générer un slug unique
+    base_slug = _slugify_staff(name)
+    slug = base_slug
+    i = 2
+    while db.query(Staff).filter(Staff.slug == slug).first():
+        slug = f"{base_slug}{i}"
+        i += 1
+    s = Staff(name=name, slug=slug, pin=pin, is_active=bool(body.is_active))
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return {"id": s.id, "name": s.name, "slug": s.slug, "pin": s.pin, "is_active": s.is_active}
+
+
+@app.put("/api/staff/{sid}")
+def update_staff(sid: int, body: StaffIn, request: Request, db: Session = Depends(get_db)):
+    _require_manager_session(request)
+    s = db.query(Staff).get(sid)
+    if not s:
+        raise HTTPException(404)
+    if body.name is not None and body.name.strip():
+        s.name = body.name.strip()
+    if body.pin is not None and body.pin.strip():
+        pin = body.pin.strip()
+        if not pin.isdigit() or not (3 <= len(pin) <= 8):
+            raise HTTPException(400, detail="PIN : 3 à 8 chiffres.")
+        s.pin = pin
+    if body.is_active is not None:
+        s.is_active = bool(body.is_active)
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/staff/{sid}")
+def delete_staff(sid: int, request: Request, db: Session = Depends(get_db)):
+    """Supprime un staff (les logs conservent le nom copié dans staff_name)."""
+    _require_manager_session(request)
+    s = db.query(Staff).get(sid)
+    if not s:
+        raise HTTPException(404)
+    db.delete(s)
+    db.commit()
+    return {"ok": True}
 
 @app.post("/api/auth")
 def auth_pin(body: PinIn, request: Request, db: Session = Depends(get_db)):
