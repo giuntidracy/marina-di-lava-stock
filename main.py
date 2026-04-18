@@ -93,6 +93,12 @@ with engine.connect() as _conn:
         _conn.commit()
     except Exception:
         pass
+    # skipped_count sur delivery_checks (validation BL sans comptage serveur)
+    try:
+        _conn.execute(_text("ALTER TABLE delivery_checks ADD COLUMN skipped_count INTEGER DEFAULT 0"))
+        _conn.commit()
+    except Exception:
+        pass
     # vat_rate sur products (0.20 alcool / 0.10 softs)
     try:
         _conn.execute(_text("ALTER TABLE products ADD COLUMN vat_rate REAL DEFAULT 0.20"))
@@ -1448,6 +1454,18 @@ class DeliveryCheckValidateIn(BaseModel):
     partial: bool = False        # validation partielle : le reste arrivera plus tard
 
 
+class DeliveryCheckValidateBlOnlyIn(BaseModel):
+    """
+    Validation depuis BL seul (sans comptage serveur).
+    Le BL reçu par email fait foi → qty_validated = qty_bl.
+    Trace : skipped_count = True.
+    """
+    validated_by: str
+    bl_reference: Optional[str] = ""
+    bls: List[dict]      # [{item_id, qty_bl, unit_price_ht}]
+    apply_prices: bool = True
+
+
 def _delivery_check_dict(c: DeliveryCheck, for_role: str = "manager") -> dict:
     """
     Sérialise un DeliveryCheck. En mode 'service' (comptage aveugle),
@@ -1465,6 +1483,7 @@ def _delivery_check_dict(c: DeliveryCheck, for_role: str = "manager") -> dict:
         "validated_by":  c.validated_by or "",
         "bl_reference":  c.bl_reference or "",
         "notes":         c.notes or "",
+        "skipped_count": bool(c.skipped_count),
         "has_photo":     bool(c.bl_photo),
         "photo_type":    c.bl_photo_type or "",
         "created_at":    c.created_at.isoformat() + "Z" if c.created_at else None,
@@ -1697,6 +1716,89 @@ def validate_delivery_check(cid: int, body: DeliveryCheckValidateIn, db: Session
         db, "livraison",
         f"Contrôle livraison validé — {c.supplier.name if c.supplier else ''} ({len(applied)} produits)",
         {"delivery_check_id": c.id, "bl_reference": c.bl_reference, "items": applied},
+    )
+    db.commit()
+    return _delivery_check_dict(c, for_role="manager")
+
+
+@app.post("/api/delivery-checks/{cid}/validate-bl-only")
+def validate_delivery_check_bl_only(
+    cid: int,
+    body: DeliveryCheckValidateBlOnlyIn,
+    db: Session = Depends(get_db),
+):
+    """
+    Direction → valide directement depuis le BL sans comptage serveur.
+    qty_validated = qty_bl. Marque skipped_count = True pour traçabilité.
+    Seule la direction utilise ce chemin (cas où personne n'a pu compter).
+    """
+    c = db.query(DeliveryCheck).get(cid)
+    if not c:
+        raise HTTPException(404)
+    if c.status != "pending_count":
+        raise HTTPException(400, f"Validation BL seul autorisée uniquement depuis 'pending_count' (actuel : {c.status}).")
+
+    # Applique le BL : qty_bl + unit_price_ht par item
+    item_map = {it.id: it for it in c.items}
+    for row in body.bls:
+        iid = row.get("item_id")
+        it = item_map.get(iid)
+        if not it:
+            continue
+        try:
+            it.qty_bl = float(row.get("qty_bl")) if row.get("qty_bl") is not None else None
+        except Exception:
+            pass
+        if row.get("unit_price_ht") not in (None, ""):
+            try:
+                it.unit_price_ht = float(row["unit_price_ht"])
+            except Exception:
+                pass
+
+    if body.bl_reference is not None:
+        c.bl_reference = body.bl_reference or c.bl_reference or ""
+
+    # Applique le stock : qty_validated = qty_bl
+    applied = []
+    for it in c.items:
+        if it.stock_applied:
+            continue
+        qty_final = it.qty_bl if it.qty_bl is not None else 0
+        it.qty_validated = qty_final
+        if it.product_id and qty_final and qty_final > 0:
+            p = db.query(Product).get(it.product_id)
+            if p:
+                p.stock = (p.stock or 0) + qty_final
+                it.stock_applied = True
+                applied.append({"product_id": p.id, "product_name": p.name, "added": qty_final})
+                if body.apply_prices and it.unit_price_ht is not None and it.unit_price_ht > 0:
+                    old_price = p.purchase_price
+                    new_price = float(it.unit_price_ht)
+                    if old_price is None or abs(old_price - new_price) > 0.001:
+                        record_price_change(
+                            db, p, new_price,
+                            source="bl_only_validation",
+                            supplier_id=c.supplier_id,
+                            reference=c.bl_reference or (c.order.reference if c.order else ""),
+                        )
+                        p.purchase_price = new_price
+                        p.is_estimated = False
+
+    c.validated_by = body.validated_by or c.validated_by or ""
+    c.skipped_count = True
+    c.status = "validated"
+    c.validated_at = datetime.utcnow()
+
+    if c.order_id:
+        order = db.query(SupplierOrder).get(c.order_id)
+        if order and order.status != "received":
+            order.status = "received"
+            order.received_at = datetime.utcnow()
+
+    log_event(
+        db, "livraison",
+        f"Contrôle livraison validé depuis BL seul — {c.supplier.name if c.supplier else ''} ({len(applied)} produits, sans comptage)",
+        {"delivery_check_id": c.id, "bl_reference": c.bl_reference, "items": applied, "skipped_count": True},
     )
     db.commit()
     return _delivery_check_dict(c, for_role="manager")
