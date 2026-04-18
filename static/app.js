@@ -5291,7 +5291,7 @@ async function loadDeliveryChecks() {
       }
       // Groupe par statut
       const buckets = {
-        pending_count: { label: "⏳ En attente comptage serveur", rows: [] },
+        pending_count: { label: "📦 Livraisons à traiter", rows: [] },
         counted:       { label: "🔎 À valider (compté, en attente direction)", rows: [] },
         partial:       { label: "📦 Partiels (reste à livrer)", rows: [] },
         validated:     { label: "✅ Validés (stock mis à jour)", rows: [] },
@@ -5341,10 +5341,7 @@ function renderDcRow(c, role) {
   } else if (role === "manager" && c.status === "partial") {
     action = `<button class="btn btn-primary btn-sm" onclick="openManagerValidationForm(${c.id})">📦 Finaliser</button>`;
   } else if (role === "manager" && c.status === "pending_count") {
-    action = `<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-      <button class="btn btn-outline btn-sm" onclick="openManagerValidationForm(${c.id})">Voir / compter moi-même</button>
-      <button class="btn btn-sm" style="background:#78350f20;color:#b45309;border:1px solid #b4530940;font-weight:700" onclick="openBlOnlyForm(${c.id})" title="Pas eu le temps de compter ? Valide directement depuis le BL reçu par email.">⚡ Valider depuis BL seul</button>
-    </div>`;
+    action = `<button class="btn btn-primary btn-sm" onclick="openDeliveryActionChoice(${c.id}, '${esc(c.supplier_name).replace(/'/g, "\\'")}', '${esc(c.bl_reference).replace(/'/g, "\\'")}')">📦 Traiter cette livraison</button>`;
   } else {
     action = `<button class="btn btn-outline btn-sm" onclick="openManagerValidationForm(${c.id})">Détails</button>`;
   }
@@ -5488,6 +5485,43 @@ async function submitServerCounts() {
 }
 
 let __dcState = null;
+
+// ─────────── DIRECTION : écran de choix "comment traiter" ────────────────
+function openDeliveryActionChoice(cid, supplierName, blRef) {
+  const subtitle = blRef ? `${supplierName} · BL ${blRef}` : supplierName;
+  openModal(`
+    <div style="max-width:480px">
+      <h3 style="margin:0 0 4px 0;font-size:18px">Comment traiter cette livraison ?</h3>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:18px">${subtitle}</div>
+
+      <div style="background:var(--surface-alt);border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:16px;font-size:12px;color:var(--text-muted);line-height:1.5">
+        ℹ️ <strong>Par défaut</strong>, un serveur pourra compter cette livraison en aveugle — c'est le flow recommandé. Sinon, choisis une des options ci-dessous.
+      </div>
+
+      <button class="btn btn-outline" style="width:100%;padding:16px;text-align:left;display:flex;align-items:flex-start;gap:14px;margin-bottom:10px;border:2px solid var(--border)"
+              onclick="closeModal(); openManagerValidationForm(${cid});">
+        <span style="font-size:28px;line-height:1">📋</span>
+        <span style="flex:1">
+          <span style="display:block;font-weight:800;font-size:15px;margin-bottom:4px">Compter moi-même maintenant</span>
+          <span style="display:block;font-size:12px;color:var(--text-muted);font-weight:400;line-height:1.4">Tu saisis les quantités physiques trouvées dans les cartons + les infos du BL. Classique quand tu es seul.</span>
+        </span>
+      </button>
+
+      <button class="btn" style="width:100%;padding:16px;text-align:left;display:flex;align-items:flex-start;gap:14px;background:#78350f15;color:#b45309;border:2px solid #b4530940;font-weight:700"
+              onclick="closeModal(); openBlOnlyForm(${cid});">
+        <span style="font-size:28px;line-height:1">⚡</span>
+        <span style="flex:1">
+          <span style="display:block;font-weight:800;font-size:15px;margin-bottom:4px">Valider directement depuis le BL</span>
+          <span style="display:block;font-size:12px;color:#b45309cc;font-weight:400;line-height:1.4">Tu as juste le BL reçu par email, pas le temps de compter. Les quantités du BL entrent en stock telles quelles. Traçé "sans comptage".</span>
+        </span>
+      </button>
+
+      <div style="display:flex;justify-content:flex-end;margin-top:16px">
+        <button class="btn btn-outline btn-sm" onclick="closeModal()">Annuler</button>
+      </div>
+    </div>
+  `);
+}
 
 // ─────────── DIRECTION : validation BL seul (sans comptage serveur) ──────
 async function openBlOnlyForm(cid) {
