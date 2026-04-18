@@ -5737,11 +5737,12 @@ async function deleteDeliveryCheck(cid, status, supplierName) {
 // ─────────── SERVEUR : comptage aveugle ─────────────────────────────────
 async function openServerCountingForm(cid) {
   const c = await api(`/api/delivery-checks/${cid}?role=service`);
-  const name = prompt("Ton prénom (pour traçabilité) :", "");
+  // Auto-rempli avec le nom du serveur connecté (sinon prompt)
+  const name = userName || prompt("Ton prénom (pour traçabilité) :", "");
   if (!name) return;
 
   // État local — on NE voit PAS les qty_expected / qty_bl (backend a mis null)
-  __dcState = { id: c.id, checked_by: name, items: c.items.map(it => ({
+  __dcState = { id: c.id, checked_by: name, has_photo: !!c.has_photo, items: c.items.map(it => ({
     id: it.id, product_name: it.product_name, unit: it.unit,
     qty_physical: it.qty_physical || 0, notes: it.notes || "",
   })) };
@@ -5755,6 +5756,7 @@ async function openServerCountingForm(cid) {
         <p class="dc-sub">Compte ce qui est physiquement dans les cartons. Tu ne vois pas ce qui a été commandé — c'est volontaire.</p>
       </div>
     </div>
+    <div id="dc-srv-photo-zone" style="background:var(--surface-alt);border:1px dashed var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px"></div>
     <div class="dc-count-list" id="dc-count-list"></div>
     <div class="dc-add-product-zone">
       <label style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">
@@ -5775,6 +5777,54 @@ async function openServerCountingForm(cid) {
     </div>
   </div>`;
   _renderServerCountingRows();
+  _renderServerPhotoZone();
+}
+
+function _renderServerPhotoZone() {
+  const zone = document.getElementById("dc-srv-photo-zone");
+  if (!zone) return;
+  const cid = __dcState.id;
+  if (__dcState.has_photo) {
+    zone.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span>📎 Photo du BL jointe ✅</span>
+        <button class="btn btn-outline btn-sm" onclick="viewBlPhoto(${cid})">🖼 Voir</button>
+        <label class="btn btn-outline btn-sm" style="cursor:pointer">
+          🔁 Remplacer
+          <input type="file" accept="image/*,application/pdf" capture="environment" style="display:none"
+                 onchange="uploadBlPhotoServer(${cid}, this.files[0])"/>
+        </label>
+      </div>`;
+  } else {
+    zone.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span>💡 Si tu as le BL papier, prends-le en photo (au cas où tu le perdrais)</span>
+        <label class="btn btn-primary btn-sm" style="cursor:pointer">
+          📷 Photographier le BL
+          <input type="file" accept="image/*,application/pdf" capture="environment" style="display:none"
+                 onchange="uploadBlPhotoServer(${cid}, this.files[0])"/>
+        </label>
+      </div>`;
+  }
+}
+
+async function uploadBlPhotoServer(cid, file) {
+  if (!file) return;
+  if (file.size > 20 * 1024 * 1024) { alert("Fichier trop gros (max 20 MB)"); return; }
+  try {
+    const compressed = await compressImageForUpload(file, 1600, 0.85);
+    const fd = new FormData();
+    fd.append("file", compressed);
+    const r = await fetch(`/api/delivery-checks/${cid}/photo`, {
+      method: "POST",
+      headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
+      body: fd,
+    });
+    if (!r.ok) throw new Error((await r.json().catch(()=>({detail:r.statusText}))).detail);
+    __dcState.has_photo = true;
+    _renderServerPhotoZone();
+    showToast("✓ Photo du BL jointe");
+  } catch(e) { alert("Erreur : " + e.message); }
 }
 
 async function serverAddItemToDc() {
