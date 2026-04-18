@@ -4941,12 +4941,12 @@ function renderShrinkageTable(summary) {
     const valClass = r.value_eur > 50 ? "sh-val-high" : r.value_eur > 20 ? "sh-val-mid" : "sh-val-low";
     const unexplClass = r.unexplained > 0 ? "sh-unex-bad" : "sh-unex-ok";
     return `<tr>
-      <td><strong>${r.product_name}</strong><br><small class="sh-cat">${r.category}</small></td>
-      <td class="sh-num">${r.inventory_loss > 0 ? `<span class="sh-inv-loss">−${r.inventory_loss.toFixed(1)} ${r.unit}</span>` : "<span class='sh-zero'>—</span>"}</td>
-      <td class="sh-num">${r.declared_losses > 0 ? `<span class="sh-decl">${r.declared_losses.toFixed(1)} ${r.unit}</span>` : "<span class='sh-zero'>—</span>"}</td>
-      <td class="sh-num ${unexplClass}">${r.unexplained > 0 ? `<strong>${r.unexplained.toFixed(1)} ${r.unit}</strong>` : "✅ 0"}</td>
-      <td class="sh-num ${valClass}">${r.value_eur > 0 ? fmtEur(r.value_eur) : "—"}</td>
-      <td class="sh-num sh-stock-col">${r.stock_actuel} ${r.unit}</td>
+      <td data-label="Produit"><strong>${r.product_name}</strong><br><small class="sh-cat">${r.category}</small></td>
+      <td class="sh-num" data-label="Écart inv.">${r.inventory_loss > 0 ? `<span class="sh-inv-loss">−${r.inventory_loss.toFixed(1)} ${r.unit}</span>` : "<span class='sh-zero'>—</span>"}</td>
+      <td class="sh-num" data-label="Pertes décl.">${r.declared_losses > 0 ? `<span class="sh-decl">${r.declared_losses.toFixed(1)} ${r.unit}</span>` : "<span class='sh-zero'>—</span>"}</td>
+      <td class="sh-num ${unexplClass}" data-label="Démarque inconnue">${r.unexplained > 0 ? `<strong>${r.unexplained.toFixed(1)} ${r.unit}</strong>` : "✅ 0"}</td>
+      <td class="sh-num ${valClass}" data-label="Valeur perdue">${r.value_eur > 0 ? fmtEur(r.value_eur) : "—"}</td>
+      <td class="sh-num sh-stock-col" data-label="Stock actuel">${r.stock_actuel} ${r.unit}</td>
     </tr>`;
   }).join("");
 
