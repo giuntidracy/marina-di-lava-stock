@@ -7022,6 +7022,115 @@ def get_dashboard(db: Session = Depends(get_db)):
         "ca_weekday":      ca_weekday,
         "monthly_goal":    monthly_goal,
         "delivery_checks": delivery_checks_info,
+        "critical_alerts": _dashboard_critical_alerts(db),
+        "stock_value_trend": _dashboard_stock_value_trend(db),
+        "next_event_coverage": _dashboard_next_event_coverage(db),
+    }
+
+
+def _dashboard_critical_alerts(db: Session) -> dict:
+    """Comptes pour le widget 'alertes critiques'."""
+    active_products = db.query(Product).filter(
+        (Product.archived == False) | (Product.archived == None)
+    )
+    ruptures = active_products.filter(Product.stock <= 0).count()
+    stock_bas = active_products.filter(
+        Product.stock > 0, Product.stock <= Product.alert_threshold
+    ).count()
+    service_open = db.query(ServiceAlert).filter(ServiceAlert.status == "open").count()
+    return {
+        "ruptures":     ruptures,
+        "stock_bas":    stock_bas,
+        "service_open": service_open,
+        "total":        ruptures + stock_bas + service_open,
+    }
+
+
+def _dashboard_stock_value_trend(db: Session) -> dict:
+    """Valeur stock actuelle + tendance vs 7 jours (snapshots hebdo)."""
+    current = 0.0
+    for p in db.query(Product).filter(
+        (Product.archived == False) | (Product.archived == None)
+    ).all():
+        if p.stock and p.purchase_price:
+            current += float(p.stock) * float(p.purchase_price)
+
+    # Valeur d'il y a ~7 jours depuis les StockSnapshot (label=weekly_auto)
+    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    # On prend le snapshot le plus récent avant J-7 pour chaque produit
+    last_week_val = 0.0
+    has_trend = False
+    for p in db.query(Product).filter(
+        (Product.archived == False) | (Product.archived == None)
+    ).all():
+        snap = (
+            db.query(StockSnapshot)
+            .filter(
+                StockSnapshot.product_id == p.id,
+                StockSnapshot.taken_at <= seven_days_ago,
+            )
+            .order_by(StockSnapshot.taken_at.desc())
+            .first()
+        )
+        if snap and p.purchase_price:
+            last_week_val += float(snap.stock) * float(p.purchase_price)
+            has_trend = True
+
+    if has_trend:
+        delta = current - last_week_val
+        delta_pct = round((delta / last_week_val) * 100, 1) if last_week_val > 0 else None
+    else:
+        delta = None
+        delta_pct = None
+
+    return {
+        "current":   round(current, 2),
+        "last_week": round(last_week_val, 2) if has_trend else None,
+        "delta":     round(delta, 2) if delta is not None else None,
+        "delta_pct": delta_pct,
+    }
+
+
+def _dashboard_next_event_coverage(db: Session) -> dict:
+    """Prochain événement + nombre de produits requis non couverts."""
+    today_dt = datetime.combine(datetime.now(_LOCAL_TZ).date(), datetime.min.time())
+    ev = (
+        db.query(Event)
+        .filter(
+            (Event.date >= today_dt) |
+            ((Event.end_date != None) & (Event.end_date >= today_dt))
+        )
+        .order_by(Event.date.asc())
+        .first()
+    )
+    if not ev:
+        return None
+    reqs = db.query(EventRequirement).filter(EventRequirement.event_id == ev.id).all()
+    missing = []
+    for r in reqs:
+        p = db.query(Product).get(r.product_id)
+        if not p:
+            continue
+        if (p.stock or 0) < (r.quantity or 0):
+            missing.append({
+                "product_name": p.name,
+                "needed":       r.quantity,
+                "in_stock":     p.stock or 0,
+                "missing":      max(0, (r.quantity or 0) - (p.stock or 0)),
+            })
+    return {
+        "event": {
+            "id":         ev.id,
+            "name":       ev.name,
+            "event_type": ev.event_type,
+            "date":       ev.date.isoformat(),
+            "end_date":   ev.end_date.isoformat() if ev.end_date else None,
+            "start_time": ev.start_time or "",
+            "end_time":   ev.end_time or "",
+        },
+        "total_requirements": len(reqs),
+        "missing_items":      missing,
+        "covered":            len(reqs) > 0 and len(missing) == 0,
     }
 
 

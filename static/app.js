@@ -7412,6 +7412,99 @@ function renderMonthlyGoalCard(goal) {
   </div>`;
 }
 
+function renderCriticalAlertsCard(a) {
+  if (!a) return "";
+  const total = a.total || 0;
+  if (total === 0) {
+    return `<div class="db-card db-card-clickable" onclick="switchView('alerts')" title="Voir les alertes">
+      <div class="db-card-title">🚨 Alertes critiques</div>
+      <div class="db-sync-row">
+        <span class="db-sync-icon">✅</span>
+        <div>
+          <div class="db-sync-label">Rien à signaler</div>
+          <div class="db-sync-date">Stock sain, pas de signalement</div>
+        </div>
+      </div>
+    </div>`;
+  }
+  const mainColor = a.ruptures > 0 ? "#dc2626" : "#f59e0b";
+  const parts = [];
+  if (a.ruptures > 0)     parts.push(`<span style="color:#dc2626;font-weight:700">${a.ruptures} rupture${a.ruptures > 1 ? 's' : ''}</span>`);
+  if (a.stock_bas > 0)    parts.push(`<span style="color:#f59e0b;font-weight:700">${a.stock_bas} stock bas</span>`);
+  if (a.service_open > 0) parts.push(`<span style="color:#991b1b;font-weight:700">${a.service_open} signalement${a.service_open > 1 ? 's' : ''}</span>`);
+  return `<div class="db-card db-card-clickable" onclick="switchView('alerts')" title="Voir les alertes" style="border-left:4px solid ${mainColor}">
+    <div class="db-card-title">🚨 Alertes critiques <span class="db-card-badge" style="background:${mainColor}20;color:${mainColor}">${total}</span></div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;font-size:13px">
+      ${parts.join("")}
+    </div>
+  </div>`;
+}
+
+function renderStockValueTrendCard(s) {
+  if (!s) return "";
+  const fmt = v => (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", maximumFractionDigits:0 });
+  let trendHtml = `<div style="font-size:12px;color:var(--text-muted);margin-top:4px">Pas encore de snapshot pour comparer (disponible après 1 semaine)</div>`;
+  if (s.delta !== null && s.delta !== undefined) {
+    const delta = s.delta;
+    const pct = s.delta_pct;
+    const color = delta > 0 ? "#16a34a" : delta < 0 ? "#dc2626" : "var(--text-muted)";
+    const arrow = delta > 0 ? "▲" : delta < 0 ? "▼" : "=";
+    trendHtml = `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:13px">
+      <span style="color:${color};font-weight:700">${arrow} ${fmt(Math.abs(delta))}</span>
+      ${pct !== null ? `<span style="color:${color}">(${delta > 0 ? '+' : ''}${pct}%)</span>` : ""}
+      <span style="color:var(--text-muted);font-size:11px">vs semaine passée</span>
+    </div>`;
+  }
+  return `<div class="db-card db-card-clickable" onclick="switchView('stock')" title="Ouvrir le stock">
+    <div class="db-card-title">💰 Valeur du stock</div>
+    <div class="db-card-value">${fmt(s.current)}</div>
+    ${trendHtml}
+  </div>`;
+}
+
+function renderNextEventCoverageCard(e) {
+  if (!e) {
+    return `<div class="db-card db-card-clickable" onclick="switchView('events')" title="Ajouter un événement">
+      <div class="db-card-title">🎉 Prochain événement</div>
+      <div class="db-sync-row">
+        <span class="db-sync-icon">📅</span>
+        <div>
+          <div class="db-sync-label">Aucun événement planifié</div>
+          <div class="db-sync-date">Cliquez pour en ajouter un</div>
+        </div>
+      </div>
+    </div>`;
+  }
+  const ev = e.event;
+  const dateStr = formatEventRange(ev, { short: true });
+  const nMissing = (e.missing_items || []).length;
+  const totalReqs = e.total_requirements || 0;
+
+  let statusHtml;
+  if (totalReqs === 0) {
+    statusHtml = `<div style="margin-top:8px;font-size:12px;color:var(--text-muted)">Aucun besoin spécifique défini</div>`;
+  } else if (nMissing === 0) {
+    statusHtml = `<div style="margin-top:8px;font-size:13px;color:#16a34a;font-weight:700">✅ Stock suffisant (${totalReqs} produits couverts)</div>`;
+  } else {
+    const preview = e.missing_items.slice(0, 2).map(m =>
+      `<div style="font-size:12px;color:#b45309">⚠️ ${esc(m.product_name)} : manque ${m.missing}</div>`
+    ).join("");
+    statusHtml = `<div style="margin-top:8px">
+      <div style="font-size:13px;color:#dc2626;font-weight:700">⚠️ ${nMissing}/${totalReqs} produit${nMissing > 1 ? 's' : ''} insuffisant${nMissing > 1 ? 's' : ''}</div>
+      ${preview}
+      ${nMissing > 2 ? `<div style="font-size:11px;color:var(--text-muted)">+ ${nMissing - 2} autre${nMissing - 2 > 1 ? 's' : ''}</div>` : ""}
+    </div>`;
+  }
+
+  const borderColor = nMissing > 0 ? "#dc2626" : totalReqs > 0 ? "#16a34a" : "var(--border)";
+  return `<div class="db-card db-card-clickable" onclick="switchView('events')" title="Voir l'événement" style="border-left:4px solid ${borderColor}">
+    <div class="db-card-title">🎉 Prochain événement</div>
+    <div style="font-weight:800;font-size:15px;margin-top:4px">${esc(ev.name)}</div>
+    <div style="font-size:12px;color:var(--text-muted)">${dateStr}${ev.event_type ? ` · ${esc(ev.event_type)}` : ""}</div>
+    ${statusHtml}
+  </div>`;
+}
+
 async function openMonthlyGoalsModal() {
   let current = { goals: {} };
   try { current = await api("/api/monthly-goals"); } catch(_) {}
@@ -7679,6 +7772,9 @@ async function renderDashboard(el) {
         ${renderLastSyncCard(data.last_sync)}
         ${renderPendingOrdersCard(data.pending_orders)}
         ${renderMonthlyGoalCard(data.monthly_goal)}
+        ${renderCriticalAlertsCard(data.critical_alerts)}
+        ${renderStockValueTrendCard(data.stock_value_trend)}
+        ${renderNextEventCoverageCard(data.next_event_coverage)}
 
         <div class="db-card db-card-clickable" onclick="switchView('stats')" title="Voir les statistiques">
           <div class="db-card-title">📦 Top 3 produits <span class="db-card-sub">· cette semaine</span></div>
