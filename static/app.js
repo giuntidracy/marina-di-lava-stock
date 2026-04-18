@@ -5472,10 +5472,10 @@ async function renderDeliveryCheck(el) {
           ? "Validez les comptages serveurs et saisissez le BL. Le stock n'est mis à jour qu'après votre validation."
           : "Comptez ce qui est physiquement dans les cartons. La direction validera ensuite."}</p>
       </div>
-      ${isManager ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-gold" onclick="openAiDeliveryModal()">✦ Scanner BL avec IA</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${isManager ? `<button class="btn btn-gold" onclick="openAiDeliveryModal()">✦ Scanner BL avec IA</button>` : ``}
         <button class="btn btn-primary" onclick="openNewDeliveryCheckModal()">+ Nouveau contrôle</button>
-      </div>` : ``}
+      </div>
     </div>
     <div id="dc-list">Chargement…</div>
 
@@ -5608,7 +5608,10 @@ async function loadDeliveryChecks() {
     if (!isManager) {
       const pending = checks.filter(c => c.status === "pending_count");
       if (pending.length === 0) {
-        container.innerHTML = `<div class="dc-empty">🎉 Aucun contrôle en attente. Tu seras notifié quand un camion arrive.</div>`;
+        container.innerHTML = `<div class="dc-empty">
+          🎉 Aucun contrôle en attente.<br>
+          <span style="font-size:13px;color:var(--text-muted)">Si un camion arrive sans contrôle préparé, clique sur <strong>+ Nouveau contrôle</strong> en haut pour en créer un.</span>
+        </div>`;
         return;
       }
       container.innerHTML = pending.map(c => renderDcRow(c, "service")).join("");
