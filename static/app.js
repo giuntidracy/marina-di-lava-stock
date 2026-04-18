@@ -880,10 +880,10 @@ function renderStock(el) {
       <button class="btn btn-outline btn-sm" onclick="clearStockSelection()">Annuler</button>
     </div>
     <div class="table-wrap">
-      <table id="stock-table">
+      <table id="stock-table" class="mobile-cards-table">
         <thead>
           <tr>
-            <th style="width:36px"><input type="checkbox" id="stock-select-all-cb" class="stock-cb" onchange="toggleAllStock(this.checked)"/></th>
+            <th style="width:36px" class="stock-checkbox-col"><input type="checkbox" id="stock-select-all-cb" class="stock-cb" onchange="toggleAllStock(this.checked)"/></th>
             <th class="sortable" onclick="sortStock('name')">Produit</th>
             <th class="sortable" onclick="sortStock('category')">Catégorie</th>
             <th class="sortable" onclick="sortStock('stock')">Stock</th>
@@ -1004,16 +1004,16 @@ function filterStock() {
 
   tbody.innerHTML = rows.map(p => `
     <tr class="${p.archived ? 'row-archived' : ''}">
-      <td><input type="checkbox" class="stock-cb stock-row-cb" data-pid="${p.id}" onchange="updateStockSelection()"/></td>
-      <td><strong>${esc(p.name)}</strong>${p.is_estimated ? '<span class="estimated-tag">~</span>' : ''}${p.archived ? '<span class="archived-badge">ARCHIVÉ</span>' : ''}</td>
-      <td>${esc(p.category)}</td>
-      <td class="${stockClass(p.stock, p.alert_threshold)}">${fmtStock(p)}</td>
-      <td class="col-desktop">${p.cout_unitaire !== null ? "€" + p.cout_unitaire.toFixed(3) : "—"}</td>
-      <td class="col-desktop">${p.sale_price_ttc !== null ? "€" + p.sale_price_ttc.toFixed(2) + `<span class="vat-tag">${Math.round((p.vat_rate != null ? p.vat_rate : 0.20) * 100)}%</span>` : "—"}</td>
-      <td class="col-desktop">${margePill(p.marge, p.marge_color, p.is_estimated)}</td>
-      <td class="col-desktop">${p.valeur_stock !== null ? "€" + p.valeur_stock.toFixed(2) : "—"}</td>
-      <td>${renderSupplierCell(p)}</td>
-      <td style="white-space:nowrap">
+      <td class="stock-checkbox-col"><input type="checkbox" class="stock-cb stock-row-cb" data-pid="${p.id}" onchange="updateStockSelection()"/></td>
+      <td data-label="Produit"><strong>${esc(p.name)}</strong>${p.is_estimated ? '<span class="estimated-tag">~</span>' : ''}${p.archived ? '<span class="archived-badge">ARCHIVÉ</span>' : ''}</td>
+      <td data-label="Catégorie">${esc(p.category)}</td>
+      <td data-label="Stock" class="${stockClass(p.stock, p.alert_threshold)}">${fmtStock(p)}</td>
+      <td data-label="Coût unit." class="col-desktop">${p.cout_unitaire !== null ? "€" + p.cout_unitaire.toFixed(3) : "—"}</td>
+      <td data-label="PV TTC" class="col-desktop">${p.sale_price_ttc !== null ? "€" + p.sale_price_ttc.toFixed(2) + `<span class="vat-tag">${Math.round((p.vat_rate != null ? p.vat_rate : 0.20) * 100)}%</span>` : "—"}</td>
+      <td data-label="Marge HT" class="col-desktop">${margePill(p.marge, p.marge_color, p.is_estimated)}</td>
+      <td data-label="Val. stock" class="col-desktop">${p.valeur_stock !== null ? "€" + p.valeur_stock.toFixed(2) : "—"}</td>
+      <td data-label="Fournisseur">${renderSupplierCell(p)}</td>
+      <td data-label="Actions" style="white-space:nowrap">
         <button class="btn btn-outline btn-sm" onclick="openProductForm(${p.id})">✏️</button>
         <button class="btn btn-outline btn-sm" onclick="openAdjustStock(${p.id})">±</button>
         ${p.archived
@@ -2797,7 +2797,7 @@ async function renderStats(el) {
     <div id="stats-loading" style="color:var(--text-muted);padding:20px 0">Chargement…</div>
     <div id="stats-content" class="hidden" style="margin-top:4px">
       <div class="stock-summary" style="margin-bottom:24px" id="stats-kpi"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px" id="stats-charts-row">
+      <div class="stats-charts-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px" id="stats-charts-row">
         <div class="card" style="padding:16px">
           <div style="font-weight:600;margin-bottom:12px">Consommation par catégorie</div>
           <canvas id="chart-cat" height="220"></canvas>
@@ -2842,12 +2842,12 @@ async function loadPriceHistory() {
                 : r.source === "manual_edit" ? "Édition manuelle"
                 : (r.source || "");
       return `<tr>
-        <td><strong>${esc(r.product_name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${esc(r.category)}</span></td>
-        <td>${r.old_price != null ? '€'+r.old_price.toFixed(3) : '—'}</td>
-        <td><strong>€${r.new_price.toFixed(3)}</strong></td>
-        <td>${pct}</td>
-        <td><span style="font-size:11px">${esc(src)}${r.supplier_name ? ' · '+esc(r.supplier_name) : ''}${r.reference ? ' · '+esc(r.reference) : ''}</span></td>
-        <td style="font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(r.changed_at)}</td>
+        <td data-label="Produit"><strong>${esc(r.product_name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${esc(r.category)}</span></td>
+        <td data-label="Ancien">${r.old_price != null ? '€'+r.old_price.toFixed(3) : '—'}</td>
+        <td data-label="Nouveau"><strong>€${r.new_price.toFixed(3)}</strong></td>
+        <td data-label="Δ">${pct}</td>
+        <td data-label="Origine"><span style="font-size:11px">${esc(src)}${r.supplier_name ? ' · '+esc(r.supplier_name) : ''}${r.reference ? ' · '+esc(r.reference) : ''}</span></td>
+        <td data-label="Date" style="font-size:11px;color:var(--text-muted);white-space:nowrap">${esc(r.changed_at)}</td>
       </tr>`;
     }).join("");
     el.innerHTML = `<div class="card" style="padding:16px">
@@ -2855,7 +2855,7 @@ async function loadPriceHistory() {
         <div style="font-weight:700;font-size:14px">💰 Historique des variations de prix d'achat <span style="font-weight:500;color:var(--text-muted);font-size:12px">· ${rows.length} dernières</span></div>
       </div>
       <div class="table-wrap">
-        <table style="width:100%;font-size:13px">
+        <table class="mobile-cards-table" style="width:100%;font-size:13px">
           <thead>
             <tr>
               <th style="text-align:left">Produit</th>
@@ -2939,7 +2939,7 @@ async function loadHistorique() {
 
     <!-- Tab 0 : Vue globale -->
     <div id="histo-tab-0">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="stats-charts-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
         <div class="card" style="padding:16px">
           <div style="font-weight:600;margin-bottom:10px">📅 Ventes mensuelles</div>
           <canvas id="histo-monthly" height="200"></canvas>
@@ -2963,7 +2963,7 @@ async function loadHistorique() {
     <!-- Tab 2 : 30 moins vendus -->
     <div id="histo-tab-2" class="hidden">
       <div class="info-box" style="margin-bottom:12px">⚠️ Ces produits se vendent très peu — à revoir pour la prochaine saison (réduire les commandes ou retirer de la carte).</div>
-      <div class="table-wrap"><table id="histo-bottom-table">
+      <div class="table-wrap"><table id="histo-bottom-table" class="mobile-cards-table">
         <thead><tr><th>Rang</th><th>Produit</th><th>Catégorie</th><th>Qté vendue</th><th>CA HT</th></tr></thead>
         <tbody></tbody>
       </table></div>
@@ -3057,11 +3057,11 @@ async function loadHistorique() {
     // Tab 2 : 30 moins vendus
     const bottomTbody = document.querySelector("#histo-bottom-table tbody");
     bottomTbody.innerHTML = data.bottom_products.map((p,i) => `<tr>
-      <td style="color:var(--text-muted)">#${i+1}</td>
-      <td>${esc(p.name)}</td>
-      <td><span style="background:#F3F4F6;padding:2px 6px;border-radius:10px;font-size:11px">${esc(p.category)}</span></td>
-      <td style="color:#DC2626;font-weight:600">${p.qty}</td>
-      <td>€${p.ca}</td>
+      <td data-label="Rang" style="color:var(--text-muted)">#${i+1}</td>
+      <td data-label="Produit">${esc(p.name)}</td>
+      <td data-label="Catégorie"><span style="background:#F3F4F6;padding:2px 6px;border-radius:10px;font-size:11px">${esc(p.category)}</span></td>
+      <td data-label="Qté vendue" style="color:#DC2626;font-weight:600">${p.qty}</td>
+      <td data-label="CA HT">€${p.ca}</td>
     </tr>`).join("");
 
   } catch(e) {
@@ -3225,17 +3225,17 @@ function renderSuppliers(el) {
       <button class="btn btn-primary" onclick="openSupplierForm(null)">+ Nouveau fournisseur</button>
     </div>
     <div class="table-wrap">
-      <table>
+      <table class="mobile-cards-table">
         <thead><tr><th>Nom</th><th>Contact</th><th>Téléphone</th><th>Email</th><th>Catégories</th><th></th></tr></thead>
         <tbody>
           ${allSuppliers.map(s => `
             <tr>
-              <td><strong>${esc(s.name)}</strong></td>
-              <td>${esc(s.contact||"—")}</td>
-              <td>${s.phone ? `<a href="tel:${esc(s.phone)}">${esc(s.phone)}</a>` : "—"}</td>
-              <td>${s.email ? `<a href="mailto:${esc(s.email)}">${esc(s.email)}</a>` : "<span style='color:var(--text-faint)'>—</span>"}</td>
-              <td>${esc(s.categories||"—")}</td>
-              <td style="white-space:nowrap">
+              <td data-label="Nom"><strong>${esc(s.name)}</strong></td>
+              <td data-label="Contact">${esc(s.contact||"—")}</td>
+              <td data-label="Téléphone">${s.phone ? `<a href="tel:${esc(s.phone)}">${esc(s.phone)}</a>` : "—"}</td>
+              <td data-label="Email">${s.email ? `<a href="mailto:${esc(s.email)}">${esc(s.email)}</a>` : "<span style='color:var(--text-faint)'>—</span>"}</td>
+              <td data-label="Catégories">${esc(s.categories||"—")}</td>
+              <td data-label="Actions" style="white-space:nowrap">
                 <button class="btn btn-outline btn-sm" onclick="openSupplierForm(${s.id})">✏️</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteSupplier(${s.id},'${esc(s.name)}')">🗑</button>
               </td>
