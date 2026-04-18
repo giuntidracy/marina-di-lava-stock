@@ -7773,7 +7773,6 @@ async function renderDashboard(el) {
         ${renderPendingOrdersCard(data.pending_orders)}
         ${renderMonthlyGoalCard(data.monthly_goal)}
         ${renderCriticalAlertsCard(data.critical_alerts)}
-        ${renderStockValueTrendCard(data.stock_value_trend)}
         ${renderNextEventCoverageCard(data.next_event_coverage)}
 
         <div class="db-card db-card-clickable" onclick="switchView('stats')" title="Voir les statistiques">

@@ -61,3 +61,8 @@ Règles de travail pour Claude Code, inspirées des 4 règles de Boris Cherny (c
 À chaque modification de `static/app.js` ou `static/style.css`, **incrémenter le paramètre `?v=...`** dans `static/index.html` (lignes `<link rel="stylesheet">` et `<script src="/static/app.js">`). Sinon Safari iOS (et navigateurs en général) servent l'ancienne version depuis le cache → l'utilisateur ne voit jamais le nouveau code, même après reload.
 
 Format conseillé : `?v=YYYYMMDDa` (a → b → c si plusieurs déploiements le même jour).
+
+### R-02 — Toujours vérifier l'existant avant d'ajouter un widget/section
+Avant d'ajouter un widget dashboard, une card, une métrique ou une nouvelle section UI, **relire tout ce qui est déjà rendu** dans la même vue (`renderDashboard`, `renderStock`, etc.) pour éviter les doublons. Chercher par mot-clé (`Valeur stock`, `Alertes`, `Marge`…) dans `app.js`. Un KPI dans `db-kpi-row` compte aussi comme existant.
+
+Exemple d'erreur à ne pas reproduire : ajouter un widget "Valeur du stock" alors qu'il y en avait déjà un dans le `db-kpi-row` en haut du dashboard.
