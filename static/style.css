@@ -2218,23 +2218,24 @@ html[data-theme="dark"] .sh-auto-loss-eur { color: #F87171; }
 .sh-stock-col { color: var(--text-muted); font-size: 12px; }
 .sh-zero { color: var(--text-faint); }
 
-/* Mobile : transformer la table démarque en cartes */
+/* Mobile : transformer les tables démarque en cartes */
 @media (max-width: 600px) {
   .sh-table-wrap { overflow-x: visible; border: none; background: transparent; }
-  .sh-table, .sh-table tbody, .sh-table tr, .sh-table td {
+  .sh-table, .sh-table tbody, .sh-table tr, .sh-table td,
+  .sh-auto-table, .sh-auto-table tbody, .sh-auto-table tr, .sh-auto-table td {
     display: block;
     width: 100%;
   }
-  .sh-table thead { display: none; }
-  .sh-table tbody tr {
+  .sh-table thead, .sh-auto-table thead { display: none; }
+  .sh-table tbody tr, .sh-auto-table tbody tr {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 12px 14px;
     margin-bottom: 10px;
   }
-  .sh-table tbody tr:hover { background: var(--surface); }
-  .sh-table td {
+  .sh-table tbody tr:hover, .sh-auto-table tbody tr:hover { background: var(--surface); }
+  .sh-table td, .sh-auto-table td {
     padding: 6px 0;
     border: none;
     display: flex;
@@ -2243,7 +2244,7 @@ html[data-theme="dark"] .sh-auto-loss-eur { color: #F87171; }
     gap: 10px;
     text-align: right;
   }
-  .sh-table td::before {
+  .sh-table td::before, .sh-auto-table td::before {
     content: attr(data-label);
     font-size: 11px;
     font-weight: 700;
@@ -2254,7 +2255,8 @@ html[data-theme="dark"] .sh-auto-loss-eur { color: #F87171; }
     flex-shrink: 0;
   }
   /* Première cellule (Produit) = titre de la carte, en pleine largeur */
-  .sh-table td:first-child {
+  .sh-table td:first-child,
+  .sh-auto-table td:first-child {
     display: block;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--border);
@@ -2262,7 +2264,8 @@ html[data-theme="dark"] .sh-auto-loss-eur { color: #F87171; }
     font-size: 15px;
     text-align: left;
   }
-  .sh-table td:first-child::before { display: none; }
+  .sh-table td:first-child::before,
+  .sh-auto-table td:first-child::before { display: none; }
   .sh-num { text-align: right; }
 }
 .sh-table-legend {
