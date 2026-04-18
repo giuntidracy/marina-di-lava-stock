@@ -27,10 +27,10 @@
   --text-secondary: #344054;
   --text-muted:     #667085;
   --text-faint:     #98A2B3;
-  --bg:             #F8F9FC;
+  --bg:             #F5F1EB;    /* crème brand (luxe discret) */
   --surface:        #FFFFFF;
-  --surface-hover:  #F9FAFB;
-  --surface-alt:    #F2F4F7;
+  --surface-hover:  #FAF7F1;    /* survol légèrement chaud */
+  --surface-alt:    #EFEAE0;    /* fond de contraste subtil */
   --input-bg:       rgba(255,255,255,.05);
 
   /* Shadows */
@@ -604,6 +604,16 @@ main { padding: 24px; max-width: 1440px; margin: 0 auto; }
 }
 .section-title {
   font-size: 20px; font-weight: 800; letter-spacing: -.04em; color: var(--text);
+  position: relative;
+  padding-bottom: 8px;
+  display: inline-block;
+}
+.section-title::after {
+  content: '';
+  position: absolute; left: 0; bottom: 0;
+  width: 44px; height: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-light));
+  border-radius: 2px;
 }
 
 /* ══════════════════════════════════════════════
@@ -711,13 +721,13 @@ main { padding: 24px; max-width: 1440px; margin: 0 auto; }
 }
 table { width: 100%; border-collapse: collapse; }
 thead {
-  background: linear-gradient(to bottom, #FCFCFD, var(--surface-alt));
-  border-bottom: 1.5px solid var(--border);
+  background: linear-gradient(to bottom, var(--surface), var(--surface-alt));
+  border-bottom: 2px solid var(--accent-light);
 }
 th {
   padding: 11px 14px; text-align: left; font-size: 11px;
-  font-weight: 700; color: var(--text-muted); text-transform: uppercase;
-  letter-spacing: .07em; white-space: nowrap;
+  font-weight: 800; color: var(--primary); text-transform: uppercase;
+  letter-spacing: .08em; white-space: nowrap;
   font-family: inherit;
 }
 td {
@@ -727,6 +737,11 @@ td {
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: #FAFFF8; }
 tbody tr:hover td { color: var(--text); }
+/* Zebra rows subtles (desktop/tablette uniquement — sinon casse les cartes mobile) */
+@media (min-width: 601px) {
+  tbody tr:nth-child(even) { background: rgba(201,168,76,.035); }
+  tbody tr:nth-child(even):hover { background: #FAFFF8; }
+}
 
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable:hover { color: var(--primary); }
