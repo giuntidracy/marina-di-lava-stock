@@ -31,6 +31,7 @@
   --surface:        #FFFFFF;
   --surface-hover:  #FAF7F1;    /* survol légèrement chaud */
   --surface-alt:    #EFEAE0;    /* fond de contraste subtil */
+  --card:           #FFFFFF;    /* fond des cartes/items (var historiquement utilisée) */
   --input-bg:       rgba(255,255,255,.05);
 
   /* Shadows */
@@ -66,6 +67,7 @@ html[data-theme="dark"] {
   --surface:        #171B22;
   --surface-hover:  #1E232C;
   --surface-alt:    #1A1F27;
+  --card:           #171B22;
   --input-bg:       rgba(255,255,255,.04);
 
   --shadow-xs: 0 1px 2px rgba(0,0,0,.35);
@@ -1152,7 +1154,14 @@ tr.row-archived { opacity: 0.55; font-style: italic; }
 /* ══════════════════════════════════════════════
    HISTORY TIMELINE
 ══════════════════════════════════════════════ */
-.history-list { display: flex; flex-direction: column; }
+.history-list {
+  display: flex; flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 20px;
+  box-shadow: var(--shadow-xs);
+}
 .history-item {
   display: flex; gap: 16px; padding: 16px 0;
   border-bottom: 1px solid var(--border); align-items: flex-start;
