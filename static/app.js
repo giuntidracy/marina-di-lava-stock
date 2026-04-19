@@ -8056,8 +8056,8 @@ function renderLastSyncCard(sync) {
   const fmtEur = v => (v || 0).toLocaleString("fr-FR", { style:"currency", currency:"EUR", maximumFractionDigits:0 });
 
   if (!sync.has_sync) {
-    return `<div class="db-card db-card-clickable db-sync-empty" onclick="switchView('cashpad')" title="Importer depuis Cashpad">
-      <div class="db-card-title">🔌 Santé Cashpad</div>
+    return `<div class="db-card db-card-clickable db-sync-error" onclick="switchView('cashpad')" title="Importer depuis Cashpad">
+      <div class="db-card-title">🔌 Santé Cashpad <span class="db-card-sub">· 🔴 Non connecté</span></div>
       <div class="db-sync-row">
         <span class="db-sync-icon">📭</span>
         <div>
