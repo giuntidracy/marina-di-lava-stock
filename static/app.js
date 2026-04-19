@@ -5367,6 +5367,18 @@ async function createSnapshotNow() {
   } catch (e) { alert("Erreur : " + e.message); }
 }
 
+async function resetShrinkageCounter(currentLoss) {
+  const msg = `🔄 Remettre le compteur d'écarts à zéro ?\n\n` +
+    `Les écarts en cours (€${currentLoss}) seront effacés et un nouveau snapshot du stock actuel sera pris comme référence.\n\n` +
+    `⚠️ Les pertes théoriques ne seront PAS archivées dans "Pertes déclarées". Si tu veux garder une trace, utilise plutôt "Saisir une perte" avant de réinitialiser.`;
+  if (!confirm(msg)) return;
+  try {
+    await api("/api/stock-snapshots?label=reset", { method: "POST" });
+    alert("✓ Compteur remis à zéro. Le nouveau snapshot est la référence.");
+    loadDemarqueAuto();
+  } catch (e) { alert("Erreur : " + e.message); }
+}
+
 async function loadDemarqueAuto() {
   const el = document.getElementById("sh-auto-area");
   if (!el) return;
@@ -5396,6 +5408,7 @@ async function loadDemarqueAuto() {
         <div class="sh-auto-total">
           <div class="sh-auto-total-eur">€${data.total_lost_eur.toFixed(2)}</div>
           <div class="sh-auto-total-label">perte théorique non déclarée</div>
+          <button class="btn btn-outline btn-sm" style="margin-top:8px" onclick="resetShrinkageCounter(${data.total_lost_eur.toFixed(2)})" title="Prend un nouveau snapshot, remet le compteur d'écarts à 0">🔄 Remettre à zéro</button>
         </div>
       </div>`;
     if (loss.length === 0) {
