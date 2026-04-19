@@ -267,7 +267,7 @@ async function loadAll() {
 const VIEW_TITLES = {
   dashboard:"Tableau de bord",
   stock:"Stock & Marges", cocktails:"Cocktails & Marges", marges:"Marges insuffisantes", alerts:"Alertes",
-  shrinkage:"Démarque Inconnue", cashpad:"Import Cashpad", delivery:"Bon de Livraison",
+  shrinkage:"Écarts & Pertes", cashpad:"Import Cashpad", delivery:"Bon de Livraison",
   delivery_check:"Contrôle livraison",
   inventory:"Sortie Réserve", flash:"Inventaire Flash", service_alert:"Alerte Stock",
   stats:"Statistiques", history:"Historique",
@@ -448,7 +448,7 @@ function renderChatMessages() {
       <div style="font-size:32px;margin-bottom:8px">✦</div>
       <div style="font-weight:700;margin-bottom:4px">Bonjour J-Marc 👋</div>
       <div style="font-size:12px;color:var(--text-muted);line-height:1.5;max-width:260px;margin:0 auto">
-        Je peux répondre sur ton stock, tes ventes, tes événements, la démarque…<br>
+        Je peux répondre sur ton stock, tes ventes, tes événements, les écarts & pertes…<br>
         <em>Essaye : "Quels produits sont à risque cette semaine ?"</em>
       </div>
     </div>`;
@@ -5237,11 +5237,11 @@ async function renderShrinkage(app) {
   app.innerHTML = `<div class="sh-wrap">
     <div class="sh-header">
       <div>
-        <h2 class="sh-title">📉 Démarque Inconnue</h2>
-        <p class="sh-subtitle">Pertes déclarées · Écarts d'inventaire · Vraie démarque</p>
+        <h2 class="sh-title">📉 Écarts &amp; Pertes</h2>
+        <p class="sh-subtitle">Pertes déclarées · Écarts d'inventaire · Pertes non expliquées</p>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-outline" onclick="createSnapshotNow()" title="Enregistre une photo du stock actuel pour démarrer le suivi de démarque automatique">📸 Snapshot</button>
+        <button class="btn btn-outline" onclick="createSnapshotNow()" title="Enregistre une photo du stock actuel pour démarrer le suivi automatique des écarts">📸 Snapshot</button>
         <button class="sh-loss-btn" onclick="openLossForm()">⚠️ Saisir une perte</button>
       </div>
     </div>
@@ -5330,10 +5330,10 @@ async function loadReconciliation(period) {
 }
 
 async function createSnapshotNow() {
-  if (!confirm("📸 Enregistrer un snapshot du stock actuel ?\n\nCe sera la référence pour calculer la démarque automatique jusqu'au prochain snapshot (automatique chaque lundi 02:00).")) return;
+  if (!confirm("📸 Enregistrer un snapshot du stock actuel ?\n\nCe sera la référence pour calculer les écarts automatiques jusqu'au prochain snapshot (automatique chaque lundi 02:00).")) return;
   try {
     await api("/api/stock-snapshots?label=user", { method: "POST" });
-    alert("✓ Snapshot enregistré. La démarque auto va se calculer à partir d'ici.");
+    alert("✓ Snapshot enregistré. Les écarts automatiques vont se calculer à partir d'ici.");
     loadDemarqueAuto();
   } catch (e) { alert("Erreur : " + e.message); }
 }
@@ -5347,7 +5347,7 @@ async function loadDemarqueAuto() {
       el.innerHTML = `<div class="sh-auto-card sh-auto-empty">
         <div class="sh-auto-icon">📸</div>
         <div>
-          <div class="sh-auto-title">Démarque automatique — pas encore active</div>
+          <div class="sh-auto-title">Suivi automatique des écarts — pas encore actif</div>
           <div class="sh-auto-sub">${esc(data.message)}</div>
           <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="createSnapshotNow()">📸 Enregistrer un snapshot maintenant</button>
         </div>
@@ -5361,7 +5361,7 @@ async function loadDemarqueAuto() {
     let html = `<div class="sh-auto-card">
       <div class="sh-auto-header">
         <div>
-          <div class="sh-auto-title">🤖 Démarque automatique depuis le dernier snapshot</div>
+          <div class="sh-auto-title">🤖 Écarts automatiques depuis le dernier snapshot</div>
           <div class="sh-auto-sub">Snapshot du ${esc(snapDate)} · il y a ${data.snapshot_age_days} jour(s)</div>
         </div>
         <div class="sh-auto-total">
@@ -5429,7 +5429,7 @@ function renderShrinkageKpis(summary) {
     <div class="sh-kpi sh-kpi-red">
       <div class="sh-kpi-icon">💸</div>
       <div class="sh-kpi-val">${fmtEur(totalValue)}</div>
-      <div class="sh-kpi-lbl">Valeur démarque inconnue</div>
+      <div class="sh-kpi-lbl">Valeur pertes non expliquées</div>
     </div>
     <div class="sh-kpi sh-kpi-orange">
       <div class="sh-kpi-icon">🔍</div>
@@ -5449,7 +5449,7 @@ function renderShrinkageKpis(summary) {
   </div>
   ${totalValue === 0 && totalDeclared === 0 ? `<div class="sh-empty-state">
     <div style="font-size:52px;margin-bottom:12px">✅</div>
-    <div style="font-size:16px;font-weight:700;color:var(--primary)">Aucune démarque détectée</div>
+    <div style="font-size:16px;font-weight:700;color:var(--primary)">Aucun écart détecté</div>
     <p style="color:var(--text-muted);margin-top:8px">Faites un inventaire ou saisissez vos premières pertes pour commencer l'analyse.</p>
   </div>` : ""}`;
 }
@@ -5467,7 +5467,7 @@ function renderShrinkageTable(summary) {
       <td data-label="Produit"><strong>${r.product_name}</strong><br><small class="sh-cat">${r.category}</small></td>
       <td class="sh-num" data-label="Écart inv.">${r.inventory_loss > 0 ? `<span class="sh-inv-loss">−${r.inventory_loss.toFixed(1)} ${r.unit}</span>` : "<span class='sh-zero'>—</span>"}</td>
       <td class="sh-num" data-label="Pertes décl.">${r.declared_losses > 0 ? `<span class="sh-decl">${r.declared_losses.toFixed(1)} ${r.unit}</span>` : "<span class='sh-zero'>—</span>"}</td>
-      <td class="sh-num ${unexplClass}" data-label="Démarque inconnue">${r.unexplained > 0 ? `<strong>${r.unexplained.toFixed(1)} ${r.unit}</strong>` : "✅ 0"}</td>
+      <td class="sh-num ${unexplClass}" data-label="Pertes non expliquées">${r.unexplained > 0 ? `<strong>${r.unexplained.toFixed(1)} ${r.unit}</strong>` : "✅ 0"}</td>
       <td class="sh-num ${valClass}" data-label="Valeur perdue">${r.value_eur > 0 ? fmtEur(r.value_eur) : "—"}</td>
       <td class="sh-num sh-stock-col" data-label="Stock actuel">${r.stock_actuel} ${r.unit}</td>
     </tr>`;
@@ -5480,7 +5480,7 @@ function renderShrinkageTable(summary) {
         <th>Produit</th>
         <th>Écart inventaire</th>
         <th>Pertes déclarées</th>
-        <th>Démarque inconnue</th>
+        <th>Pertes non expliquées</th>
         <th>Valeur perdue</th>
         <th>Stock actuel</th>
       </tr></thead>
@@ -5490,7 +5490,7 @@ function renderShrinkageTable(summary) {
   <div class="sh-table-legend">
     <span>📦 <em>Écart inventaire</em> = différence constatée lors des inventaires physiques</span>
     <span>📋 <em>Pertes déclarées</em> = casse, offerts maison, vols signalés</span>
-    <span>🔍 <em>Démarque inconnue</em> = écart qui reste inexpliqué</span>
+    <span>🔍 <em>Pertes non expliquées</em> = écart qui reste inexpliqué</span>
   </div>`;
 }
 
@@ -8661,7 +8661,7 @@ async function renderDashboard(el) {
 
         ${renderWeekdayCaCard(data.ca_weekday)}
 
-        <div class="db-card db-card-full db-card-clickable" id="db-manque-gagner" onclick="switchView('shrinkage')" title="Voir la démarque">
+        <div class="db-card db-card-full db-card-clickable" id="db-manque-gagner" onclick="switchView('shrinkage')" title="Voir les écarts & pertes">
           <div class="db-card-title">💸 Manque à gagner <span class="db-card-sub">· ruptures</span></div>
           <p class="db-empty">Chargement…</p>
         </div>
