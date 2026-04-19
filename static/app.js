@@ -2877,10 +2877,12 @@ async function renderInventory(el) {
       Saisissez la <strong>quantité sortie</strong> (ex : 2 bouteilles de Pago ananas prises → entrez 2).
     </div>
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
-      <div class="form-group" style="max-width:200px;margin:0">
-        <label>Prénom du serveur</label>
-        <input type="text" id="inv-staff" placeholder="ex: Jean"/>
-      </div>
+      ${userName
+        ? `<input type="hidden" id="inv-staff" value="${esc(userName)}"/>`
+        : `<div class="form-group" style="max-width:200px;margin:0">
+             <label>Prénom du serveur</label>
+             <input type="text" id="inv-staff" placeholder="ex: Jean"/>
+           </div>`}
       <div class="form-group" style="flex:0 0 auto;min-width:170px;margin:0">
         <label>Catégorie</label>
         <select id="reserve-cat-filter" onchange="reserveCatFilter=this.value; renderReserveList()"
