@@ -2865,6 +2865,7 @@ async function confirmDelivery(count) {
 
 let reserveProducts = [];
 let reserveSearch = "";
+let reserveCatFilter = "";
 
 async function renderInventory(el) {
   el.innerHTML = `
@@ -2880,10 +2881,20 @@ async function renderInventory(el) {
         <label>Prénom du serveur</label>
         <input type="text" id="inv-staff" placeholder="ex: Jean"/>
       </div>
+      <div class="form-group" style="flex:0 0 auto;min-width:170px;margin:0">
+        <label>Catégorie</label>
+        <select id="reserve-cat-filter" onchange="reserveCatFilter=this.value; renderReserveList()"
+                style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px">
+          <option value="">Toutes catégories</option>
+        </select>
+      </div>
       <div class="form-group" style="flex:1;min-width:180px;margin:0">
         <label>Recherche rapide</label>
-        <input type="text" id="reserve-search" placeholder="Pago, Coca, Ricard…"
-               oninput="reserveSearch=this.value; renderReserveList()"/>
+        <input type="text" id="reserve-search" placeholder="Tape les premières lettres (ex: Pago, Coca…)"
+               oninput="reserveSearch=this.value; renderReserveList()" autocomplete="off"/>
+      </div>
+      <div class="form-group" style="margin:0;align-self:flex-end">
+        <button class="btn btn-gold" onclick="openReserveAiFinder()" title="Décris le produit à l'IA">🤖 IA</button>
       </div>
     </div>
     <div id="reserve-list">Chargement…</div>
@@ -2919,10 +2930,22 @@ function renderReserveList() {
   const container = document.getElementById("reserve-list");
   if (!container) return;
 
+  // Peuple le dropdown catégorie (une seule fois)
+  const catSel = document.getElementById("reserve-cat-filter");
+  if (catSel && catSel.options.length <= 1) {
+    const cats = [...new Set(reserveProducts.map(p => p.category || "Autres"))].sort();
+    cats.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c; opt.textContent = c;
+      catSel.appendChild(opt);
+    });
+    catSel.value = reserveCatFilter;
+  }
+
   const q = reserveSearch.toLowerCase().trim();
-  const filtered = q
-    ? reserveProducts.filter(p => p.name.toLowerCase().includes(q) || (p.category||"").toLowerCase().includes(q))
-    : reserveProducts;
+  const filtered = reserveProducts
+    .filter(p => !reserveCatFilter || (p.category || "Autres") === reserveCatFilter)
+    .filter(p => !q || p.name.toLowerCase().includes(q) || (p.category||"").toLowerCase().includes(q));
 
   if (filtered.length === 0) {
     container.innerHTML = `<div class="info-box">Aucun produit trouvé.</div>`;
@@ -2971,6 +2994,76 @@ function renderReserveList() {
 
   container.innerHTML = html;
   updateReserveBar();
+}
+
+function openReserveAiFinder() {
+  openModal(`
+    <h3 style="margin-bottom:8px">🤖 Trouver un produit avec l'IA</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
+      Décris la bouteille que tu cherches (marque, couleur, forme…). L'IA va te proposer les produits de la réserve qui correspondent.
+    </p>
+    <div class="form-group">
+      <textarea id="reserve-ai-desc" rows="3" placeholder="ex: bouteille bleue de gin avec carafe ovale, ou jus rouge marque Pago…"
+                style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px;font-family:inherit"></textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="reserveAiFind()">✨ Chercher</button>
+    </div>
+    <div id="reserve-ai-results" style="margin-top:14px"></div>
+  `);
+  setTimeout(() => document.getElementById("reserve-ai-desc")?.focus(), 80);
+}
+
+async function reserveAiFind() {
+  const desc = document.getElementById("reserve-ai-desc")?.value || "";
+  const resultsEl = document.getElementById("reserve-ai-results");
+  if (!resultsEl) return;
+  resultsEl.innerHTML = `<div class="info-box">⏳ Analyse en cours…</div>`;
+  try {
+    const r = await api("/api/inventory/find-product", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ description: desc }),
+    });
+    const cands = r.candidates || [];
+    if (cands.length === 0) {
+      resultsEl.innerHTML = `<div class="info-box">Aucun produit trouvé. Essaie une description plus précise.</div>`;
+      return;
+    }
+    const reserveIds = new Set(reserveProducts.map(p => p.id));
+    resultsEl.innerHTML = cands
+      .filter(c => reserveIds.has(c.product_id))
+      .map(c => `<div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div>
+          <strong>${esc(c.product_name)}</strong>
+          <div style="font-size:11px;color:var(--text-muted)">${esc(c.category || "")} · confiance ${Math.round((c.confidence || 0) * 100)}%</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="reservePickFromAi(${c.product_id})">+ Ajouter</button>
+      </div>`).join("") || `<div class="info-box">Ces produits ne sont pas dans la réserve.</div>`;
+  } catch (e) {
+    resultsEl.innerHTML = `<div class="info-box">Erreur IA : ${esc(e.message)}</div>`;
+  }
+}
+
+function reservePickFromAi(pid) {
+  closeModal();
+  reserveSearch = "";
+  reserveCatFilter = "";
+  const searchEl = document.getElementById("reserve-search");
+  if (searchEl) searchEl.value = "";
+  const catEl = document.getElementById("reserve-cat-filter");
+  if (catEl) catEl.value = "";
+  renderReserveList();
+  setTimeout(() => {
+    reserveAdj(pid, 1);
+    const row = document.getElementById(`reserve-row-${pid}`);
+    if (row) {
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+      row.style.outline = "2px solid var(--accent)";
+      setTimeout(() => { row.style.outline = ""; }, 1400);
+    }
+  }, 60);
 }
 
 function toggleReserveCategory(cat) {
