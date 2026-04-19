@@ -8570,20 +8570,30 @@ async function renderDashboard(el) {
            </div>`
         : ""}
 
-      <div class="db-kpi-row" onclick="switchView('stock')">
-        <div class="db-kpi">
-          <div class="db-kpi-label">💰 Valeur stock</div>
-          <div class="db-kpi-val">€${totalVal.toFixed(0)}</div>
-          <div class="db-kpi-sub">${withVal.length} valorisés</div>
+      ${(() => {
+        const s = data.last_sync || {};
+        let icon = "🔴", color = "#dc2626", label = "Non connecté", sub = "Aucun import";
+        if (s.has_sync) {
+          if (s.status === "ok") { icon = "🟢"; color = "#16a34a"; label = "Connecté"; }
+          else if (s.status === "warn") { icon = "🟠"; color = "#D97706"; label = "Activité anormale"; }
+          else { icon = "🔴"; color = "#dc2626"; label = "Sync en retard"; }
+          sub = s.label ? `Dernière sync : ${esc(s.label)}` : "";
+        }
+        return `
+      <div class="db-kpi-row">
+        <div class="db-kpi" style="cursor:pointer" onclick="switchView('cashpad')" title="Ouvrir Cashpad">
+          <div class="db-kpi-label">🔌 Santé Cashpad</div>
+          <div class="db-kpi-val" style="color:${color};font-size:22px">${icon} ${esc(label)}</div>
+          <div class="db-kpi-sub">${sub}</div>
         </div>
         <div class="db-kpi-sep"></div>
-        <div class="db-kpi">
+        <div class="db-kpi" style="cursor:pointer" onclick="switchView('stock')">
           <div class="db-kpi-label">📦 Produits</div>
           <div class="db-kpi-val">${nbProd}</div>
           <div class="db-kpi-sub">${nbEnStock} en stock</div>
         </div>
         <div class="db-kpi-sep"></div>
-        <div class="db-kpi">
+        <div class="db-kpi" style="cursor:pointer" onclick="switchView('stock')">
           <div class="db-kpi-label">🚨 Ruptures</div>
           <div class="db-kpi-val" style="color:${ruptureColor}">${ruptures}</div>
           <div class="db-kpi-sub">${ruptures > 0
@@ -8591,12 +8601,13 @@ async function renderDashboard(el) {
             : (stockBas > 0 ? `⚠️ ${stockBas} stock bas` : "Stock sain ✅")}</div>
         </div>
         <div class="db-kpi-sep"></div>
-        <div class="db-kpi">
+        <div class="db-kpi" style="cursor:pointer" onclick="switchView('stock')">
           <div class="db-kpi-label">📈 Marge ≥ 70%</div>
           <div class="db-kpi-val" style="color:#16a34a">${margesOk}</div>
           <div class="db-kpi-sub">sur ${allProducts.filter(p => p.marge !== null).length} valorisés</div>
         </div>
-      </div>
+      </div>`;
+      })()}
 
       <div class="db-grid">
 
@@ -8647,7 +8658,11 @@ async function renderDashboard(el) {
         </div>
 
         ${renderDeliveryChecksCard(data.delivery_checks)}
-        ${renderLastSyncCard(data.last_sync)}
+        <div class="db-card db-card-clickable" onclick="switchView('stock')" title="Ouvrir Stock & Marges">
+          <div class="db-card-title">💰 Valeur stock</div>
+          <div class="db-card-value">€${totalVal.toFixed(0)}</div>
+          <div class="db-card-sub" style="color:var(--text-muted);font-size:12px;margin-top:4px">${withVal.length} produits valorisés sur ${nbProd}</div>
+        </div>
         ${renderPendingOrdersCard(data.pending_orders)}
         ${renderMonthlyGoalCard(data.monthly_goal)}
         ${renderCriticalAlertsCard(data.critical_alerts)}
