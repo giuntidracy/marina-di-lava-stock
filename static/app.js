@@ -922,7 +922,9 @@ function renderStock(el) {
       <div class="summary-card ${ruptures > 0 ? 'card-danger' : 'card-success'} kpi-clickable" style="--card-icon:'${ruptures > 0 ? '🚨' : '✅'}'" onclick="showRupturesDetail()">
         <div class="s-label">Ruptures</div>
         <div class="s-value">${ruptures}</div>
-        <div class="s-sub">${stockBas > 0 ? `⚠️ ${stockBas} stock bas` : 'Stock sain'}</div>
+        <div class="s-sub">${ruptures > 0
+          ? `🚨 ${ruptures} produit${ruptures > 1 ? 's' : ''} en rupture${stockBas > 0 ? ` · ⚠️ ${stockBas} bas` : ''}`
+          : (stockBas > 0 ? `⚠️ ${stockBas} stock bas` : 'Stock sain')}</div>
         <div class="kpi-hint">Voir détail →</div>
       </div>
       <div class="summary-card card-success kpi-clickable" style="--card-icon:'📈'" onclick="showMargeDetail()">
@@ -1427,7 +1429,17 @@ async function submitProductForm(e, id) {
 // VIEW: COCKTAILS
 // ══════════════════════════════════════════════════════════
 function renderCocktails(el) {
+  // Bandeau si aucun produit n'a de stock > 0 (impossibilité de calcul de coût matière fiable)
+  const allZeroStock = (allProducts || []).length > 0
+    && (allProducts || []).filter(p => !p.archived).every(p => !p.stock || p.stock <= 0);
+  const banner = allZeroStock
+    ? `<div class="info-box" style="background:#FEF3E2;border:1px solid #F5C07A;color:#6B3A06;margin-bottom:18px;display:flex;align-items:center;gap:10px;font-size:13px">
+         <span style="font-size:18px">⚠️</span>
+         <span><strong>Données non valorisées</strong> — tous les stocks sont à 0, les coûts matière et marges affichés ne reflètent pas la réalité. Saisissez les stocks pour obtenir des chiffres fiables.</span>
+       </div>`
+    : "";
   el.innerHTML = `
+    ${banner}
     <div class="section-header">
       <span class="section-title">Cocktails &amp; Marges</span>
       <button class="btn btn-primary" onclick="openCocktailForm(null)">+ Nouveau cocktail</button>
@@ -1623,9 +1635,7 @@ async function renderAlerts(el) {
           <input type="checkbox" id="alert-select-all-cb" onchange="toggleAllAlerts(this.checked)"/>
           Tout sélectionner (${archivable.length} archivables)
         </label>
-        <button class="btn btn-danger btn-sm" id="alert-bulk-archive-btn" onclick="archiveSelectedAlerts()" disabled>
-          📦 Archiver la sélection (<span id="alert-selected-count">0</span>)
-        </button>
+        <button class="btn btn-danger btn-sm" id="alert-bulk-archive-btn" onclick="archiveSelectedAlerts()" disabled>📦 Archiver la sélection (<span id="alert-selected-count">0</span>)</button>
       </div>`;
 
       Object.values(groups).forEach(g => {
@@ -3430,6 +3440,17 @@ function _buildOrdersListHTML(orders, suppliers, serviceAlerts = []) {
     const emailWarn = !s.email
       ? `<span class="ord-email-warn" title="Ajoutez l'email dans Fournisseurs">⚠️ Email manquant</span>`
       : `<span class="ord-email-ok">✉ ${s.email}</span>`;
+    const hasEmail = !!s.email;
+    const orderBtn = hasEmail
+      ? `<button class="btn btn-primary ord-new-btn" onclick="openOrderForm(${s.id}, '${s.name.replace(/'/g,"\\'")}')">
+           + Commander
+         </button>`
+      : `<button class="btn ord-new-btn"
+                 style="background:#FEF3E2;color:#6B3A06;border:1px solid #F5C07A"
+                 title="Ajoutez un email au fournisseur pour pouvoir commander"
+                 onclick="ordPromptEmail(${s.id}, '${s.name.replace(/'/g,"\\'")}')">
+           ✉️ Ajouter un email pour commander
+         </button>`;
     return `
     <div class="ord-supplier-card">
       <div class="ord-supplier-header">
@@ -3437,9 +3458,7 @@ function _buildOrdersListHTML(orders, suppliers, serviceAlerts = []) {
           <div class="ord-supplier-name">${s.name}</div>
           <div class="ord-supplier-meta">${emailWarn}</div>
         </div>
-        <button class="btn btn-primary ord-new-btn" onclick="openOrderForm(${s.id}, '${s.name.replace(/'/g,"\\'")}')">
-          + Commander
-        </button>
+        ${orderBtn}
       </div>
       <div class="ord-supplier-last">Dernière : ${lastStr}</div>
     </div>`;
@@ -3526,6 +3545,46 @@ async function ordAckAlert(alertId) {
     showToast("Alerte marquée comme vue");
     renderOrders(document.getElementById("app"));
   } catch(e) { showToast("Erreur : " + e.message); }
+}
+
+function ordPromptEmail(supplierId, supplierName) {
+  openModal(`
+    <h3 style="margin-bottom:8px">✉️ Email manquant pour ${esc(supplierName)}</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
+      Pour envoyer une commande à ce fournisseur, ajoute son adresse email ci-dessous. Tu pourras commander dans la foulée.
+    </p>
+    <form onsubmit="ordSaveEmail(event, ${supplierId}, '${esc(supplierName).replace(/'/g,"\\'")}')">
+      <div class="form-group">
+        <label>Email commandes</label>
+        <input type="email" id="ord-prompt-email" required placeholder="commandes@fournisseur.fr" autofocus
+               style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px"/>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Annuler</button>
+        <button type="submit" class="btn btn-primary">Enregistrer + commander</button>
+      </div>
+    </form>
+  `);
+}
+
+async function ordSaveEmail(event, supplierId, supplierName) {
+  event.preventDefault();
+  const email = document.getElementById("ord-prompt-email")?.value.trim();
+  if (!email) return;
+  try {
+    // Récupérer le fournisseur courant pour ne pas écraser ses autres champs
+    const sup = (allSuppliers || []).find(s => s.id === supplierId) || { name: supplierName };
+    await api(`/api/fournisseurs/${supplierId}`, {
+      method: "PUT", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        name: sup.name, contact: sup.contact || "", phone: sup.phone || "",
+        email, categories: sup.categories || "",
+      }),
+    });
+    allSuppliers = await api("/api/fournisseurs");
+    closeModal();
+    openOrderForm(supplierId, supplierName);
+  } catch(e) { alert("Erreur : " + e.message); }
 }
 
 async function ordCreateFromAlert(alertId, productId, supplierName) {
@@ -7738,14 +7797,15 @@ function renderPendingOrdersCard(orders) {
 
 function renderWeekdayCaCard(weekdays) {
   weekdays = weekdays || [];
-  const hasData = weekdays.some(d => d.n_days > 0);
+  // "Pas de données" = aucun jour mesuré OU aucun CA réel sur tous les jours mesurés
+  const hasData = weekdays.some(d => d.n_days > 0 && d.avg > 0);
   if (!hasData) {
-    return `<div class="db-card db-card-clickable" onclick="switchView('cashpad')" title="Importer depuis Cashpad">
-      <div class="db-card-title">📊 CA par jour de la semaine</div>
-      <div class="db-empty-hero">
-        <div class="db-empty-icon">📈</div>
-        <div class="db-empty-title">Pas encore de données</div>
-        <div class="db-empty-sub">Importez vos ventes Cashpad pour voir apparaître le CA moyen par jour</div>
+    return `<div class="db-card db-card-full db-card-clickable" onclick="switchView('cashpad')" title="Importer depuis Cashpad">
+      <div class="db-card-title">📊 CA moyen par jour de la semaine <span class="db-card-sub">· 4 dernières semaines</span></div>
+      <div class="db-empty-hero" style="padding:30px 20px;text-align:center">
+        <div class="db-empty-icon" style="font-size:36px">📈</div>
+        <div class="db-empty-title" style="font-weight:700;margin-top:8px">Aucune donnée disponible</div>
+        <div class="db-empty-sub" style="font-size:13px;color:var(--text-muted);margin-top:4px">Importez vos ventes Cashpad pour voir le CA moyen par jour de la semaine.</div>
       </div>
     </div>`;
   }
@@ -8143,6 +8203,13 @@ async function renderDashboard(el) {
 
       <div id="db-service-alerts"></div>
 
+      ${nbProd > 0 && nbEnStock === 0
+        ? `<div class="info-box" style="background:#FEF3E2;border:1px solid #F5C07A;color:#6B3A06;margin-bottom:14px;display:flex;align-items:center;gap:10px;font-size:13px">
+             <span style="font-size:18px">⚠️</span>
+             <span><strong>Données non valorisées</strong> — tous les stocks sont à 0. Les coûts, marges et valeur stock affichés ci-dessous ne sont pas fiables tant que les stocks ne sont pas saisis.</span>
+           </div>`
+        : ""}
+
       <div class="db-kpi-row" onclick="switchView('stock')">
         <div class="db-kpi">
           <div class="db-kpi-label">💰 Valeur stock</div>
@@ -8159,7 +8226,9 @@ async function renderDashboard(el) {
         <div class="db-kpi">
           <div class="db-kpi-label">🚨 Ruptures</div>
           <div class="db-kpi-val" style="color:${ruptureColor}">${ruptures}</div>
-          <div class="db-kpi-sub">${stockBas > 0 ? `⚠️ ${stockBas} stock bas` : "Stock sain ✅"}</div>
+          <div class="db-kpi-sub">${ruptures > 0
+            ? `🚨 ${ruptures} en rupture${stockBas > 0 ? ` · ⚠️ ${stockBas} bas` : ''}`
+            : (stockBas > 0 ? `⚠️ ${stockBas} stock bas` : "Stock sain ✅")}</div>
         </div>
         <div class="db-kpi-sep"></div>
         <div class="db-kpi">
