@@ -6280,7 +6280,7 @@ def get_shrinkage_history(db: Session = Depends(get_db)):
     rows = [
         {
             "month": m,
-            "label": datetime.strptime(m, "%Y-%m").strftime("%b %Y") if m != "??-??" else m,
+            "label": _fmt_month_short_fr(datetime.strptime(m, "%Y-%m")) if m != "??-??" else m,
             **v
         }
         for m, v in sorted(monthly.items())
@@ -6569,7 +6569,7 @@ def cashpad_sync_status(db: Session = Depends(get_db)):
         try:
             dt = datetime.fromisoformat(last_sync)
             local = to_local(dt)
-            last_sync_label = local.strftime("%-d %b %Y à %H:%M")
+            last_sync_label = f"{local.day} {_MONTHS_FR_SHORT[local.month - 1]} {local.year} à {local.strftime('%H:%M')}"
         except Exception:
             last_sync_label = last_sync[:16]
 
@@ -6806,6 +6806,20 @@ def get_weather(refresh: bool = False, db: Session = Depends(get_db)):
 # TABLEAU DE BORD
 # ══════════════════════════════════════════════════════════════════════════
 
+_MONTHS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
+              "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"]
+_MONTHS_FR_SHORT = ["janv.", "févr.", "mars", "avr.", "mai", "juin",
+                    "juil.", "août", "sept.", "oct.", "nov.", "déc."]
+
+def _fmt_month_fr(d) -> str:
+    """Retourne 'Avril 2026' au lieu de 'April 2026' (locale système non garantie sur Railway)."""
+    return f"{_MONTHS_FR[d.month - 1]} {d.year}"
+
+def _fmt_month_short_fr(d) -> str:
+    """Retourne 'avr. 2026' au lieu de 'Apr 2026'."""
+    return f"{_MONTHS_FR_SHORT[d.month - 1]} {d.year}"
+
+
 @app.get("/api/manque-a-gagner")
 def get_manque_a_gagner(db: Session = Depends(get_db)):
     """Calcule le manque à gagner dû aux ruptures de stock ce mois."""
@@ -6819,7 +6833,7 @@ def get_manque_a_gagner(db: Session = Depends(get_db)):
     ).all()
 
     if not ruptures:
-        return {"total_lost": 0, "items": [], "month": now_local.strftime("%B %Y")}
+        return {"total_lost": 0, "items": [], "month": _fmt_month_fr(now_local)}
 
     # Calculer les ventes moyennes par produit (sur 30 derniers jours d'historique)
     thirty_days_ago = datetime.utcnow() - timedelta(days=30)
@@ -6875,7 +6889,7 @@ def get_manque_a_gagner(db: Session = Depends(get_db)):
     return {
         "total_lost": round(total_lost, 2),
         "items": items,
-        "month": now_local.strftime("%B %Y").capitalize(),
+        "month": _fmt_month_fr(now_local),
     }
 
 
