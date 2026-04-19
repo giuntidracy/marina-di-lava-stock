@@ -6704,16 +6704,20 @@ def _fetch_openweather(lat: str, lon: str, api_key: str) -> dict:
 @app.get("/api/weather")
 def get_weather(refresh: bool = False, db: Session = Depends(get_db)):
     api_key = (os.getenv("OPENWEATHER_API_KEY") or os.getenv("OPENWEATHER-API-KEY") or "").strip()
-    lat     = os.getenv("WEATHER_LAT", "41.9267").strip()   # Ajaccio, Corse (défaut)
-    lon     = os.getenv("WEATHER_LON", "8.7369").strip()
+    lat     = os.getenv("WEATHER_LAT", "41.9728").strip()   # Golfe de Lava, Corse (défaut)
+    lon     = os.getenv("WEATHER_LON", "8.6431").strip()
+    city_label = os.getenv("WEATHER_CITY_LABEL", "Golfe de Lava")
 
     if not api_key:
         return {"configured": False}
 
     # ── Cache 1h ────────────────────────────────────────────────────────
+    # Cache key versionné par (lat, lon, label) pour invalider lors d'un changement
+    cache_key   = f"weather_cache_{lat}_{lon}_{city_label}"
+    cache_ts_key = f"{cache_key}_ts"
     if not refresh:
-        cached    = _get_setting(db, "weather_cache", "")
-        cache_ts  = _get_setting(db, "weather_cache_ts", "")
+        cached    = _get_setting(db, cache_key, "")
+        cache_ts  = _get_setting(db, cache_ts_key, "")
         if cached and cache_ts:
             try:
                 age = (datetime.utcnow() - datetime.fromisoformat(cache_ts)).total_seconds()
@@ -6793,7 +6797,7 @@ def get_weather(refresh: bool = False, db: Session = Depends(get_db)):
 
     result = {
         "configured":    True,
-        "city":          f"{city}, {country}" if city else "Corse",
+        "city":          city_label,
         "current_temp":  current_t,
         "current_desc":  current_desc,
         "current_icon":  current_icon,
@@ -6808,8 +6812,8 @@ def get_weather(refresh: bool = False, db: Session = Depends(get_db)):
     }
 
     # Mise en cache
-    _set_setting(db, "weather_cache",    json.dumps(result))
-    _set_setting(db, "weather_cache_ts", datetime.utcnow().isoformat())
+    _set_setting(db, cache_key,    json.dumps(result))
+    _set_setting(db, cache_ts_key, datetime.utcnow().isoformat())
     db.commit()
     return result
 
