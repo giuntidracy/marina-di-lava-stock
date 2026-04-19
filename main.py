@@ -6179,6 +6179,221 @@ def delete_loss(lid: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# CONTRÔLE DU JOUR — spot-check sur 3 produits top-vendeurs (direction only)
+# ══════════════════════════════════════════════════════════════════════════
+
+_DAILY_CONTROL_N = 3           # nombre de produits à contrôler par jour
+_DAILY_CONTROL_COOLDOWN = 5    # jours à attendre avant de re-sélectionner un produit
+_DAILY_CONTROL_SALES_WINDOW = 7  # fenêtre pour calculer les top-vendeurs
+
+
+def _daily_control_top_sellers(db: Session, window_days: int):
+    """Agrège les ventes Cashpad des N derniers jours → {product_id: qty_sold}."""
+    since = datetime.utcnow() - timedelta(days=window_days)
+    rows = (
+        db.query(StockHistory)
+          .filter(StockHistory.event_type == "import_cashpad",
+                  StockHistory.created_at >= since)
+          .all()
+    )
+    totals = {}
+    for row in rows:
+        try:
+            data = json.loads(row.data_json or "{}")
+        except Exception:
+            continue
+        for ded in (data.get("deductions") or []):
+            pid = ded.get("product_id")
+            qty = abs(float(ded.get("quantity", ded.get("qty", 0)) or 0))
+            if not pid or qty <= 0:
+                continue
+            totals[pid] = totals.get(pid, 0.0) + qty
+    return totals
+
+
+def _daily_control_recent_pids(db: Session, cooldown_days: int):
+    """Set des product_id contrôlés dans les N derniers jours."""
+    since = datetime.utcnow() - timedelta(days=cooldown_days)
+    rows = (
+        db.query(StockHistory)
+          .filter(StockHistory.event_type == "daily_control",
+                  StockHistory.created_at >= since)
+          .all()
+    )
+    recent = set()
+    for row in rows:
+        try:
+            data = json.loads(row.data_json or "{}")
+        except Exception:
+            continue
+        for it in (data.get("items") or []):
+            pid = it.get("product_id")
+            if pid:
+                recent.add(pid)
+    return recent
+
+
+def _daily_control_today_record(db: Session):
+    """Retourne le StockHistory du contrôle d'aujourd'hui (ou None)."""
+    today_start = datetime.combine(datetime.utcnow().date(), datetime.min.time())
+    return (
+        db.query(StockHistory)
+          .filter(StockHistory.event_type == "daily_control",
+                  StockHistory.created_at >= today_start)
+          .order_by(StockHistory.created_at.desc())
+          .first()
+    )
+
+
+@app.get("/api/daily-control/today")
+def get_daily_control_today(request: Request, db: Session = Depends(get_db)):
+    _require_manager_session(request)
+
+    # Déjà fait aujourd'hui ? → on renvoie le record
+    existing = _daily_control_today_record(db)
+    if existing:
+        try:
+            data = json.loads(existing.data_json or "{}")
+        except Exception:
+            data = {}
+        return {
+            "done": True,
+            "checked_at": existing.created_at.isoformat() + "Z",
+            "checked_by": data.get("checked_by", ""),
+            "items": data.get("items", []),
+            "total_diff_value_eur": data.get("total_diff_value_eur", 0),
+        }
+
+    # Sélection : top-vendeurs 7j, exclu récemment contrôlés, stock > 0
+    totals = _daily_control_top_sellers(db, _DAILY_CONTROL_SALES_WINDOW)
+    recent_pids = _daily_control_recent_pids(db, _DAILY_CONTROL_COOLDOWN)
+
+    products_map = {
+        p.id: p for p in db.query(Product)
+                          .filter((Product.archived == False) | (Product.archived == None))
+                          .all()
+    }
+    candidates = []
+    for pid, qty in totals.items():
+        if pid in recent_pids:
+            continue
+        p = products_map.get(pid)
+        if not p or p.stock is None or p.stock <= 0:
+            continue
+        candidates.append((pid, qty, p))
+    candidates.sort(key=lambda x: -x[1])
+    selected = candidates[:_DAILY_CONTROL_N]
+
+    # Fallback si pas assez de ventes : prend n'importe quel produit avec stock
+    if len(selected) < _DAILY_CONTROL_N:
+        taken = {pid for pid, _, _ in selected}
+        fallback = [
+            p for p in products_map.values()
+            if p.id not in taken and p.id not in recent_pids
+            and p.stock is not None and p.stock > 0
+        ]
+        fallback.sort(key=lambda p: -p.stock)
+        for p in fallback[:_DAILY_CONTROL_N - len(selected)]:
+            selected.append((p.id, 0, p))
+
+    items = [
+        {
+            "product_id":   p.id,
+            "product_name": p.name,
+            "category":     p.category or "",
+            "unit":         p.unit or "Bouteille",
+            "stock_theorique": round(p.stock, 2),
+            "sold_7d":      round(qty, 2),
+            "purchase_price": p.purchase_price or 0,
+        }
+        for (pid, qty, p) in selected
+    ]
+    return {
+        "done": False,
+        "items": items,
+        "cooldown_days": _DAILY_CONTROL_COOLDOWN,
+        "sales_window":  _DAILY_CONTROL_SALES_WINDOW,
+    }
+
+
+class DailyControlItemIn(BaseModel):
+    product_id: int
+    actual_stock: float
+
+
+class DailyControlIn(BaseModel):
+    items: List[DailyControlItemIn]
+
+
+@app.post("/api/daily-control/submit")
+def submit_daily_control(body: DailyControlIn, request: Request, db: Session = Depends(get_db)):
+    _require_manager_session(request)
+
+    # Un seul contrôle/jour
+    if _daily_control_today_record(db):
+        raise HTTPException(400, detail="Le contrôle du jour a déjà été effectué.")
+
+    # Nom du manager connecté (trace)
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    checked_by = (_sessions.get(token) or {}).get("user_name", "")
+
+    results = []
+    total_value_eur = 0.0
+    for it in (body.items or []):
+        p = db.query(Product).get(it.product_id)
+        if not p:
+            continue
+        theoretical = float(p.stock or 0)
+        actual = float(it.actual_stock or 0)
+        diff = actual - theoretical   # négatif = manque
+
+        # Trace dans InventorySession (nourrit les écarts "Écarts & Pertes")
+        inv = InventorySession(
+            product_id=p.id,
+            theoretical_qty=theoretical,
+            actual_qty=actual,
+            difference=diff,
+            staff_name=f"[Contrôle jour] {checked_by}" if checked_by else "[Contrôle jour]",
+        )
+        db.add(inv)
+        # On met aussi le stock à jour (cohérent avec Inventaire Flash)
+        p.stock = actual
+
+        price = float(p.purchase_price or 0)
+        diff_value = round(diff * price, 2)
+        total_value_eur += diff_value
+
+        results.append({
+            "product_id":      p.id,
+            "product_name":    p.name,
+            "category":        p.category or "",
+            "unit":            p.unit or "Bouteille",
+            "stock_theorique": round(theoretical, 2),
+            "stock_reel":      round(actual, 2),
+            "diff":            round(diff, 2),
+            "diff_value_eur":  diff_value,
+        })
+
+    # Log l'événement "daily_control" (servira pour le cooldown + l'affichage)
+    log_event(
+        db, "daily_control",
+        f"Contrôle du jour par {checked_by or 'Direction'} — {len(results)} produits",
+        {
+            "items": results,
+            "checked_by": checked_by,
+            "total_diff_value_eur": round(total_value_eur, 2),
+        },
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "items": results,
+        "total_diff_value_eur": round(total_value_eur, 2),
+    }
+
+
 @app.get("/api/shrinkage/summary")
 def get_shrinkage_summary(db: Session = Depends(get_db)):
     """

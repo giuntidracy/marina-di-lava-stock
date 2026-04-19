@@ -16,7 +16,7 @@ let inactivityTimer = null;
 
 // Onglets accessibles par rôle
 const SERVICE_VIEWS = ["inventory","service_alert","delivery_check"];
-const MANAGER_VIEWS = ["dashboard","stock","cocktails","marges","alerts","cashpad","delivery_check","inventory","flash","stats","history","suppliers","orders","mapping","admin","staff","events","shrinkage"];
+const MANAGER_VIEWS = ["dashboard","stock","cocktails","marges","alerts","cashpad","delivery_check","inventory","flash","daily_control","stats","history","suppliers","orders","mapping","admin","staff","events","shrinkage"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
@@ -269,7 +269,7 @@ const VIEW_TITLES = {
   stock:"Stock & Marges", cocktails:"Cocktails & Marges", marges:"Marges insuffisantes", alerts:"Alertes",
   shrinkage:"Écarts & Pertes", cashpad:"Import Cashpad", delivery:"Bon de Livraison",
   delivery_check:"Contrôle livraison",
-  inventory:"Sortie Réserve", flash:"Inventaire Flash", service_alert:"Alerte Stock",
+  inventory:"Sortie Réserve", flash:"Inventaire Flash", daily_control:"Contrôle du jour", service_alert:"Alerte Stock",
   stats:"Statistiques", history:"Historique",
   events:"Événements", suppliers:"Fournisseurs", orders:"Commandes", mapping:"Mapping Cashpad",
   admin:"Administration", staff:"Login",
@@ -330,6 +330,7 @@ function renderView(view) {
     case "events":    renderEvents(app); break;
     case "shrinkage": renderShrinkage(app); break;
     case "flash":     renderFlash(app); break;
+    case "daily_control": renderDailyControl(app); break;
     case "service_alert": renderServiceAlert(app); break;
     case "delivery_check": renderDeliveryCheck(app); break;
     case "admin":     renderAdmin(app); break;
@@ -7397,6 +7398,163 @@ async function saCommanderGroup(supplierName) {
 let flashResults = null;
 let flashControlId = null;
 let flashTab = "scan"; // "scan" ou "history"
+
+// ══════════════════════════════════════════════════════════
+// VIEW: CONTRÔLE DU JOUR (direction only — spot check 3 produits)
+// ══════════════════════════════════════════════════════════
+async function renderDailyControl(el) {
+  if (userRole !== "manager") {
+    el.innerHTML = `<div class="section-header"><span class="section-title">Contrôle du jour</span></div>
+      <div class="info-box" style="color:#DC2626">Accès réservé à la direction.</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="section-header">
+      <span class="section-title">🎯 Contrôle du jour</span>
+    </div>
+    <div class="info-box" style="margin-bottom:14px">
+      Chaque jour, 3 produits <strong>top-vendeurs</strong> sont sélectionnés automatiquement (avec rotation). Compte les physiquement et saisis le stock réel — les écarts sont enregistrés dans <em>Écarts & Pertes</em>.
+    </div>
+    <div id="daily-control-body">Chargement…</div>`;
+
+  try {
+    const data = await api("/api/daily-control/today");
+    const body = document.getElementById("daily-control-body");
+
+    if (data.done) {
+      const rows = (data.items || []).map(it => {
+        const diffCls = it.diff < 0 ? "marge-red" : it.diff > 0 ? "marge-orange" : "";
+        const diffTxt = it.diff === 0 ? "✅ Conforme" : `${it.diff > 0 ? "+" : ""}${it.diff} ${esc(it.unit)}`;
+        const eurTxt = it.diff_value_eur ? `<strong style="color:#DC2626">€${Math.abs(it.diff_value_eur).toFixed(2)}</strong>` : "—";
+        return `<tr>
+          <td><strong>${esc(it.product_name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${esc(it.category)}</span></td>
+          <td style="text-align:right">${it.stock_theorique} ${esc(it.unit)}</td>
+          <td style="text-align:right"><strong>${it.stock_reel}</strong> ${esc(it.unit)}</td>
+          <td style="text-align:right" class="${diffCls}">${diffTxt}</td>
+          <td style="text-align:right">${eurTxt}</td>
+        </tr>`;
+      }).join("");
+      const totalEur = data.total_diff_value_eur || 0;
+      const checkedAt = data.checked_at ? new Date(data.checked_at).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}) : "";
+      body.innerHTML = `
+        <div class="info-box" style="background:rgba(22,163,74,.12);border:1px solid rgba(22,163,74,.35);color:#15803D;font-weight:600">
+          ✅ Contrôle du jour déjà effectué${checkedAt ? ` à ${esc(checkedAt)}` : ""}${data.checked_by ? ` par ${esc(data.checked_by)}` : ""}.
+        </div>
+        <div class="table-wrap"><table class="kpi-table">
+          <thead><tr>
+            <th>Produit</th>
+            <th style="text-align:right">Stock théorique</th>
+            <th style="text-align:right">Stock réel</th>
+            <th style="text-align:right">Écart</th>
+            <th style="text-align:right">Valeur €</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+        ${totalEur < 0 ? `<div style="margin-top:12px;text-align:right;font-size:14px">Perte totale constatée : <strong style="color:#DC2626">€${Math.abs(totalEur).toFixed(2)}</strong></div>` : ""}
+        <p style="margin-top:16px;font-size:13px;color:var(--text-muted)">Reviens demain pour le prochain contrôle. Les écarts apparaissent dans <a href="#" onclick="switchView('shrinkage');return false">Écarts & Pertes</a>.</p>`;
+      return;
+    }
+
+    if (!data.items || data.items.length === 0) {
+      body.innerHTML = `<div class="info-box">Pas encore assez de ventes pour sélectionner des produits. Importe d'abord un fichier Cashpad.</div>`;
+      return;
+    }
+
+    const rows = data.items.map((it, i) => `
+      <tr id="dc-row-${it.product_id}">
+        <td><strong>${esc(it.product_name)}</strong><br>
+          <span style="font-size:11px;color:var(--text-muted)">${esc(it.category)} · ${it.sold_7d} vendus 7j</span>
+        </td>
+        <td style="text-align:right">${it.stock_theorique} ${esc(it.unit)}</td>
+        <td style="text-align:right">
+          <input type="number" step="1" min="0" class="inv-input"
+                 id="dc-input-${it.product_id}"
+                 data-theorique="${it.stock_theorique}"
+                 data-price="${it.purchase_price}"
+                 data-unit="${esc(it.unit)}"
+                 oninput="updateDailyControlDiffs()"
+                 placeholder="0" style="width:110px"/>
+        </td>
+        <td style="text-align:right" id="dc-diff-${it.product_id}">—</td>
+        <td style="text-align:right" id="dc-val-${it.product_id}">—</td>
+      </tr>`).join("");
+
+    body.innerHTML = `
+      <div class="table-wrap"><table class="kpi-table">
+        <thead><tr>
+          <th>Produit</th>
+          <th style="text-align:right">Stock théorique</th>
+          <th style="text-align:right">Stock réel</th>
+          <th style="text-align:right">Écart</th>
+          <th style="text-align:right">Valeur €</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <div style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <span id="dc-total" style="color:var(--text-muted);font-size:14px">Écart total : <strong>—</strong></span>
+        <button class="btn btn-primary btn-lg" onclick="submitDailyControl()">✅ Valider le contrôle</button>
+      </div>`;
+  } catch(e) {
+    document.getElementById("daily-control-body").innerHTML = `<div class="info-box" style="color:#DC2626">Erreur : ${esc(e.message)}</div>`;
+  }
+}
+
+function updateDailyControlDiffs() {
+  let totalEur = 0;
+  document.querySelectorAll('input[id^="dc-input-"]').forEach(inp => {
+    const pid = inp.id.replace("dc-input-","");
+    const theorique = parseFloat(inp.dataset.theorique) || 0;
+    const price = parseFloat(inp.dataset.price) || 0;
+    const unit = inp.dataset.unit || "";
+    const val = inp.value === "" ? null : parseFloat(inp.value);
+    const diffCell = document.getElementById(`dc-diff-${pid}`);
+    const valCell  = document.getElementById(`dc-val-${pid}`);
+    if (val === null || Number.isNaN(val)) {
+      if (diffCell) diffCell.innerHTML = "—";
+      if (valCell)  valCell.innerHTML = "—";
+      return;
+    }
+    const diff = val - theorique;
+    const diffEur = diff * price;
+    totalEur += diffEur;
+    const cls = diff < 0 ? "marge-red" : diff > 0 ? "marge-orange" : "";
+    const txt = diff === 0 ? "✅ Conforme" : `${diff > 0 ? "+" : ""}${diff} ${unit}`;
+    if (diffCell) diffCell.innerHTML = `<span class="${cls}"><strong>${txt}</strong></span>`;
+    if (valCell)  valCell.innerHTML  = diff === 0 ? "—" : `<strong class="${diff < 0 ? 'marge-red' : ''}">${diff < 0 ? '-' : '+'}€${Math.abs(diffEur).toFixed(2)}</strong>`;
+  });
+  const totalEl = document.getElementById("dc-total");
+  if (totalEl) {
+    totalEl.innerHTML = totalEur === 0
+      ? `Écart total : <strong>—</strong>`
+      : `Écart total : <strong class="${totalEur < 0 ? 'marge-red' : 'marge-orange'}">${totalEur < 0 ? '-' : '+'}€${Math.abs(totalEur).toFixed(2)}</strong>`;
+  }
+}
+
+async function submitDailyControl() {
+  const items = [];
+  let missing = false;
+  document.querySelectorAll('input[id^="dc-input-"]').forEach(inp => {
+    const pid = parseInt(inp.id.replace("dc-input-",""), 10);
+    const v = inp.value;
+    if (v === "" || v === null) { missing = true; return; }
+    items.push({ product_id: pid, actual_stock: parseFloat(v) });
+  });
+  if (missing || items.length === 0) {
+    alert("Renseigne le stock réel pour tous les produits avant de valider.");
+    return;
+  }
+  if (!confirm("Valider le contrôle du jour ?\n\nLe stock sera mis à jour et les écarts enregistrés dans Écarts & Pertes.")) return;
+  try {
+    await api("/api/daily-control/submit", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ items }),
+    });
+    renderDailyControl(document.getElementById("app"));
+  } catch(e) {
+    alert("Erreur : " + e.message);
+  }
+}
 
 function renderFlash(el) {
   flashResults = null;
