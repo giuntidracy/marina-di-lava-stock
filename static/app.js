@@ -16,7 +16,7 @@ let inactivityTimer = null;
 
 // Onglets accessibles par rôle
 const SERVICE_VIEWS = ["inventory","service_alert","delivery_check"];
-const MANAGER_VIEWS = ["dashboard","stock","cocktails","alerts","cashpad","delivery_check","inventory","flash","stats","history","suppliers","orders","mapping","admin","staff","events","shrinkage"];
+const MANAGER_VIEWS = ["dashboard","stock","cocktails","marges","alerts","cashpad","delivery_check","inventory","flash","stats","history","suppliers","orders","mapping","admin","staff","events","shrinkage"];
 
 // ── Login ──────────────────────────────────────────────────
 async function loginService() {
