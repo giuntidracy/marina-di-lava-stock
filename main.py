@@ -2495,20 +2495,7 @@ def get_alerts(db: Session = Depends(get_db)):
                 "message": f"Stock bas : {p.name} ({p.stock} {p.unit})",
                 "severity": "medium"
             })
-        if p.purchase_price and p.sale_price_ttc:
-            cout = p.purchase_price  # déjà en prix/unité individuelle
-            vat_r = p.vat_rate if p.vat_rate is not None else 0.20
-            ht = p.sale_price_ttc / (1 + vat_r)
-            if ht > 0:
-                marge = (ht - cout) / ht * 100
-                if marge < 50 and not p.is_estimated:
-                    alerts.append({
-                        "type": "marge",
-                        "product_id": p.id,
-                        "product": p.name,
-                        "message": f"Marge insuffisante : {p.name} ({marge:.1f}%)",
-                        "severity": "medium"
-                    })
+    # Marges insuffisantes déplacées vers l'onglet dédié « Marges insuffisantes »
     # Also fetch inventory gap alerts from recent history
     recent_inv = db.query(StockHistory).filter(
         StockHistory.event_type == "alerte_inventaire"

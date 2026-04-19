@@ -266,7 +266,7 @@ async function loadAll() {
 
 const VIEW_TITLES = {
   dashboard:"Tableau de bord",
-  stock:"Stock & Marges", cocktails:"Cocktails & Marges", alerts:"Alertes",
+  stock:"Stock & Marges", cocktails:"Cocktails & Marges", marges:"Marges insuffisantes", alerts:"Alertes",
   shrinkage:"Démarque Inconnue", cashpad:"Import Cashpad", delivery:"Bon de Livraison",
   delivery_check:"Contrôle livraison",
   inventory:"Sortie Réserve", flash:"Inventaire Flash", service_alert:"Alerte Stock",
@@ -317,6 +317,7 @@ function renderView(view) {
     case "dashboard":  renderDashboard(app); break;
     case "stock":     renderStock(app); break;
     case "cocktails": renderCocktails(app); break;
+    case "marges":    renderMargesInsuffisantes(app); break;
     case "alerts":    renderAlerts(app); break;
     case "cashpad":   renderCashpad(app); break;
     case "delivery":  switchView("delivery_check"); return;   // legacy redirect
@@ -390,7 +391,22 @@ async function updateAlertBadge() {
       badge.classList.add("hidden");
     }
   } catch {}
+  updateMargesBadge();
   updateDeliveryCheckBadge();
+}
+
+function updateMargesBadge() {
+  const badge = document.getElementById("marges-badge");
+  if (!badge) return;
+  const count = (allProducts || []).filter(p =>
+    !p.archived && !p.is_estimated && p.marge !== null && p.marge < 50
+  ).length;
+  if (count > 0) {
+    badge.textContent = count;
+    badge.classList.remove("hidden");
+  } else {
+    badge.classList.add("hidden");
+  }
 }
 
 // ─────────── CHAT IA ─────────────────────────────────────────────────────
@@ -1550,6 +1566,84 @@ async function deleteCocktail(id, name) {
 }
 
 // ══════════════════════════════════════════════════════════
+// VIEW: MARGES INSUFFISANTES
+// ══════════════════════════════════════════════════════════
+function renderMargesInsuffisantes(el) {
+  const products = (allProducts || []).filter(p =>
+    !p.archived && !p.is_estimated && p.marge !== null && p.marge < 50
+  );
+
+  const red    = products.filter(p => p.marge < 0).length;
+  const orange = products.filter(p => p.marge >= 0 && p.marge < 30).length;
+  const yellow = products.filter(p => p.marge >= 30 && p.marge < 50).length;
+
+  products.sort((a, b) => a.marge - b.marge);
+
+  const rows = products.map(p => {
+    const cout = p.cout_unitaire !== null ? `€${p.cout_unitaire.toFixed(3)}` : "—";
+    const pv   = p.sale_price_ttc !== null ? `€${p.sale_price_ttc.toFixed(2)}` : "—";
+    const sev  = p.marge < 0 ? "red" : (p.marge < 30 ? "orange" : "yellow");
+    const icon = sev === "red" ? "🔴" : sev === "orange" ? "🟠" : "🟡";
+    return `<tr>
+      <td>${icon} ${esc(p.name)}</td>
+      <td style="color:var(--text-muted)">${esc(p.category || "")}</td>
+      <td style="text-align:right">${cout}</td>
+      <td style="text-align:right">${pv}</td>
+      <td style="text-align:right;font-weight:700" class="marge-red">${p.marge.toFixed(1)}%</td>
+      <td style="text-align:right">
+        <button class="btn btn-outline btn-sm" onclick="openProductForm(${p.id})">✏️ Éditer</button>
+      </td>
+    </tr>`;
+  }).join("");
+
+  el.innerHTML = `
+    <div class="section-header">
+      <span class="section-title">📉 Marges insuffisantes</span>
+    </div>
+    <div class="info-box" style="margin-bottom:12px">
+      Produits dont la marge HT est inférieure au seuil recommandé de 50 %. Vérifie le prix d'achat (par unité de vente) et le prix de vente TTC pour corriger.
+    </div>
+    <div class="stock-summary" style="margin-bottom:16px">
+      <div class="summary-card card-danger" style="--card-icon:'🔴'">
+        <div class="s-label">Marge négative</div>
+        <div class="s-value">${red}</div>
+        <div class="s-sub">vente à perte</div>
+      </div>
+      <div class="summary-card" style="--card-icon:'🟠'">
+        <div class="s-label">Marge &lt; 30 %</div>
+        <div class="s-value">${orange}</div>
+        <div class="s-sub">critique</div>
+      </div>
+      <div class="summary-card" style="--card-icon:'🟡'">
+        <div class="s-label">Marge 30–50 %</div>
+        <div class="s-value">${yellow}</div>
+        <div class="s-sub">à surveiller</div>
+      </div>
+      <div class="summary-card" style="--card-icon:'📊'">
+        <div class="s-label">Total concerné</div>
+        <div class="s-value">${products.length}</div>
+        <div class="s-sub">produits</div>
+      </div>
+    </div>
+    ${products.length === 0
+      ? `<div class="info-box" style="color:#27AE60;font-weight:600">✅ Toutes les marges sont correctes (≥ 50 %).</div>`
+      : `<div class="table-wrap">
+          <table class="kpi-table">
+            <thead><tr>
+              <th>Produit</th>
+              <th>Catégorie</th>
+              <th style="text-align:right">Coût unit.</th>
+              <th style="text-align:right">PV TTC</th>
+              <th style="text-align:right">Marge HT</th>
+              <th></th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`
+    }`;
+}
+
+// ══════════════════════════════════════════════════════════
 // VIEW: ALERTS
 // ══════════════════════════════════════════════════════════
 async function renderAlerts(el) {
@@ -1621,7 +1715,6 @@ async function renderAlerts(el) {
         besoin_evenement: { label: "Besoin événement non couvert", icon: "🎉", alerts: [] },
         rupture:          { label: "Rupture de stock",      icon: "🔴", alerts: [] },
         stock_bas:        { label: "Stock bas",              icon: "⚠️", alerts: [] },
-        marge:            { label: "Marge insuffisante",     icon: "📉", alerts: [] },
         ecart_inventaire: { label: "Écart inventaire",       icon: "🔍", alerts: [] },
       };
       alerts.forEach(a => {
@@ -8128,11 +8221,13 @@ async function openMonthlyGoalsModal() {
   try { current = await api("/api/monthly-goals"); } catch(_) {}
   const thisYear = new Date().getFullYear();
   const monthsFr = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
-  // On affiche 12 mois de l'année courante
-  const rows = monthsFr.map((name, i) => {
-    const key = `${thisYear}-${String(i + 1).padStart(2, "0")}`;
+  // Ouverture Avril (4) → Octobre (10). Novembre à Mars = fermé.
+  const OPEN_MONTHS = [4, 5, 6, 7, 8, 9, 10];
+  const rows = OPEN_MONTHS.map(m => {
+    const name = monthsFr[m - 1];
+    const key = `${thisYear}-${String(m).padStart(2, "0")}`;
     const value = current.goals[key] || "";
-    const isSeason = (i + 1) >= 5 && (i + 1) <= 9;   // mai → septembre
+    const isSeason = m >= 5 && m <= 9;   // mai → septembre = haute saison
     return `<div class="mg-row ${isSeason ? 'mg-row-season' : ''}">
       <label style="flex:1;font-size:13px">${name} ${thisYear}</label>
       <input type="number" step="100" min="0" data-key="${key}" value="${value}" placeholder="0"
@@ -8143,8 +8238,8 @@ async function openMonthlyGoalsModal() {
   openModal(`
     <h3 style="margin-bottom:8px">🎯 Objectifs CA mensuels — ${thisYear}</h3>
     <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">
-      Définissez un objectif pour chaque mois. Laissez à 0 pour ne pas suivre un mois.
-      Les mois <strong>haute saison</strong> (mai → septembre) sont mis en avant.
+      Saison Marina di Lava : <strong>avril → octobre</strong> (novembre à mars fermé).
+      Mois de <strong>haute saison</strong> (mai → septembre) mis en avant.
     </p>
     <div class="mg-list" style="max-height:50vh;overflow:auto">${rows}</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
