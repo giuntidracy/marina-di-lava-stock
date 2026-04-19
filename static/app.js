@@ -1635,6 +1635,7 @@ async function renderAlerts(el) {
           <input type="checkbox" id="alert-select-all-cb" onchange="toggleAllAlerts(this.checked)"/>
           Tout sélectionner (${archivable.length} archivables)
         </label>
+        <button class="btn btn-primary btn-sm" id="alert-bulk-order-btn" onclick="orderSelectedAlerts()" disabled>🛒 Commander la sélection (<span id="alert-order-count">0</span>)</button>
         <button class="btn btn-danger btn-sm" id="alert-bulk-archive-btn" onclick="archiveSelectedAlerts()" disabled>📦 Archiver la sélection (<span id="alert-selected-count">0</span>)</button>
       </div>`;
 
@@ -1710,9 +1711,13 @@ function updateAlertSelection() {
   const checked = document.querySelectorAll(".alert-cb:checked");
   const count = checked.length;
   const btn = document.getElementById("alert-bulk-archive-btn");
+  const orderBtn = document.getElementById("alert-bulk-order-btn");
   const cntEl = document.getElementById("alert-selected-count");
+  const orderCntEl = document.getElementById("alert-order-count");
   if (cntEl) cntEl.textContent = count;
+  if (orderCntEl) orderCntEl.textContent = count;
   if (btn) btn.disabled = count === 0;
+  if (orderBtn) orderBtn.disabled = count === 0;
   // sync master checkbox indeterminate state
   const all = document.querySelectorAll(".alert-cb");
   const master = document.getElementById("alert-select-all-cb");
@@ -1720,6 +1725,110 @@ function updateAlertSelection() {
     master.checked = all.length > 0 && count === all.length;
     master.indeterminate = count > 0 && count < all.length;
   }
+}
+
+async function orderSelectedAlerts() {
+  const ids = [...document.querySelectorAll(".alert-cb:checked")]
+    .map(cb => parseInt(cb.dataset.pid, 10))
+    .filter(id => !isNaN(id));
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return;
+
+  // Grouper par fournisseur principal (allProducts doit être chargé)
+  const products = (allProducts || []).filter(p => unique.includes(p.id));
+  const bySupplier = {};
+  const orphans = [];
+  products.forEach(p => {
+    if (!p.supplier_id) { orphans.push(p); return; }
+    if (!bySupplier[p.supplier_id]) {
+      bySupplier[p.supplier_id] = { id: p.supplier_id, name: p.supplier_name || "—", items: [] };
+    }
+    bySupplier[p.supplier_id].items.push(p);
+  });
+
+  const suppliers = Object.values(bySupplier);
+  if (suppliers.length === 0) {
+    alert("Aucun des produits sélectionnés n'a de fournisseur. Affecte un fournisseur dans l'onglet Stock.");
+    return;
+  }
+
+  // Modal récap
+  const orphansHtml = orphans.length
+    ? `<div style="background:#FEF3E2;border:1px solid #F5C07A;color:#6B3A06;border-radius:8px;padding:10px 12px;margin-top:12px;font-size:12.5px">
+         ⚠️ ${orphans.length} produit${orphans.length > 1 ? 's' : ''} sans fournisseur ignoré${orphans.length > 1 ? 's' : ''} : ${orphans.map(p => esc(p.name)).join(', ')}
+       </div>`
+    : "";
+  const supplierRows = suppliers.map(s => {
+    const rows = s.items.map(p => {
+      const suggested = Math.max(1, Math.round((p.alert_threshold || 0) * 2));
+      return `<div class="bulk-order-row" data-sid="${s.id}" data-pid="${p.id}"
+                   style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);gap:10px">
+        <span style="flex:1;font-size:13px">${esc(p.name)}</span>
+        <span style="font-size:11px;color:var(--text-muted)">stock ${p.stock}</span>
+        <input type="number" class="bulk-order-qty" min="0" step="1" value="${suggested}"
+               style="width:70px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;text-align:right"/>
+      </div>`;
+    }).join("");
+    return `<div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <strong style="color:var(--primary)">🏪 ${esc(s.name)}</strong>
+        <span style="font-size:12px;color:var(--text-muted)">${s.items.length} produit${s.items.length > 1 ? 's' : ''}</span>
+      </div>
+      ${rows}
+    </div>`;
+  }).join("");
+
+  openModal(`
+    <h3 style="margin-bottom:8px">🛒 Créer ${suppliers.length} commande${suppliers.length > 1 ? 's' : ''} ?</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
+      Les quantités sont pré-remplies à <strong>seuil d'alerte × 2</strong>. Ajuste-les avant de valider. Les commandes seront créées en <strong>brouillon</strong>, à toi de les envoyer depuis l'onglet Commandes.
+    </p>
+    <div style="max-height:50vh;overflow-y:auto;margin-bottom:14px">${supplierRows}</div>
+    ${orphansHtml}
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn btn-outline" onclick="closeModal()">Annuler</button>
+      <button class="btn btn-primary" onclick="submitBulkOrders()">Créer ${suppliers.length} brouillon${suppliers.length > 1 ? 's' : ''}</button>
+    </div>
+  `);
+}
+
+async function submitBulkOrders() {
+  const rows = [...document.querySelectorAll(".bulk-order-row")];
+  const bySupplier = {};
+  rows.forEach(r => {
+    const sid = parseInt(r.dataset.sid, 10);
+    const pid = parseInt(r.dataset.pid, 10);
+    const qty = parseFloat(r.querySelector(".bulk-order-qty")?.value || "0") || 0;
+    if (qty <= 0) return;
+    if (!bySupplier[sid]) bySupplier[sid] = [];
+    bySupplier[sid].push({ product_id: pid, qty_ordered: qty });
+  });
+
+  const entries = Object.entries(bySupplier);
+  if (entries.length === 0) {
+    alert("Toutes les quantités sont à 0.");
+    return;
+  }
+
+  let created = 0;
+  let failed = 0;
+  for (const [sid, items] of entries) {
+    try {
+      await api("/api/orders", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ supplier_id: parseInt(sid, 10), notes: "Créé depuis Alertes", items }),
+      });
+      created++;
+    } catch(_) { failed++; }
+  }
+  closeModal();
+  if (failed > 0) {
+    alert(`${created} commande(s) créée(s), ${failed} échec(s). Vérifie l'onglet Commandes.`);
+  } else {
+    showToast(`✓ ${created} brouillon${created > 1 ? 's' : ''} créé${created > 1 ? 's' : ''} dans Commandes`);
+  }
+  switchView("orders");
 }
 
 async function archiveOneProduct(pid, name) {
