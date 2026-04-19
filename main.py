@@ -114,6 +114,12 @@ with engine.connect() as _conn:
         _conn.commit()
     except Exception:
         pass
+    # role sur staff (service | manager)
+    try:
+        _conn.execute(_text("ALTER TABLE staff ADD COLUMN role TEXT DEFAULT 'service'"))
+        _conn.commit()
+    except Exception:
+        pass
     # end_date / start_time / end_time sur events
     for _col, _ddl in [
         ("end_date",   "ALTER TABLE events ADD COLUMN end_date DATETIME"),
@@ -810,8 +816,13 @@ class ServiceLoginIn(BaseModel):
 
 @app.get("/api/staff/public")
 def list_staff_public(db: Session = Depends(get_db)):
-    """Liste publique (sans PIN) pour l'écran de login service."""
-    rows = db.query(Staff).filter(Staff.is_active == True).order_by(Staff.name).all()
+    """Liste publique (sans PIN) pour l'écran de login service — uniquement rôle service."""
+    rows = (
+        db.query(Staff)
+          .filter(Staff.is_active == True, Staff.role == "service")
+          .order_by(Staff.name)
+          .all()
+    )
     return [{"id": s.id, "name": s.name, "slug": s.slug} for s in rows]
 
 
@@ -857,6 +868,7 @@ def auth_service(body: ServiceLoginIn = None, db: Session = Depends(get_db)):
 class StaffIn(BaseModel):
     name: str
     pin: str
+    role: Optional[str] = "service"  # "service" | "manager"
     is_active: Optional[bool] = True
 
 
@@ -878,10 +890,11 @@ def _require_manager_session(request: Request):
 @app.get("/api/staff")
 def list_staff(request: Request, db: Session = Depends(get_db)):
     _require_manager_session(request)
-    rows = db.query(Staff).order_by(Staff.is_active.desc(), Staff.name).all()
+    rows = db.query(Staff).order_by(Staff.is_active.desc(), Staff.role.desc(), Staff.name).all()
     return [
         {
             "id": s.id, "name": s.name, "slug": s.slug, "pin": s.pin,
+            "role": s.role or "service",
             "is_active": bool(s.is_active),
             "created_at": s.created_at.strftime("%d/%m/%Y %H:%M") if s.created_at else "",
         }
@@ -905,11 +918,12 @@ def create_staff(body: StaffIn, request: Request, db: Session = Depends(get_db))
     while db.query(Staff).filter(Staff.slug == slug).first():
         slug = f"{base_slug}{i}"
         i += 1
-    s = Staff(name=name, slug=slug, pin=pin, is_active=bool(body.is_active))
+    role = "manager" if (body.role or "").lower() == "manager" else "service"
+    s = Staff(name=name, slug=slug, pin=pin, role=role, is_active=bool(body.is_active))
     db.add(s)
     db.commit()
     db.refresh(s)
-    return {"id": s.id, "name": s.name, "slug": s.slug, "pin": s.pin, "is_active": s.is_active}
+    return {"id": s.id, "name": s.name, "slug": s.slug, "pin": s.pin, "role": s.role, "is_active": s.is_active}
 
 
 @app.put("/api/staff/{sid}")
@@ -927,6 +941,8 @@ def update_staff(sid: int, body: StaffIn, request: Request, db: Session = Depend
         s.pin = pin
     if body.is_active is not None:
         s.is_active = bool(body.is_active)
+    if body.role and body.role.lower() in ("service", "manager"):
+        s.role = body.role.lower()
     db.commit()
     return {"ok": True}
 
@@ -963,6 +979,15 @@ def auth_pin(body: PinIn, request: Request, db: Session = Depends(get_db)):
         direction_users[legacy_pin] = {"name": "Direction", "slug": "direction"}
 
     user = direction_users.get(body.pin)
+    # Fallback : chercher un Staff role=manager avec ce PIN
+    if not user:
+        db_mgr = (
+            db.query(Staff)
+              .filter(Staff.is_active == True, Staff.role == "manager", Staff.pin == body.pin)
+              .first()
+        )
+        if db_mgr:
+            user = {"name": db_mgr.name, "slug": db_mgr.slug}
     if user:
         _pin_failures.pop(ip, None)
         slug = user["slug"]

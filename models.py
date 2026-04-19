@@ -320,11 +320,12 @@ class ServiceAlert(Base):
 
 
 class Staff(Base):
-    """Compte serveur avec PIN pour la traçabilité (qui fait quoi)."""
+    """Compte utilisateur (serveur ou direction) avec PIN pour la traçabilité."""
     __tablename__ = "staff"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)       # "Jean", "Marie", "Lucas"...
     slug = Column(String, unique=True, nullable=False)  # pour avatar: "jean"
     pin = Column(String, nullable=False)        # 4-8 chiffres (stocké brut, usage restaurant)
+    role = Column(String, default="service", nullable=False)  # "service" | "manager"
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

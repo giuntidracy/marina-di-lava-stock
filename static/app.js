@@ -272,7 +272,7 @@ const VIEW_TITLES = {
   inventory:"Sortie Réserve", flash:"Inventaire Flash", service_alert:"Alerte Stock",
   stats:"Statistiques", history:"Historique",
   events:"Événements", suppliers:"Fournisseurs", orders:"Commandes", mapping:"Mapping Cashpad",
-  admin:"Administration", staff:"Login serveurs",
+  admin:"Administration", staff:"Login",
 };
 
 function switchView(view) {
@@ -5738,11 +5738,8 @@ async function renderStaff(el) {
   }
   el.innerHTML = `<div class="dc-wrap">
     <div class="section-header">
-      <span class="section-title">👥 Login serveurs</span>
-      <button class="btn btn-primary" onclick="openStaffForm(null)">+ Ajouter un serveur</button>
-    </div>
-    <div class="info-box" style="margin-bottom:16px;font-size:13px">
-      ℹ️ Tant qu'aucun serveur n'est créé, l'écran Service reste en mode libre (pas de PIN). Dès qu'un seul serveur est créé ici, <strong>tous les serveurs devront entrer leur PIN</strong> pour se connecter. Toi (direction) tu continues à te connecter avec ton PIN actuel.
+      <span class="section-title">👥 Login</span>
+      <button class="btn btn-primary" onclick="openStaffForm(null)">+ Ajouter un utilisateur</button>
     </div>
     <div id="staff-list">Chargement…</div>
   </div>`;
@@ -5758,12 +5755,22 @@ async function loadStaff() {
       container.innerHTML = `<div class="info-box">Aucun serveur pour l'instant — cliquez sur <strong>+ Ajouter un serveur</strong>.</div>`;
       return;
     }
+    if (staff.length === 0) {
+      container.innerHTML = `<div class="info-box">Aucun utilisateur — cliquez sur <strong>+ Ajouter un utilisateur</strong>.</div>`;
+      return;
+    }
     container.innerHTML = `<div class="table-wrap"><table class="mobile-cards-table">
-      <thead><tr><th>Nom</th><th>PIN</th><th>Statut</th><th>Créé</th><th></th></tr></thead>
+      <thead><tr><th>Nom</th><th>Rôle</th><th>PIN</th><th>Statut</th><th>Créé</th><th></th></tr></thead>
       <tbody>
-        ${staff.map(s => `
+        ${staff.map(s => {
+          const role = s.role || "service";
+          const rolePill = role === "manager"
+            ? '<span class="marge-pill" style="background:rgba(201,168,76,.18);color:#7A5F14;border:1px solid rgba(201,168,76,.4)">Direction</span>'
+            : '<span class="marge-pill" style="background:rgba(20,83,45,.12);color:#14532D;border:1px solid rgba(20,83,45,.3)">Service</span>';
+          return `
           <tr>
             <td data-label="Nom"><strong>${esc(s.name)}</strong></td>
+            <td data-label="Rôle">${rolePill}</td>
             <td data-label="PIN" style="font-family:monospace;letter-spacing:2px"><strong>${esc(s.pin)}</strong></td>
             <td data-label="Statut">
               ${s.is_active
@@ -5776,7 +5783,8 @@ async function loadStaff() {
               <button class="btn btn-sm" style="background:transparent;color:${s.is_active ? '#B45309' : '#16A34A'};border:1px solid var(--border)" onclick="toggleStaffActive(${s.id}, ${!s.is_active})" title="${s.is_active ? 'Désactiver' : 'Réactiver'}">${s.is_active ? '⏸' : '▶️'}</button>
               <button class="btn btn-danger btn-sm" onclick="deleteStaff(${s.id},'${esc(s.name).replace(/'/g,"\\'")}')">🗑</button>
             </td>
-          </tr>`).join("")}
+          </tr>`;
+        }).join("")}
       </tbody>
     </table></div>`;
   } catch(e) {
@@ -5786,12 +5794,20 @@ async function loadStaff() {
 
 function openStaffForm(existing) {
   const isEdit = !!existing;
+  const currentRole = isEdit ? (existing.role || "service") : "service";
   openModal(`
-    <h3 style="margin-bottom:14px">${isEdit ? "Modifier " + esc(existing.name) : "Nouveau serveur"}</h3>
+    <h3 style="margin-bottom:14px">${isEdit ? "Modifier " + esc(existing.name) : "Nouvel utilisateur"}</h3>
     <form id="staff-form" onsubmit="submitStaffForm(event, ${isEdit ? existing.id : 'null'})">
       <div class="form-group">
         <label>Prénom *</label>
         <input type="text" name="name" required value="${isEdit ? esc(existing.name) : ''}" placeholder="Jean"/>
+      </div>
+      <div class="form-group">
+        <label>Rôle *</label>
+        <select name="role" required>
+          <option value="service" ${currentRole === "service" ? "selected" : ""}>Service (serveur)</option>
+          <option value="manager" ${currentRole === "manager" ? "selected" : ""}>Direction</option>
+        </select>
       </div>
       <div class="form-group">
         <label>PIN * (3 à 8 chiffres — que TU choisis pour lui)</label>
@@ -5818,6 +5834,7 @@ async function submitStaffForm(event, staffId) {
   const body = {
     name: fd.get("name"),
     pin: fd.get("pin"),
+    role: fd.get("role") || "service",
     is_active: staffId ? !!fd.get("is_active") : true,
   };
   try {
