@@ -1723,31 +1723,53 @@ async function renderAlerts(el) {
       });
 
       const archivable = alerts.filter(a => a.product_id);
+      const SVG_CART = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>`;
+      const SVG_ARCHIVE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><rect x="1" y="3" width="22" height="5" rx="1"/><path d="M10 12h4"/></svg>`;
       html += `<div class="alert-toolbar">
         <label class="alert-select-all">
           <input type="checkbox" id="alert-select-all-cb" onchange="toggleAllAlerts(this.checked)"/>
-          Tout sélectionner (${archivable.length} archivables)
+          Tout sélectionner <span class="alert-section-count">${archivable.length}</span>
         </label>
-        <button class="btn btn-primary btn-sm" id="alert-bulk-order-btn" onclick="orderSelectedAlerts()" disabled>🛒 Commander la sélection (<span id="alert-order-count">0</span>)</button>
-        <button class="btn btn-danger btn-sm" id="alert-bulk-archive-btn" onclick="archiveSelectedAlerts()" disabled>📦 Archiver la sélection (<span id="alert-selected-count">0</span>)</button>
+        <button class="btn btn-primary btn-sm" id="alert-bulk-order-btn" onclick="orderSelectedAlerts()" disabled>${SVG_CART}Commander la sélection (<span id="alert-order-count">0</span>)</button>
+        <button class="btn btn-danger btn-sm" id="alert-bulk-archive-btn" onclick="archiveSelectedAlerts()" disabled>${SVG_ARCHIVE}Archiver la sélection (<span id="alert-selected-count">0</span>)</button>
       </div>`;
+
+      // Extrait le complément après le ":" (ex: "3 bouteille" pour stock_bas)
+      const extractMeta = (msg, product) => {
+        if (!msg) return "";
+        const m = msg.match(/\(([^)]+)\)\s*$/);
+        if (m) return m[1];
+        const after = msg.split(":").slice(1).join(":").trim();
+        if (product && after.startsWith(product)) return after.slice(product.length).trim();
+        return "";
+      };
 
       Object.values(groups).forEach(g => {
         if (g.alerts.length === 0) return;
-        html += `<h3 style="margin:20px 0 8px;font-size:15px;font-weight:700">${g.icon} ${esc(g.label)} (${g.alerts.length})</h3>
-          <div class="alert-list" style="margin-bottom:8px">
+        html += `<div class="alert-section">
+            <span class="alert-section-label">${esc(g.label)}</span>
+            <span class="alert-section-count">${g.alerts.length}</span>
+            <span class="alert-section-bar"></span>
+          </div>
+          <div class="alert-list">
             ${g.alerts.map(a => {
               const pid = a.product_id;
               const cbHtml = pid
                 ? `<input type="checkbox" class="alert-cb" data-pid="${pid}" onchange="updateAlertSelection()"/>`
-                : `<span style="width:16px;display:inline-block"></span>`;
+                : `<span style="width:16px;flex-shrink:0;display:inline-block"></span>`;
               const archBtn = pid
-                ? `<button class="alert-archive-btn" title="Archiver ce produit" onclick="archiveOneProduct(${pid}, '${esc(a.product || '').replace(/'/g, "\\'")}')">📦</button>`
+                ? `<button class="alert-icon-btn" title="Archiver ce produit" onclick="archiveOneProduct(${pid}, '${esc(a.product || '').replace(/'/g, "\\'")}')">${SVG_ARCHIVE}</button>`
                 : '';
+              const title = esc(a.product || a.message || "");
+              const meta  = extractMeta(a.message, a.product);
+              const chip  = `<span class="alert-card-chip">${esc(g.label)}</span>`;
               return `<div class="alert-card alert-${a.severity || 'medium'}">
                 ${cbHtml}
-                <span class="alert-msg">${esc(a.message)}</span>
-                ${a.date ? `<span style="font-size:11px;color:var(--text-muted);margin-left:auto">${formatDate(a.date)}</span>` : ''}
+                <div class="alert-card-body">
+                  <div class="alert-card-title">${title}</div>
+                  <div class="alert-card-meta">${chip}${meta ? `<span>${esc(meta)}</span>` : ''}</div>
+                </div>
+                ${a.date ? `<span class="alert-card-date">${formatDate(a.date)}</span>` : ''}
                 ${archBtn}
               </div>`;
             }).join("")}
