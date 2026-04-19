@@ -7069,63 +7069,35 @@ def get_dashboard(db: Session = Depends(get_db)):
     today     = now_local.date()
 
     # ── Météo (depuis cache) ──────────────────────────────────────────────
-    api_key = (os.getenv("OPENWEATHER_API_KEY") or os.getenv("OPENWEATHER-API-KEY") or "").strip()
-    weather_summary: dict
-    if not api_key:
+    # Météo : on réutilise get_weather() qui gère déjà cache, coords, marine
+    try:
+        full_wx = get_weather(db=db)
+    except Exception:
+        full_wx = {"configured": True, "stale": True}
+
+    if not full_wx or not full_wx.get("configured"):
         weather_summary = {"configured": False}
+    elif full_wx.get("error") or full_wx.get("stale"):
+        weather_summary = {"configured": True, "stale": True}
     else:
-        cached   = _get_setting(db, "weather_cache", "")
-        cache_ts = _get_setting(db, "weather_cache_ts", "")
-        if cached and cache_ts:
-            try:
-                age = (datetime.utcnow() - datetime.fromisoformat(cache_ts)).total_seconds()
-                if age < 7200:          # 2h de tolérance pour le dashboard
-                    full = json.loads(cached)
-                    weather_summary = {
-                        "configured":   True,
-                        "current_temp": full.get("current_temp"),
-                        "alert_level":  full.get("alert_level"),
-                        "alert_emoji":  full.get("alert_emoji"),
-                        "alert_label":  full.get("alert_label"),
-                        "city":         full.get("city", "Corse"),
-                    }
-                else:
-                    weather_summary = {"configured": True, "stale": True}
-            except Exception:
-                weather_summary = {"configured": True, "stale": True}
-        else:
-            # Pas encore en cache : tenter un appel léger
-            lat = os.getenv("WEATHER_LAT", "41.9267").strip()
-            lon = os.getenv("WEATHER_LON", "8.7369").strip()
-            try:
-                raw = _fetch_openweather(lat, lon, api_key)
-                forecasts = raw.get("list", [])
-                city_name = raw.get("city", {}).get("name", "")
-                country   = raw.get("city", {}).get("country", "")
-                if forecasts:
-                    current_t = round(forecasts[0]["main"]["temp"], 1)
-                    tomorrow  = forecasts[8:16] if len(forecasts) >= 16 else forecasts[1:]
-                    t_max = round(max(s["main"].get("temp_max", s["main"]["temp"]) for s in tomorrow), 1) if tomorrow else current_t
-                    if t_max >= 35:
-                        level, emoji, label = "canicule", "🔥", f"Canicule prévue ({t_max:.0f}°C)"
-                    elif t_max >= 30:
-                        level, emoji, label = "chaud",    "☀️", f"Forte chaleur ({t_max:.0f}°C)"
-                    elif t_max >= 25:
-                        level, emoji, label = "tiede",    "🌤️", f"Belle journée ({t_max:.0f}°C)"
-                    else:
-                        level, emoji, label = "normal",   "⛅", f"Temps normal ({t_max:.0f}°C)"
-                    weather_summary = {
-                        "configured":   True,
-                        "current_temp": current_t,
-                        "alert_level":  level,
-                        "alert_emoji":  emoji,
-                        "alert_label":  label,
-                        "city":         f"{city_name}, {country}" if city_name else "Corse",
-                    }
-                else:
-                    weather_summary = {"configured": True, "stale": True}
-            except Exception:
-                weather_summary = {"configured": True, "stale": True}
+        weather_summary = {
+            "configured":    True,
+            "current_temp":  full_wx.get("current_temp"),
+            "alert_level":   full_wx.get("alert_level"),
+            "alert_emoji":   full_wx.get("alert_emoji"),
+            "alert_label":   full_wx.get("alert_label"),
+            "city":          full_wx.get("city", ""),
+            "wind_kmh":      full_wx.get("wind_kmh"),
+            "wind_cardinal": full_wx.get("wind_cardinal"),
+            "wind_desc":     full_wx.get("wind_desc"),
+            "wind_gust_kmh": full_wx.get("wind_gust_kmh"),
+            "wind_beaufort": full_wx.get("wind_beaufort"),
+            "wave_height":   full_wx.get("wave_height"),
+            "wave_period":   full_wx.get("wave_period"),
+            "wave_cardinal": full_wx.get("wave_cardinal"),
+            "sea_emoji":     full_wx.get("sea_emoji"),
+            "sea_label":     full_wx.get("sea_label"),
+        }
 
     # ── Prochains événements (inclut événements multi-jours en cours) ─────
     today_dt = datetime.combine(today, datetime.min.time())
