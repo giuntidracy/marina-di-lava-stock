@@ -2938,9 +2938,17 @@ function renderReserveList() {
   });
 
   let html = '';
+  const collapsedCats = JSON.parse(localStorage.getItem("reserve-collapsed-cats") || "[]");
+  const CHEVRON = `<svg class="inv-cat-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
   Object.entries(byCat).forEach(([cat, prods]) => {
-    html += `<div class="inv-category-block">
-      <div class="inv-category-header">${esc(cat)}</div>
+    const isCollapsed = collapsedCats.includes(cat);
+    const catKey = cat.replace(/"/g, '\\"');
+    html += `<div class="inv-category-block ${isCollapsed ? 'is-collapsed' : ''}" data-cat="${esc(cat)}">
+      <button type="button" class="inv-category-header" onclick="toggleReserveCategory('${catKey}')">
+        ${CHEVRON}
+        <span>${esc(cat)}</span>
+        <span class="inv-cat-count">${prods.length}</span>
+      </button>
       <div class="inv-rows">`;
     prods.forEach(p => {
       const stockAff = fmtStock(p);
@@ -2963,6 +2971,20 @@ function renderReserveList() {
 
   container.innerHTML = html;
   updateReserveBar();
+}
+
+function toggleReserveCategory(cat) {
+  const block = document.querySelector(`.inv-category-block[data-cat="${cat}"]`);
+  if (!block) return;
+  block.classList.toggle("is-collapsed");
+  const collapsed = JSON.parse(localStorage.getItem("reserve-collapsed-cats") || "[]");
+  const idx = collapsed.indexOf(cat);
+  if (block.classList.contains("is-collapsed")) {
+    if (idx === -1) collapsed.push(cat);
+  } else {
+    if (idx !== -1) collapsed.splice(idx, 1);
+  }
+  localStorage.setItem("reserve-collapsed-cats", JSON.stringify(collapsed));
 }
 
 function reserveAdj(id, delta) {
