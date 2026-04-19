@@ -2037,6 +2037,34 @@ async function loadWeatherWidget(refresh = false) {
         </div>`;
     }
 
+    // ── Vent & mer ───────────────────────────────────────────────────────
+    const windKmh = w.wind_kmh;
+    let marineHtml = "";
+    if (windKmh !== null && windKmh !== undefined) {
+      const gust = w.wind_gust_kmh ? ` <span style="opacity:.7">· rafales ${w.wind_gust_kmh} km/h</span>` : "";
+      const beaufort = w.wind_beaufort != null ? ` · ${w.wind_beaufort} Bft` : "";
+      const card = w.wind_cardinal ? ` ${esc(w.wind_cardinal)}` : "";
+      marineHtml += `<div class="wx-marine-item">
+        <span class="wx-marine-icon">💨</span>
+        <div>
+          <div class="wx-marine-val"><strong>${windKmh}</strong> km/h${card}${beaufort}</div>
+          <div class="wx-marine-sub">${esc(w.wind_desc || "")}${gust}</div>
+        </div>
+      </div>`;
+    }
+    if (w.wave_height !== null && w.wave_height !== undefined) {
+      const period = w.wave_period ? ` · période ${w.wave_period}s` : "";
+      const fromCard = w.wave_cardinal ? ` · houle ${esc(w.wave_cardinal)}` : "";
+      marineHtml += `<div class="wx-marine-item">
+        <span class="wx-marine-icon">🌊</span>
+        <div>
+          <div class="wx-marine-val"><strong>${w.wave_height} m</strong>${fromCard}</div>
+          <div class="wx-marine-sub">${esc(w.sea_emoji || "")} ${esc(w.sea_label || "")}${period}</div>
+        </div>
+      </div>`;
+    }
+    const marineBlock = marineHtml ? `<div class="wx-marine">${marineHtml}</div>` : "";
+
     el.innerHTML = `
       <div class="wx-card ${levelCls}">
         <div class="wx-main">
@@ -2057,6 +2085,7 @@ async function loadWeatherWidget(refresh = false) {
           ${showAlert ? `<div class="wx-alert-pill ${levelCls}-pill">${w.alert_emoji} ${esc(w.alert_label)}</div>` : ""}
           <button class="wx-refresh" onclick="loadWeatherWidget(true)" title="Actualiser">↺</button>
         </div>
+        ${marineBlock}
         ${suggestHtml}
       </div>`;
 
@@ -8472,13 +8501,23 @@ async function renderDashboard(el) {
   } else if (w.stale || !w.current_temp) {
     weatherHtml = `<p class="db-empty">Données météo indisponibles</p>`;
   } else {
+    const windBits = (w.wind_kmh !== null && w.wind_kmh !== undefined)
+      ? `<span>💨 <strong>${w.wind_kmh}</strong> km/h${w.wind_cardinal ? ` ${esc(w.wind_cardinal)}` : ""}</span>`
+      : "";
+    const seaBits = (w.wave_height !== null && w.wave_height !== undefined)
+      ? `<span>${esc(w.sea_emoji || "🌊")} <strong>${w.wave_height} m</strong> · ${esc(w.sea_label || "")}</span>`
+      : "";
+    const marineRow = (windBits || seaBits)
+      ? `<div class="db-weather-marine">${windBits}${seaBits}</div>`
+      : "";
     weatherHtml = `
       <div class="db-weather-mini">
         <span class="db-weather-emoji">${esc(w.alert_emoji || "⛅")}</span>
         <span class="db-weather-temp">${w.current_temp}°C</span>
       </div>
       <div class="db-weather-city">${esc(w.city || "")}</div>
-      <div class="db-weather-label">${esc(w.alert_label || "")}</div>`;
+      <div class="db-weather-label">${esc(w.alert_label || "")}</div>
+      ${marineRow}`;
   }
 
   // ── CA ─────────────────────────────────────────────────────────────────

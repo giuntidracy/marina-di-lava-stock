@@ -2991,6 +2991,27 @@ html[data-theme="dark"] .sh-auto-loss-eur { color: #F87171; }
   color: var(--text);
   margin-top: 2px;
 }
+.db-weather-marine {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px; color: var(--text);
+}
+.db-weather-marine span { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Bloc marine dans le gros widget (page Alertes) */
+.wx-marine {
+  display: flex; gap: 14px; flex-wrap: wrap;
+  margin-top: 10px; padding-top: 12px;
+  border-top: 1px solid rgba(0,0,0,.06);
+}
+.wx-marine-item {
+  display: flex; align-items: center; gap: 10px;
+  min-width: 180px; flex: 1;
+}
+.wx-marine-icon { font-size: 22px; flex-shrink: 0; }
+.wx-marine-val  { font-size: 14px; color: var(--text); line-height: 1.2; }
+.wx-marine-sub  { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 
 /* Alertes */
 .db-alert-row {

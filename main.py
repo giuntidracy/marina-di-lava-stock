@@ -6701,6 +6701,74 @@ def _fetch_openweather(lat: str, lon: str, api_key: str) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _fetch_marine(lat: str, lon: str) -> dict:
+    """
+    Open-Meteo Marine API (gratuit, pas de clé).
+    Retourne wave_height (m), wave_direction (deg), wave_period (s) courants.
+    """
+    qs = urllib.parse.urlencode({
+        "latitude": lat, "longitude": lon,
+        "current": "wave_height,wave_direction,wave_period",
+    })
+    url = f"https://marine-api.open-meteo.com/v1/marine?{qs}"
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _deg_to_cardinal(deg) -> str:
+    """0-360° → N / NE / E / SE / S / SO / O / NO."""
+    if deg is None:
+        return ""
+    try:
+        d = float(deg) % 360
+    except Exception:
+        return ""
+    dirs = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
+    return dirs[int((d + 22.5) // 45) % 8]
+
+
+def _ms_to_beaufort(ms) -> int:
+    """Convertit une vitesse de vent en m/s en échelle Beaufort (0–12)."""
+    if ms is None:
+        return 0
+    try:
+        v = float(ms)
+    except Exception:
+        return 0
+    limits = [0.3, 1.5, 3.3, 5.5, 8.0, 10.8, 13.9, 17.2, 20.7, 24.5, 28.5, 32.7]
+    for i, lim in enumerate(limits):
+        if v < lim:
+            return i
+    return 12
+
+
+def _sea_state_from_wave(h):
+    """Classification Douglas simplifiée, retour (label, emoji)."""
+    if h is None:
+        return ("", "")
+    try:
+        h = float(h)
+    except Exception:
+        return ("", "")
+    if h < 0.1:  return ("Mer calme", "🟢")
+    if h < 0.5:  return ("Mer peu agitée", "🟢")
+    if h < 1.25: return ("Mer agitée légère", "🟡")
+    if h < 2.5:  return ("Mer agitée", "🟠")
+    if h < 4.0:  return ("Mer forte", "🔴")
+    return ("Mer très forte", "🔴")
+
+
+def _wind_label(beaufort: int) -> str:
+    labels = {
+        0: "Calme", 1: "Très légère brise", 2: "Légère brise", 3: "Petite brise",
+        4: "Jolie brise", 5: "Bonne brise", 6: "Vent frais", 7: "Grand frais",
+        8: "Coup de vent", 9: "Fort coup de vent", 10: "Tempête",
+        11: "Violente tempête", 12: "Ouragan",
+    }
+    return labels.get(beaufort, "")
+
+
 @app.get("/api/weather")
 def get_weather(refresh: bool = False, db: Session = Depends(get_db)):
     api_key = (os.getenv("OPENWEATHER_API_KEY") or os.getenv("OPENWEATHER-API-KEY") or "").strip()
@@ -6795,6 +6863,31 @@ def get_weather(refresh: bool = False, db: Session = Depends(get_db)):
         suggestions.sort(key=lambda x: -x["boost_pct"])
         suggestions = suggestions[:10]
 
+    # ── Vent (depuis OpenWeather) ─────────────────────────────────────────
+    wind_raw      = current.get("wind") or {}
+    wind_ms       = wind_raw.get("speed")
+    wind_deg      = wind_raw.get("deg")
+    wind_gust_ms  = wind_raw.get("gust")
+    wind_kmh      = round(float(wind_ms) * 3.6, 1) if wind_ms is not None else None
+    wind_gust_kmh = round(float(wind_gust_ms) * 3.6, 1) if wind_gust_ms is not None else None
+    beaufort      = _ms_to_beaufort(wind_ms)
+    wind_cardinal = _deg_to_cardinal(wind_deg)
+    wind_desc     = _wind_label(beaufort)
+
+    # ── État de la mer (Open-Meteo Marine, pas de clé) ────────────────────
+    wave_height = wave_period = wave_dir = None
+    sea_label = sea_emoji = ""
+    try:
+        marine = _fetch_marine(lat, lon)
+        cur = marine.get("current") or {}
+        wave_height = cur.get("wave_height")
+        wave_period = cur.get("wave_period")
+        wave_dir    = cur.get("wave_direction")
+        if wave_height is not None:
+            sea_label, sea_emoji = _sea_state_from_wave(wave_height)
+    except Exception:
+        pass  # pas bloquant — la météo terrestre marche sans la mer
+
     result = {
         "configured":    True,
         "city":          city_label,
@@ -6809,6 +6902,18 @@ def get_weather(refresh: bool = False, db: Session = Depends(get_db)):
         "alert_emoji":   emoji,
         "alert_label":   label,
         "suggestions":   suggestions,
+        "wind_kmh":      wind_kmh,
+        "wind_gust_kmh": wind_gust_kmh,
+        "wind_deg":      wind_deg,
+        "wind_cardinal": wind_cardinal,
+        "wind_beaufort": beaufort,
+        "wind_desc":     wind_desc,
+        "wave_height":   round(float(wave_height), 1) if wave_height is not None else None,
+        "wave_period":   round(float(wave_period), 1) if wave_period is not None else None,
+        "wave_dir":      wave_dir,
+        "wave_cardinal": _deg_to_cardinal(wave_dir) if wave_dir is not None else "",
+        "sea_label":     sea_label,
+        "sea_emoji":     sea_emoji,
     }
 
     # Mise en cache
