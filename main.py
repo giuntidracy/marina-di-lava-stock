@@ -6693,12 +6693,61 @@ def _fetch_openweather(lat: str, lon: str, api_key: str) -> dict:
     """Appelle OpenWeather Forecast 5 jours et retourne les données brutes."""
     qs = urllib.parse.urlencode({
         "lat": lat, "lon": lon, "appid": api_key,
-        "units": "metric", "lang": "fr", "cnt": 16,   # 16×3h = 2 jours
+        "units": "metric", "lang": "fr", "cnt": 40,   # 40×3h = 5 jours
     })
     url = f"https://api.openweathermap.org/data/2.5/forecast?{qs}"
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _bad_weather_for_date(forecasts: list, target_dt) -> dict:
+    """
+    Examine les créneaux 3h d'un jour-cible et retourne une alerte si mauvais
+    temps probable. Renvoie None sinon.
+    """
+    target_day = target_dt.date() if hasattr(target_dt, "date") else target_dt
+    day_slots = [
+        s for s in (forecasts or [])
+        if datetime.utcfromtimestamp(s.get("dt", 0)).date() == target_day
+    ]
+    if not day_slots:
+        return None
+
+    max_rain = max((float((s.get("rain") or {}).get("3h", 0)) for s in day_slots), default=0.0)
+    max_wind_ms = max((float((s.get("wind") or {}).get("speed") or 0) for s in day_slots), default=0.0)
+    max_gust_ms = max((float((s.get("wind") or {}).get("gust") or 0) for s in day_slots), default=0.0)
+    has_storm = any(
+        "orage" in ((s.get("weather") or [{}])[0].get("description") or "").lower()
+        or "thunder" in ((s.get("weather") or [{}])[0].get("main") or "").lower()
+        for s in day_slots
+    )
+
+    reasons = []
+    if max_rain >= 3:
+        reasons.append(f"🌧️ pluie ({max_rain:.1f} mm)")
+    elif max_rain >= 0.5:
+        reasons.append("🌦️ averses")
+    if has_storm:
+        reasons.append("⛈️ orages")
+    wind_kmh = max_wind_ms * 3.6
+    gust_kmh = max_gust_ms * 3.6
+    if gust_kmh >= 60:
+        reasons.append(f"💨 rafales {gust_kmh:.0f} km/h")
+    elif wind_kmh >= 40:
+        reasons.append(f"💨 vent fort ({wind_kmh:.0f} km/h)")
+
+    if not reasons:
+        return None
+    # Niveau : high si orages/pluie forte/rafales, medium sinon
+    severity = "high" if (max_rain >= 3 or has_storm or gust_kmh >= 60 or wind_kmh >= 55) else "medium"
+    return {
+        "severity": severity,
+        "summary":  " · ".join(reasons),
+        "rain_mm":  round(max_rain, 1),
+        "wind_kmh": round(wind_kmh, 0),
+        "gust_kmh": round(gust_kmh, 0),
+    }
 
 
 def _fetch_marine(lat: str, lon: str) -> dict:
@@ -7090,8 +7139,22 @@ def get_dashboard(db: Session = Depends(get_db)):
         .limit(15)
         .all()
     )
-    events_upcoming = [
-        {
+    # Prévisions 5 jours (depuis le cache météo si possible, sinon fetch)
+    _forecasts_for_events = []
+    try:
+        _wx_api_key = (os.getenv("OPENWEATHER_API_KEY") or os.getenv("OPENWEATHER-API-KEY") or "").strip()
+        if _wx_api_key:
+            _wx_lat = os.getenv("WEATHER_LAT", "41.9728").strip()
+            _wx_lon = os.getenv("WEATHER_LON", "8.6431").strip()
+            _raw = _fetch_openweather(_wx_lat, _wx_lon, _wx_api_key)
+            _forecasts_for_events = _raw.get("list", []) or []
+    except Exception:
+        _forecasts_for_events = []
+
+    events_upcoming = []
+    for ev in upcoming_events_q:
+        alert = _bad_weather_for_date(_forecasts_for_events, ev.date) if _forecasts_for_events else None
+        events_upcoming.append({
             "id":         ev.id,
             "name":       ev.name,
             "event_type": ev.event_type,
@@ -7099,9 +7162,8 @@ def get_dashboard(db: Session = Depends(get_db)):
             "end_date":   ev.end_date.isoformat() if ev.end_date else None,
             "start_time": ev.start_time or "",
             "end_time":   ev.end_time or "",
-        }
-        for ev in upcoming_events_q
-    ]
+            "weather_alert": alert,
+        })
 
     # ── Alertes stock urgentes ────────────────────────────────────────────
     urgent_products = (
