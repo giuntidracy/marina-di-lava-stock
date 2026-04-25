@@ -588,6 +588,18 @@ class _SMTP_IPv4(_smtplib_mod.SMTP):
         return _socket_mod.create_connection(addrs[0][4], timeout, self.source_address)
 
 
+class _SMTP_SSL_IPv4(_smtplib_mod.SMTP_SSL):
+    """SMTPS (port 465) avec IPv4 forcé."""
+    def _get_socket(self, host, port, timeout):
+        if self.debuglevel > 0:
+            self._print_debug('connect:', (host, port))
+        addrs = _socket_mod.getaddrinfo(host, port, _socket_mod.AF_INET, _socket_mod.SOCK_STREAM)
+        if not addrs:
+            raise OSError(f"Aucune adresse IPv4 résolue pour {host}")
+        sock = _socket_mod.create_connection(addrs[0][4], timeout, self.source_address)
+        return self.context.wrap_socket(sock, server_hostname=self._host)
+
+
 def _send_smtp(subject: str, html: str, to_emails: list,
                from_name: str = "Marina di Lava",
                attachment_bytes: bytes = None, attachment_name: str = None,
@@ -639,10 +651,17 @@ def _send_smtp(subject: str, html: str, to_emails: list,
         msg["To"]      = ", ".join(recipients)
         msg["Subject"] = subject
 
-        with _SMTP_IPv4(smtp_host, smtp_port, timeout=20) as server:
-            server.ehlo(); server.starttls(); server.ehlo()
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(from_addr, recipients, msg.as_string())
+        # Port 465 → SMTPS (TLS dès la connexion)
+        # Port 587 (ou autre) → STARTTLS après ehlo
+        if smtp_port == 465:
+            with _SMTP_SSL_IPv4(smtp_host, smtp_port, timeout=20) as server:
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(from_addr, recipients, msg.as_string())
+        else:
+            with _SMTP_IPv4(smtp_host, smtp_port, timeout=20) as server:
+                server.ehlo(); server.starttls(); server.ehlo()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(from_addr, recipients, msg.as_string())
         return True
     except smtplib.SMTPAuthenticationError as e:
         _LAST_SMTP_ERROR = f"Authentification refusée par Gmail : {e.smtp_code} {e.smtp_error.decode('utf-8', errors='ignore') if hasattr(e, 'smtp_error') else ''}"
