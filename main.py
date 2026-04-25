@@ -630,16 +630,17 @@ def _send_mailjet_with_attachment(subject: str, html: str, to_emails: list,
                                    attachment_mime: str = "application/zip") -> bool:
     """
     Envoie un email avec pièce jointe.
-    Priorité 1 : SMTP (Gmail Workspace…) si configuré.
-    Priorité 2 : Mailjet (fallback historique) si configuré.
+    - Si SMTP est configuré (SMTP_HOST + SMTP_USER) → SMTP UNIQUEMENT,
+      jamais de fallback Mailjet (le compte Mailjet est bloqué).
+    - Sinon → fallback Mailjet legacy.
     Le nom de la fonction est gardé pour ne pas casser les appelants existants.
     """
-    # Priorité 1 : SMTP
-    if _send_smtp(subject, html, to_emails, "Marina di Lava Backup",
-                  attachment_bytes, attachment_name, attachment_mime):
-        return True
+    smtp_configured = bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_USER", "").strip())
+    if smtp_configured:
+        return _send_smtp(subject, html, to_emails, "Marina di Lava Backup",
+                          attachment_bytes, attachment_name, attachment_mime)
 
-    # Priorité 2 : Mailjet (fallback)
+    # Fallback Mailjet (uniquement si SMTP n'est pas configuré du tout)
     import urllib.request as _urllib
     mailjet_key    = os.getenv("MAILJET_API_KEY", "").strip()
     mailjet_secret = os.getenv("MAILJET_SECRET_KEY", "").strip()
@@ -750,15 +751,16 @@ def _run_daily_backup():
 def _send_mailjet_email(subject: str, html_body: str, to_emails: list, from_name: str = "Marina di Lava Alertes") -> bool:
     """
     Envoie un email (alerte rupture, test, etc.).
-    Priorité 1 : SMTP (Gmail Workspace…) si configuré.
-    Priorité 2 : Mailjet (fallback historique) si configuré.
+    - Si SMTP est configuré (SMTP_HOST + SMTP_USER) → SMTP UNIQUEMENT,
+      jamais de fallback Mailjet (le compte Mailjet est bloqué).
+    - Sinon → fallback Mailjet legacy.
     Ne lève pas d'exception — les alertes ne doivent jamais bloquer le flux principal.
     """
-    # Priorité 1 : SMTP
-    if _send_smtp(subject, html_body, to_emails, from_name):
-        return True
+    smtp_configured = bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_USER", "").strip())
+    if smtp_configured:
+        return _send_smtp(subject, html_body, to_emails, from_name)
 
-    # Priorité 2 : Mailjet (fallback)
+    # Fallback Mailjet (uniquement si SMTP n'est pas configuré du tout)
     import urllib.request as _urllib
     mailjet_key    = os.getenv("MAILJET_API_KEY", "").strip()
     mailjet_secret = os.getenv("MAILJET_SECRET_KEY", "").strip()
@@ -1973,21 +1975,24 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
       </div>
     </div>"""
 
-    # ── 1. SMTP (Gmail Workspace, OVH…) — priorité absolue si configuré ──
-    if os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_USER", "").strip():
+    # ── 1. SMTP (Gmail Workspace, OVH…) — EXCLUSIF si configuré ──
+    # Si SMTP_HOST + SMTP_USER existent, on n'essaie PAS Mailjet en fallback
+    # (le compte Mailjet est bloqué — ticket 4077251).
+    smtp_configured = bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_USER", "").strip())
+    if smtp_configured:
         if not to_email:
             raise HTTPException(400, detail="Adresse email du fournisseur non renseignée")
         ok = _send_smtp(subject, html_body, [to_email],
                         from_name="Marina di Lava Commandes")
-        if ok:
-            o.status = "sent"
-            if not o.sent_at:
-                o.sent_at = datetime.utcnow()
-            db.commit()
-            return {"ok": True, "to": to_email, "provider": "smtp"}
-        # SMTP a échoué → on tente les fallbacks (Mailjet/Resend) ci-dessous
+        if not ok:
+            raise HTTPException(500, detail="Échec envoi SMTP — vérifiez SMTP_HOST/USER/PASS sur Railway et que le mot de passe d'application Google est correct.")
+        o.status = "sent"
+        if not o.sent_at:
+            o.sent_at = datetime.utcnow()
+        db.commit()
+        return {"ok": True, "to": to_email, "provider": "smtp"}
 
-    # ── 2. Mailjet API (fallback — gratuit 200/jour, pas de domaine requis) ──
+    # ── 2. Mailjet API (fallback — uniquement si SMTP n'est PAS configuré) ──
     mailjet_key    = os.getenv("MAILJET_API_KEY", "")
     mailjet_secret = os.getenv("MAILJET_SECRET_KEY", "")
     if mailjet_key and mailjet_secret:
