@@ -7725,6 +7725,14 @@ function renderFlash(el) {
 }
 
 function flashSwitchTab(tab) {
+  // Re-clic sur l'onglet "Nouveau contrôle" alors qu'on y est déjà → reset complet
+  if (tab === "scan" && flashTab === "scan") {
+    try { flashResetPhoto(); } catch {}
+    const zoneInput = document.getElementById("flash-zone");
+    if (zoneInput) { zoneInput.value = ""; zoneInput.focus(); }
+    showToast("Formulaire réinitialisé — prêt pour un nouveau contrôle");
+    return;
+  }
   flashTab = tab;
   renderFlash(document.getElementById("app"));
 }
