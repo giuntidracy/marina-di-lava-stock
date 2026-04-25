@@ -573,6 +573,21 @@ def _build_backup_zip() -> tuple:
 _LAST_SMTP_ERROR: str = ""   # diagnostique : dernière erreur SMTP rencontrée
 
 
+import socket as _socket_mod
+import smtplib as _smtplib_mod
+
+
+class _SMTP_IPv4(_smtplib_mod.SMTP):
+    """SMTP qui force IPv4 — contourne les environnements IPv6 cassés (ex: Railway)."""
+    def _get_socket(self, host, port, timeout):
+        if self.debuglevel > 0:
+            self._print_debug('connect: to', (host, port), self.source_address)
+        addrs = _socket_mod.getaddrinfo(host, port, _socket_mod.AF_INET, _socket_mod.SOCK_STREAM)
+        if not addrs:
+            raise OSError(f"Aucune adresse IPv4 résolue pour {host}")
+        return _socket_mod.create_connection(addrs[0][4], timeout, self.source_address)
+
+
 def _send_smtp(subject: str, html: str, to_emails: list,
                from_name: str = "Marina di Lava",
                attachment_bytes: bytes = None, attachment_name: str = None,
@@ -624,7 +639,7 @@ def _send_smtp(subject: str, html: str, to_emails: list,
         msg["To"]      = ", ".join(recipients)
         msg["Subject"] = subject
 
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+        with _SMTP_IPv4(smtp_host, smtp_port, timeout=20) as server:
             server.ehlo(); server.starttls(); server.ehlo()
             server.login(smtp_user, smtp_pass)
             server.sendmail(from_addr, recipients, msg.as_string())
