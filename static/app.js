@@ -5739,8 +5739,22 @@ async function renderAdmin(el) {
     </div>
 
     <div style="margin-top:14px;padding:14px;background:var(--surface-alt);border-radius:10px;border:1px solid var(--border)">
-      <div style="font-weight:800;font-size:13px;margin-bottom:6px">📦 Backup automatique hebdomadaire</div>
+      <div style="font-weight:800;font-size:13px;margin-bottom:6px">📦 Backup automatique quotidien</div>
       <div id="backup-settings-area" style="font-size:12px;color:var(--text-muted)">Chargement…</div>
+    </div>
+
+    <div style="margin-top:14px;padding:14px;background:var(--surface-alt);border-radius:10px;border:1px solid var(--border)">
+      <div style="font-weight:800;font-size:13px;margin-bottom:6px">💾 Sauvegardes & Restauration</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+        7 dernières sauvegardes automatiques (03h) + tes sauvegardes manuelles. Survivent aux redéploiements.
+        <br><strong>Note</strong> : les photos des BL ne sont pas incluses (option "léger") — elles seront perdues après une restauration.
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn btn-primary btn-sm" onclick="createDbBackup()">➕ Créer une sauvegarde maintenant</button>
+        <button class="btn btn-outline btn-sm" onclick="document.getElementById('restore-upload-input').click()">⬆ Restaurer depuis un fichier ZIP</button>
+        <input type="file" id="restore-upload-input" accept=".zip" style="display:none" onchange="restoreDbBackupFromUpload(event)"/>
+      </div>
+      <div id="db-backups-list" style="font-size:12px">Chargement…</div>
     </div>
 
     <div style="margin-top:20px;padding:14px;background:#FEF2F2;border-radius:10px;border:1px solid #FECACA">
@@ -5768,6 +5782,7 @@ async function renderAdmin(el) {
   </div>`;
   loadAlertSettings();
   loadBackupSettings();
+  loadDbBackups();
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -5967,7 +5982,7 @@ async function loadBackupSettings() {
         <button class="btn btn-outline btn-sm" onclick="downloadBackup()" title="Télécharge directement sans email">⬇ Télécharger</button>
       </div>
       <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
-        Un ZIP de toutes les tables (produits, ventes, événements, commandes, historique prix…) est envoyé chaque <strong>dimanche 03h00</strong> aux destinataires configurés. Parachute en cas de crash Railway.
+        Un ZIP de toutes les tables est aussi envoyé chaque <strong>jour à 03h00</strong> aux destinataires configurés (si renseignés). Indépendant du système de sauvegardes ci-dessous — c'est juste une copie email en plus.
       </div>
     `;
   } catch(e) { el.innerHTML = `Erreur : ${esc(e.message)}`; }
@@ -6006,6 +6021,143 @@ async function downloadBackup() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   } catch(e) { alert("Erreur : " + e.message); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SAUVEGARDES STOCKÉES EN DB (liste + restore)
+// ══════════════════════════════════════════════════════════════════════════
+
+function _backupKindLabel(kind) {
+  if (kind === "auto")        return '<span style="background:#DBEAFE;color:#1E40AF;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700">AUTO</span>';
+  if (kind === "manual")      return '<span style="background:#DCFCE7;color:#14532D;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700">MANUEL</span>';
+  if (kind === "pre_restore") return '<span style="background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700">PRE-RESTORE</span>';
+  return `<span style="font-size:10px">${esc(kind)}</span>`;
+}
+
+function _formatBackupDate(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString("fr-FR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" });
+  } catch { return iso; }
+}
+
+async function loadDbBackups() {
+  const el = document.getElementById("db-backups-list");
+  if (!el) return;
+  try {
+    const r = await api("/api/backup/db-list");
+    const list = r.backups || [];
+    if (list.length === 0) {
+      el.innerHTML = `<div style="padding:12px;background:var(--surface);border:1px dashed var(--border);border-radius:8px;color:var(--text-muted)">Aucune sauvegarde pour l'instant. La première sera créée automatiquement cette nuit à 03h, ou clique sur <strong>Créer une sauvegarde maintenant</strong>.</div>`;
+      return;
+    }
+    el.innerHTML = `<div class="table-wrap"><table class="mobile-cards-table" style="font-size:12px">
+      <thead><tr><th>Date</th><th>Type</th><th>Taille</th><th>Notes</th><th></th></tr></thead>
+      <tbody>
+        ${list.map(b => `
+          <tr>
+            <td><strong>${_formatBackupDate(b.created_at)}</strong></td>
+            <td>${_backupKindLabel(b.kind)}</td>
+            <td>${b.size_kb} KB</td>
+            <td style="color:var(--text-muted);font-size:11px">${esc(b.notes || "")}</td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn btn-outline btn-sm" onclick="downloadDbBackup(${b.id})" title="Télécharger ce ZIP">⬇</button>
+              <button class="btn btn-outline btn-sm" style="color:#15803D;border-color:#86EFAC" onclick="restoreDbBackup(${b.id}, '${esc(b.filename)}')" title="Restaurer depuis cette sauvegarde">↩ Restaurer</button>
+              <button class="btn btn-outline btn-sm" style="color:#DC2626;border-color:#FECACA" onclick="deleteDbBackup(${b.id})" title="Supprimer">✕</button>
+            </td>
+          </tr>`).join("")}
+      </tbody></table></div>`;
+  } catch(e) {
+    el.innerHTML = `<div style="color:#DC2626">Erreur : ${esc(e.message)}</div>`;
+  }
+}
+
+async function createDbBackup() {
+  try {
+    const r = await api("/api/backup/db-create", { method: "POST" });
+    alert(`✓ Sauvegarde créée (${r.size_kb} KB)`);
+    loadDbBackups();
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function downloadDbBackup(id) {
+  try {
+    const r = await fetch(`/api/backup/db-download/${id}`, {
+      headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const blob = await r.blob();
+    const cd = r.headers.get("Content-Disposition") || "";
+    const m = cd.match(/filename="?([^"]+)"?/);
+    const fname = m ? m[1] : `marina-backup-${id}.zip`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = fname; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function deleteDbBackup(id) {
+  if (!confirm("Supprimer définitivement cette sauvegarde ?")) return;
+  try {
+    await api(`/api/backup/db-delete/${id}`, { method: "DELETE" });
+    loadDbBackups();
+  } catch(e) { alert("Erreur : " + e.message); }
+}
+
+async function restoreDbBackup(id, filename) {
+  const msg = `⚠️ ATTENTION — RESTAURATION COMPLÈTE\n\n` +
+              `La base de données va être REMPLACÉE par le contenu de :\n` +
+              `${filename}\n\n` +
+              `• Toutes les modifications faites depuis cette sauvegarde seront PERDUES.\n` +
+              `• Une sauvegarde automatique de l'état actuel est créée juste avant (filet de sécurité).\n` +
+              `• Cette opération est irréversible (sauf restauration du filet).\n\n` +
+              `Pour confirmer, tape exactement : RESTAURER`;
+  const answer = prompt(msg);
+  if (answer !== "RESTAURER") {
+    if (answer !== null) alert("Annulé. Tu n'as pas tapé RESTAURER.");
+    return;
+  }
+  try {
+    const r = await api(`/api/backup/db-restore/${id}`, { method: "POST" });
+    const total = Object.values(r.stats?.tables || {}).reduce((a,b)=>a+b, 0);
+    alert(`✓ Restauration terminée — ${total} lignes importées.\n\nLa page va se recharger.`);
+    location.reload();
+  } catch(e) { alert("❌ Erreur restauration : " + e.message); }
+}
+
+async function restoreDbBackupFromUpload(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";   // reset
+  if (!file) return;
+  const msg = `⚠️ ATTENTION — RESTAURATION DEPUIS FICHIER\n\n` +
+              `La base de données va être REMPLACÉE par le contenu de :\n` +
+              `${file.name} (${(file.size/1024).toFixed(1)} KB)\n\n` +
+              `• Toutes les modifications actuelles seront PERDUES.\n` +
+              `• Une sauvegarde automatique de l'état actuel est créée juste avant.\n\n` +
+              `Pour confirmer, tape exactement : RESTAURER`;
+  const answer = prompt(msg);
+  if (answer !== "RESTAURER") {
+    if (answer !== null) alert("Annulé.");
+    return;
+  }
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const r = await fetch("/api/backup/db-restore-upload", {
+      method: "POST",
+      headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
+      body: fd,
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error(txt || `HTTP ${r.status}`);
+    }
+    const data = await r.json();
+    const total = Object.values(data.stats?.tables || {}).reduce((a,b)=>a+b, 0);
+    alert(`✓ Restauration terminée — ${total} lignes importées.\n\nLa page va se recharger.`);
+    location.reload();
+  } catch(e) { alert("❌ Erreur restauration : " + e.message); }
 }
 
 async function loadAlertSettings() {

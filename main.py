@@ -38,7 +38,7 @@ from models import (
     CashpadMapping, ImportLog, StockHistory, InventorySession, ProductSupplier,
     SupplierOrder, SupplierOrderItem, Event, EventRequirement, ManualLoss, AppSetting, ServiceAlert,
     Staff, StockSnapshot, DeliveryCheck, DeliveryCheckItem, PriceHistory,
-    OrderTemplate, OrderTemplateItem
+    OrderTemplate, OrderTemplateItem, DbBackup
 )
 
 Base.metadata.create_all(bind=engine)
@@ -369,12 +369,16 @@ def log_event(db: Session, event_type: str, description: str, data: dict = None)
 
 def _build_backup_zip() -> tuple:
     """
-    Construit un ZIP des tables importantes en CSV.
+    Construit un ZIP de TOUTES les tables (snapshot complet) en CSV.
+    Photos BL exclues volontairement (option "B" : backup léger).
     Retourne (bytes, filename).
     """
     import csv
     import zipfile
     from io import StringIO, BytesIO
+
+    def _iso(dt):
+        return dt.isoformat() if dt else ""
 
     db = SessionLocal()
     try:
@@ -387,85 +391,177 @@ def _build_backup_zip() -> tuple:
 
         zip_buf = BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            # Produits
-            zf.writestr("products.csv", _csv(
-                ["id","name","category","stock","unit","alert_threshold","purchase_price",
-                 "sale_price_ttc","vat_rate","supplier_id","archived","is_estimated"],
-                [[p.id, p.name, p.category, p.stock, p.unit, p.alert_threshold,
-                  p.purchase_price, p.sale_price_ttc, p.vat_rate, p.supplier_id,
-                  bool(p.archived), bool(p.is_estimated)]
-                 for p in db.query(Product).all()]
-            ))
-            # Fournisseurs
+            # ── 1. suppliers ─────────────────────────────────────────────
             zf.writestr("suppliers.csv", _csv(
                 ["id","name","contact","phone","email","categories"],
                 [[s.id, s.name, s.contact, s.phone, s.email, s.categories]
                  for s in db.query(Supplier).all()]
             ))
-            # Cocktails
+            # ── 2. products ──────────────────────────────────────────────
+            zf.writestr("products.csv", _csv(
+                ["id","name","category","supplier_id","stock","unit","qty_per_pack",
+                 "volume_cl","alert_threshold","purchase_price","sale_price_ttc",
+                 "is_estimated","barcode","archived","vat_rate","created_at","updated_at"],
+                [[p.id, p.name, p.category, p.supplier_id, p.stock, p.unit, p.qty_per_pack,
+                  p.volume_cl, p.alert_threshold, p.purchase_price, p.sale_price_ttc,
+                  bool(p.is_estimated), p.barcode, bool(p.archived), p.vat_rate,
+                  _iso(p.created_at), _iso(p.updated_at)]
+                 for p in db.query(Product).all()]
+            ))
+            # ── 3. cocktails ─────────────────────────────────────────────
             zf.writestr("cocktails.csv", _csv(
-                ["id","name","sale_price_ttc"],
-                [[c.id, c.name, c.sale_price_ttc] for c in db.query(Cocktail).all()]
+                ["id","name","sale_price_ttc","created_at"],
+                [[c.id, c.name, c.sale_price_ttc, _iso(c.created_at)]
+                 for c in db.query(Cocktail).all()]
             ))
+            # ── 4. cocktail_ingredients ─────────────────────────────────
             zf.writestr("cocktail_ingredients.csv", _csv(
-                ["cocktail_id","product_id","dose_cl"],
-                [[i.cocktail_id, i.product_id, i.dose_cl] for i in db.query(CocktailIngredient).all()]
+                ["id","cocktail_id","product_id","dose_cl"],
+                [[i.id, i.cocktail_id, i.product_id, i.dose_cl]
+                 for i in db.query(CocktailIngredient).all()]
             ))
-            # Historique stock
+            # ── 5. product_suppliers ────────────────────────────────────
+            zf.writestr("product_suppliers.csv", _csv(
+                ["id","product_id","supplier_id","purchase_price","is_primary","updated_at"],
+                [[ps.id, ps.product_id, ps.supplier_id, ps.purchase_price,
+                  bool(ps.is_primary), _iso(ps.updated_at)]
+                 for ps in db.query(ProductSupplier).all()]
+            ))
+            # ── 6. cashpad_mapping ──────────────────────────────────────
+            zf.writestr("cashpad_mapping.csv", _csv(
+                ["id","nom_cashpad","product_id","cocktail_id","dose_cl","mapping_type","ignored"],
+                [[m.id, m.nom_cashpad, m.product_id, m.cocktail_id, m.dose_cl,
+                  m.mapping_type, bool(m.ignored)]
+                 for m in db.query(CashpadMapping).all()]
+            ))
+            # ── 7. imports_log ──────────────────────────────────────────
+            zf.writestr("imports_log.csv", _csv(
+                ["id","import_type","reference","supplier","details_json","created_at"],
+                [[l.id, l.import_type, l.reference, l.supplier, l.details_json,
+                  _iso(l.created_at)]
+                 for l in db.query(ImportLog).all()]
+            ))
+            # ── 8. stock_history ────────────────────────────────────────
             zf.writestr("stock_history.csv", _csv(
                 ["id","event_type","description","data_json","created_at"],
-                [[h.id, h.event_type, h.description, h.data_json,
-                  h.created_at.isoformat() if h.created_at else ""]
+                [[h.id, h.event_type, h.description, h.data_json, _iso(h.created_at)]
                  for h in db.query(StockHistory).all()]
             ))
-            # Commandes fournisseur
+            # ── 9. inventory_sessions ───────────────────────────────────
+            zf.writestr("inventory_sessions.csv", _csv(
+                ["id","product_id","theoretical_qty","actual_qty","difference","staff_name","created_at"],
+                [[i.id, i.product_id, i.theoretical_qty, i.actual_qty, i.difference,
+                  i.staff_name, _iso(i.created_at)]
+                 for i in db.query(InventorySession).all()]
+            ))
+            # ── 10. supplier_orders ─────────────────────────────────────
             zf.writestr("supplier_orders.csv", _csv(
                 ["id","reference","supplier_id","status","notes","created_at","sent_at","received_at"],
                 [[o.id, o.reference, o.supplier_id, o.status, o.notes,
-                  o.created_at.isoformat() if o.created_at else "",
-                  o.sent_at.isoformat() if o.sent_at else "",
-                  o.received_at.isoformat() if o.received_at else ""]
+                  _iso(o.created_at), _iso(o.sent_at), _iso(o.received_at)]
                  for o in db.query(SupplierOrder).all()]
             ))
+            # ── 11. supplier_order_items ────────────────────────────────
             zf.writestr("supplier_order_items.csv", _csv(
-                ["order_id","product_id","product_name","qty_ordered","unit_price_ht"],
-                [[i.order_id, i.product_id, i.product_name, i.qty_ordered, i.unit_price_ht]
+                ["id","order_id","product_id","product_name","qty_ordered","unit_price_ht"],
+                [[i.id, i.order_id, i.product_id, i.product_name, i.qty_ordered, i.unit_price_ht]
                  for i in db.query(SupplierOrderItem).all()]
             ))
-            # Événements
+            # ── 12. events ──────────────────────────────────────────────
             zf.writestr("events.csv", _csv(
-                ["id","name","event_type","date","end_date","start_time","end_time","notes"],
-                [[e.id, e.name, e.event_type,
-                  e.date.isoformat() if e.date else "",
-                  e.end_date.isoformat() if e.end_date else "",
-                  e.start_time, e.end_time, e.notes]
+                ["id","name","event_type","date","end_date","start_time","end_time","notes","created_at"],
+                [[e.id, e.name, e.event_type, _iso(e.date), _iso(e.end_date),
+                  e.start_time, e.end_time, e.notes, _iso(e.created_at)]
                  for e in db.query(Event).all()]
             ))
-            # Contrôles livraison
+            # ── 13. event_requirements ──────────────────────────────────
+            zf.writestr("event_requirements.csv", _csv(
+                ["id","event_id","product_id","quantity","notes"],
+                [[r.id, r.event_id, r.product_id, r.quantity, r.notes]
+                 for r in db.query(EventRequirement).all()]
+            ))
+            # ── 14. app_settings (sans avatar_*_data : trop gros) ───────
+            zf.writestr("app_settings.csv", _csv(
+                ["key","value","updated_at"],
+                [[s.key, s.value, _iso(s.updated_at)]
+                 for s in db.query(AppSetting).all()
+                 if not (s.key or "").startswith("avatar_")]
+            ))
+            # ── 15. delivery_checks (SANS bl_photo / bl_photo_type) ─────
             zf.writestr("delivery_checks.csv", _csv(
                 ["id","supplier_id","order_id","status","checked_by","validated_by",
-                 "bl_reference","created_at","validated_at"],
+                 "bl_reference","notes","skipped_count","created_at","counted_at","validated_at"],
                 [[c.id, c.supplier_id, c.order_id, c.status, c.checked_by,
-                  c.validated_by, c.bl_reference,
-                  c.created_at.isoformat() if c.created_at else "",
-                  c.validated_at.isoformat() if c.validated_at else ""]
+                  c.validated_by, c.bl_reference, c.notes, bool(c.skipped_count),
+                  _iso(c.created_at), _iso(c.counted_at), _iso(c.validated_at)]
                  for c in db.query(DeliveryCheck).all()]
             ))
-            # Historique prix
+            # ── 16. delivery_check_items ────────────────────────────────
+            zf.writestr("delivery_check_items.csv", _csv(
+                ["id","check_id","product_id","product_name","qty_expected","qty_bl",
+                 "qty_physical","qty_validated","unit_price_ht","stock_applied","notes"],
+                [[i.id, i.check_id, i.product_id, i.product_name, i.qty_expected,
+                  i.qty_bl, i.qty_physical, i.qty_validated, i.unit_price_ht,
+                  bool(i.stock_applied), i.notes]
+                 for i in db.query(DeliveryCheckItem).all()]
+            ))
+            # ── 17. order_templates ─────────────────────────────────────
+            zf.writestr("order_templates.csv", _csv(
+                ["id","name","supplier_id","created_at","last_used_at"],
+                [[t.id, t.name, t.supplier_id, _iso(t.created_at), _iso(t.last_used_at)]
+                 for t in db.query(OrderTemplate).all()]
+            ))
+            # ── 18. order_template_items ────────────────────────────────
+            zf.writestr("order_template_items.csv", _csv(
+                ["id","template_id","product_id","default_qty"],
+                [[i.id, i.template_id, i.product_id, i.default_qty]
+                 for i in db.query(OrderTemplateItem).all()]
+            ))
+            # ── 19. price_history ───────────────────────────────────────
             zf.writestr("price_history.csv", _csv(
-                ["product_id","old_price","new_price","source","supplier_id","reference","changed_at"],
-                [[h.product_id, h.old_price, h.new_price, h.source, h.supplier_id, h.reference,
-                  h.changed_at.isoformat() if h.changed_at else ""]
+                ["id","product_id","old_price","new_price","changed_at","source","supplier_id","reference"],
+                [[h.id, h.product_id, h.old_price, h.new_price, _iso(h.changed_at),
+                  h.source, h.supplier_id, h.reference]
                  for h in db.query(PriceHistory).all()]
             ))
-            # Pertes manuelles
+            # ── 20. stock_snapshots ─────────────────────────────────────
+            zf.writestr("stock_snapshots.csv", _csv(
+                ["id","product_id","taken_at","stock","label"],
+                [[s.id, s.product_id, _iso(s.taken_at), s.stock, s.label]
+                 for s in db.query(StockSnapshot).all()]
+            ))
+            # ── 21. manual_losses ───────────────────────────────────────
             zf.writestr("manual_losses.csv", _csv(
-                ["product_id","quantity","reason","notes","date","staff_name"],
-                [[l.product_id, l.quantity, l.reason, l.notes,
-                  l.date.isoformat() if l.date else "",
-                  l.staff_name]
+                ["id","product_id","quantity","reason","notes","date","staff_name","stock_updated"],
+                [[l.id, l.product_id, l.quantity, l.reason, l.notes,
+                  _iso(l.date), l.staff_name, bool(l.stock_updated)]
                  for l in db.query(ManualLoss).all()]
             ))
+            # ── 22. service_alerts ──────────────────────────────────────
+            zf.writestr("service_alerts.csv", _csv(
+                ["id","product_id","reported_stock","is_rupture","staff_name","notes",
+                 "status","created_at","resolved_at"],
+                [[a.id, a.product_id, a.reported_stock, bool(a.is_rupture),
+                  a.staff_name, a.notes, a.status,
+                  _iso(a.created_at), _iso(a.resolved_at)]
+                 for a in db.query(ServiceAlert).all()]
+            ))
+            # ── 23. staff ───────────────────────────────────────────────
+            zf.writestr("staff.csv", _csv(
+                ["id","name","slug","pin","role","is_active","created_at"],
+                [[s.id, s.name, s.slug, s.pin, s.role, bool(s.is_active), _iso(s.created_at)]
+                 for s in db.query(Staff).all()]
+            ))
+
+            # Métadonnées du backup (utiles pour le restore)
+            import json as _json
+            meta = {
+                "version": 2,
+                "created_at": datetime.utcnow().isoformat(),
+                "tables": 23,
+                "excludes": ["bl_photo", "bl_photo_type", "avatar_*_data settings", "db_backups"],
+            }
+            zf.writestr("_meta.json", _json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8"))
 
         data = zip_buf.getvalue()
         ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
@@ -513,34 +609,76 @@ def _send_mailjet_with_attachment(subject: str, html: str, to_emails: list,
         return False
 
 
-def _run_weekly_backup():
-    """Job scheduler : backup + envoi email aux destinataires configurés."""
+_AUTO_BACKUP_KEEP = 7   # nombre de backups "auto" conservés (rotation)
+
+
+def _rotate_auto_backups(keep: int = _AUTO_BACKUP_KEEP) -> int:
+    """Supprime les vieux backups 'auto' au-delà des N derniers. Retourne le nb supprimé."""
     db = SessionLocal()
     try:
-        recipients_raw = _get_setting(db, "backup_emails", "").strip()
-        recipients = [e.strip() for e in recipients_raw.split(",") if e.strip()]
-        if not recipients:
-            print("[Backup] skippé — aucun destinataire configuré")
-            return
+        autos = (db.query(DbBackup)
+                   .filter(DbBackup.kind == "auto")
+                   .order_by(DbBackup.created_at.desc())
+                   .all())
+        to_drop = autos[keep:]
+        for b in to_drop:
+            db.delete(b)
+        db.commit()
+        return len(to_drop)
     finally:
         db.close()
 
+
+def _run_daily_backup():
+    """
+    Job scheduler quotidien (03h) :
+      1. Construit le ZIP de backup.
+      2. Le stocke dans la table db_backups (kind=auto).
+      3. Tourne la rotation : on garde les 7 derniers 'auto'.
+      4. Si des destinataires email sont configurés → envoie aussi par mail (best-effort).
+    """
     try:
         data, filename = _build_backup_zip()
     except Exception as e:
         print(f"[Backup] échec construction ZIP : {e}")
         return
 
+    # Stockage DB (priorité absolue : c'est ce qui survit aux redéploiements)
+    try:
+        bid = _save_backup_to_db(data, filename, kind="auto",
+                                 notes="Sauvegarde automatique quotidienne")
+        print(f"[Backup] ✓ stocké en DB id={bid} ({len(data)/1024:.1f} KB)")
+    except Exception as e:
+        print(f"[Backup] ❌ échec stockage DB : {e}")
+
+    # Rotation (garde les 7 derniers auto)
+    try:
+        dropped = _rotate_auto_backups(_AUTO_BACKUP_KEEP)
+        if dropped:
+            print(f"[Backup] rotation : {dropped} ancien(s) backup(s) supprimé(s)")
+    except Exception as e:
+        print(f"[Backup] ❌ rotation : {e}")
+
+    # Envoi email (best-effort, n'empêche pas la sauvegarde DB)
+    db = SessionLocal()
+    try:
+        recipients_raw = _get_setting(db, "backup_emails", "").strip()
+        recipients = [e.strip() for e in recipients_raw.split(",") if e.strip()]
+    finally:
+        db.close()
+    if not recipients:
+        return
+
     subject = f"📦 Backup Marina di Lava — {datetime.utcnow().strftime('%d/%m/%Y')}"
     html = f"""<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px">
-      <h2 style="color:#14532D">📦 Backup hebdomadaire</h2>
+      <h2 style="color:#14532D">📦 Backup quotidien</h2>
       <p>Archive complète des données Marina di Lava ci-jointe.</p>
       <p><strong>Fichier</strong> : {filename}<br>
          <strong>Taille</strong> : {len(data)/1024:.1f} KB</p>
       <p style="color:#666;font-size:12px;margin-top:20px">Conservez ce mail — c'est votre parachute en cas de crash serveur.</p>
     </div>"""
     ok = _send_mailjet_with_attachment(subject, html, recipients, data, filename)
-    print(f"[Backup] {'✓ envoyé' if ok else '❌ échec envoi'} à {len(recipients)} destinataire(s)")
+    print(f"[Backup] mail {'✓ envoyé' if ok else '❌ échec'} à {len(recipients)} destinataire(s)")
 
 
 def _send_mailjet_email(subject: str, html_body: str, to_emails: list, from_name: str = "Marina di Lava Alertes") -> bool:
@@ -713,6 +851,262 @@ def download_backup():
         content=data, media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SAUVEGARDES STOCKÉES EN DB (auto journalières + manuelles + pre_restore)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Ordre d'insertion respectant les contraintes FK (les parents avant les enfants).
+# Pour DELETE, on inverse cet ordre.
+_BACKUP_TABLE_ORDER = [
+    ("suppliers.csv",             Supplier),
+    ("products.csv",              Product),
+    ("cocktails.csv",             Cocktail),
+    ("cocktail_ingredients.csv",  CocktailIngredient),
+    ("product_suppliers.csv",     ProductSupplier),
+    ("cashpad_mapping.csv",       CashpadMapping),
+    ("imports_log.csv",           ImportLog),
+    ("stock_history.csv",         StockHistory),
+    ("inventory_sessions.csv",    InventorySession),
+    ("supplier_orders.csv",       SupplierOrder),
+    ("supplier_order_items.csv",  SupplierOrderItem),
+    ("events.csv",                Event),
+    ("event_requirements.csv",    EventRequirement),
+    ("app_settings.csv",          AppSetting),
+    ("delivery_checks.csv",       DeliveryCheck),
+    ("delivery_check_items.csv",  DeliveryCheckItem),
+    ("order_templates.csv",       OrderTemplate),
+    ("order_template_items.csv",  OrderTemplateItem),
+    ("price_history.csv",         PriceHistory),
+    ("stock_snapshots.csv",       StockSnapshot),
+    ("manual_losses.csv",         ManualLoss),
+    ("service_alerts.csv",        ServiceAlert),
+    ("staff.csv",                 Staff),
+]
+
+
+def _save_backup_to_db(data: bytes, filename: str, kind: str = "auto", notes: str = "") -> int:
+    """Stocke un ZIP de backup dans la table db_backups. Retourne l'id créé."""
+    db = SessionLocal()
+    try:
+        b = DbBackup(
+            filename=filename,
+            kind=kind,
+            size_bytes=len(data),
+            data=data,
+            notes=notes or "",
+        )
+        db.add(b)
+        db.commit()
+        db.refresh(b)
+        return b.id
+    finally:
+        db.close()
+
+
+def _coerce_value(col_type, value: str):
+    """Convertit une string CSV vers le type Python attendu par la colonne SQLAlchemy."""
+    if value is None or value == "":
+        return None
+    t = str(col_type).upper()
+    if "BOOLEAN" in t:
+        return value.strip().lower() in ("true", "1", "yes")
+    if "INTEGER" in t:
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+    if "FLOAT" in t or "REAL" in t or "NUMERIC" in t:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    if "DATETIME" in t or "TIMESTAMP" in t:
+        try:
+            return datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+    # String / Text / autres
+    return value
+
+
+def _restore_from_zip(zip_bytes: bytes) -> dict:
+    """
+    Restaure la base depuis un ZIP de backup.
+    Étapes :
+      1. Crée d'abord un backup automatique de l'état actuel (kind=pre_restore).
+      2. Lit chaque CSV du ZIP et l'importe dans sa table correspondante.
+      3. Vide les tables dans l'ordre inverse FK, puis ré-insère dans l'ordre FK.
+    Retourne un dict avec les stats (lignes par table).
+    """
+    import csv
+    import zipfile
+    from io import StringIO, BytesIO
+    from sqlalchemy import inspect as _sql_inspect
+
+    # 1) Backup de sécurité AVANT
+    try:
+        pre_data, pre_name = _build_backup_zip()
+        pre_id = _save_backup_to_db(pre_data, f"pre-restore-{pre_name}",
+                                    kind="pre_restore",
+                                    notes="Snapshot automatique avant restauration")
+    except Exception as e:
+        raise HTTPException(500, f"Impossible de créer le backup de sécurité : {e}")
+
+    # 2) Ouvrir le ZIP et vérifier qu'il contient au moins quelques tables
+    try:
+        zf = zipfile.ZipFile(BytesIO(zip_bytes))
+    except Exception as e:
+        raise HTTPException(400, f"Fichier ZIP invalide : {e}")
+
+    names = set(zf.namelist())
+    expected = {fn for fn, _m in _BACKUP_TABLE_ORDER}
+    found = expected & names
+    if not found:
+        raise HTTPException(400,
+            f"Ce ZIP ne contient aucune table reconnue. Fichiers attendus : {sorted(expected)[:3]}…")
+
+    # 3) Lire toutes les lignes en mémoire (avant de toucher à la DB)
+    parsed = {}  # table_name -> list of dicts
+    for fname, model in _BACKUP_TABLE_ORDER:
+        if fname not in names:
+            parsed[fname] = []   # CSV manquant = on vide cette table
+            continue
+        try:
+            raw = zf.read(fname).decode("utf-8-sig")
+        except Exception:
+            raw = zf.read(fname).decode("utf-8", errors="ignore")
+        rdr = csv.reader(StringIO(raw), delimiter=";")
+        rows = list(rdr)
+        if not rows:
+            parsed[fname] = []
+            continue
+        header = rows[0]
+        cols = {c.name: c.type for c in _sql_inspect(model).columns}
+        out = []
+        for r in rows[1:]:
+            d = {}
+            for idx, col_name in enumerate(header):
+                if col_name not in cols:
+                    continue
+                raw_val = r[idx] if idx < len(r) else ""
+                d[col_name] = _coerce_value(cols[col_name], raw_val)
+            out.append(d)
+        parsed[fname] = out
+
+    # 4) Tout ou rien : on fait DELETE + INSERT dans une seule transaction
+    db = SessionLocal()
+    stats = {"pre_restore_id": pre_id, "tables": {}}
+    try:
+        # Désactiver les FK le temps de la manip (SQLite)
+        db.execute(_text("PRAGMA foreign_keys = OFF"))
+
+        # DELETE dans l'ordre inverse
+        for fname, model in reversed(_BACKUP_TABLE_ORDER):
+            db.query(model).delete(synchronize_session=False)
+
+        # INSERT dans l'ordre FK
+        for fname, model in _BACKUP_TABLE_ORDER:
+            rows = parsed.get(fname, [])
+            if rows:
+                db.bulk_insert_mappings(model, rows)
+            stats["tables"][model.__tablename__] = len(rows)
+
+        # Réactiver FK + commit
+        db.execute(_text("PRAGMA foreign_keys = ON"))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        try:
+            db.execute(_text("PRAGMA foreign_keys = ON"))
+            db.commit()
+        except Exception:
+            pass
+        raise HTTPException(500, f"Échec restauration : {e}")
+    finally:
+        db.close()
+
+    return stats
+
+
+@app.get("/api/backup/db-list")
+def list_db_backups(request: Request, db: Session = Depends(get_db)):
+    """Liste les backups stockés en DB (sans le BLOB)."""
+    _require_manager_session(request)
+    rows = db.query(DbBackup).order_by(DbBackup.created_at.desc()).all()
+    return {
+        "backups": [{
+            "id":         b.id,
+            "filename":   b.filename,
+            "kind":       b.kind,
+            "size_kb":    round((b.size_bytes or 0) / 1024, 1),
+            "notes":      b.notes or "",
+            "created_at": b.created_at.isoformat() if b.created_at else "",
+        } for b in rows]
+    }
+
+
+@app.post("/api/backup/db-create")
+def create_db_backup(request: Request):
+    """Crée un backup manuel et le stocke en DB."""
+    _require_manager_session(request)
+    try:
+        data, filename = _build_backup_zip()
+    except Exception as e:
+        raise HTTPException(500, f"Erreur construction backup : {e}")
+    bid = _save_backup_to_db(data, filename, kind="manual", notes="Sauvegarde manuelle")
+    return {"ok": True, "id": bid, "filename": filename, "size_kb": round(len(data)/1024, 1)}
+
+
+@app.get("/api/backup/db-download/{backup_id}")
+def download_db_backup(backup_id: int, request: Request, db: Session = Depends(get_db)):
+    """Télécharge un backup stocké en DB."""
+    _require_manager_session(request)
+    from fastapi.responses import Response
+    b = db.query(DbBackup).get(backup_id)
+    if not b:
+        raise HTTPException(404, "Sauvegarde introuvable.")
+    return Response(
+        content=b.data, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{b.filename}"'},
+    )
+
+
+@app.delete("/api/backup/db-delete/{backup_id}")
+def delete_db_backup(backup_id: int, request: Request, db: Session = Depends(get_db)):
+    """Supprime un backup de la DB."""
+    _require_manager_session(request)
+    b = db.query(DbBackup).get(backup_id)
+    if not b:
+        raise HTTPException(404, "Sauvegarde introuvable.")
+    db.delete(b)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/backup/db-restore/{backup_id}")
+def restore_db_backup(backup_id: int, request: Request, db: Session = Depends(get_db)):
+    """Restaure la base depuis un backup stocké en DB."""
+    _require_manager_session(request)
+    b = db.query(DbBackup).get(backup_id)
+    if not b:
+        raise HTTPException(404, "Sauvegarde introuvable.")
+    stats = _restore_from_zip(b.data)
+    return {"ok": True, "stats": stats, "from": b.filename}
+
+
+@app.post("/api/backup/db-restore-upload")
+async def restore_db_backup_upload(request: Request, file: UploadFile = File(...)):
+    """Restaure la base depuis un ZIP uploadé par l'utilisateur."""
+    _require_manager_session(request)
+    if not file.filename.lower().endswith(".zip"):
+        raise HTTPException(400, "Le fichier doit être un .zip")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Fichier vide.")
+    stats = _restore_from_zip(data)
+    return {"ok": True, "stats": stats, "from": file.filename}
 
 
 class AlertSettingsIn(BaseModel):
@@ -6867,10 +7261,10 @@ try:
     _scheduler.add_job(_auto_sync_job, "interval", minutes=30, id="cashpad_sync", replace_existing=True)
     _scheduler.add_job(_weekly_snapshot_job, "cron", day_of_week="mon", hour=2, minute=0,
                        id="weekly_snapshot", replace_existing=True)
-    _scheduler.add_job(_run_weekly_backup, "cron", day_of_week="sun", hour=3, minute=0,
-                       id="weekly_backup", replace_existing=True)
+    _scheduler.add_job(_run_daily_backup, "cron", hour=3, minute=0,
+                       id="daily_backup", replace_existing=True)
     _scheduler.start()
-    print("[Cashpad] 🔄 Scheduler démarré — sync 30min + snapshot lundi 02h + backup dimanche 03h")
+    print("[Cashpad] 🔄 Scheduler démarré — sync 30min + snapshot lundi 02h + backup quotidien 03h")
 
 except Exception as _sched_err:
     print(f"[Cashpad] ⚠️ Scheduler non démarré : {_sched_err}")

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, ForeignKey, UniqueConstraint, LargeBinary
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -329,3 +329,15 @@ class Staff(Base):
     role = Column(String, default="service", nullable=False)  # "service" | "manager"
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class DbBackup(Base):
+    """Sauvegarde complète de la base, stockée en BLOB pour survivre aux redéploiements."""
+    __tablename__ = "db_backups"
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String, nullable=False)
+    kind = Column(String, default="auto", nullable=False)   # auto | manual | pre_restore
+    size_bytes = Column(Integer, default=0)
+    data = Column(LargeBinary, nullable=False)
+    notes = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
