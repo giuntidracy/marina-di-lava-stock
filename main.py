@@ -570,11 +570,89 @@ def _build_backup_zip() -> tuple:
         db.close()
 
 
-_LAST_SMTP_ERROR: str = ""   # diagnostique : dernière erreur SMTP rencontrée
+_LAST_SMTP_ERROR: str = ""   # diagnostique : dernière erreur SMTP/Resend rencontrée
 
 
 import socket as _socket_mod
 import smtplib as _smtplib_mod
+
+
+def _send_resend(subject: str, html: str, to_emails: list,
+                 from_name: str = "Marina di Lava",
+                 attachment_bytes: bytes = None, attachment_name: str = None,
+                 attachment_mime: str = "application/zip") -> bool:
+    """
+    Envoie un email via l'API HTTP de Resend (https://resend.com).
+    Variables d'env requises : RESEND_API_KEY.
+    Optionnel : RESEND_FROM_EMAIL (par défaut "onboarding@resend.dev"
+    qui ne nécessite pas de domaine vérifié — pratique pour tester).
+    Retourne True si envoyé, False sinon. Erreur stockée dans _LAST_SMTP_ERROR.
+    """
+    global _LAST_SMTP_ERROR
+    _LAST_SMTP_ERROR = ""
+
+    api_key = os.getenv("RESEND_API_KEY", "").strip()
+    if not api_key:
+        _LAST_SMTP_ERROR = "RESEND_API_KEY non configuré"
+        return False
+    recipients = [e.strip() for e in to_emails if e and e.strip()]
+    if not recipients:
+        _LAST_SMTP_ERROR = "Aucun destinataire."
+        return False
+
+    # Adresse "From" : si un domaine est vérifié sur Resend, mettre RESEND_FROM_EMAIL
+    # à un alias de ce domaine (ex: commandes@marinadilava.com).
+    # Sinon, fallback à onboarding@resend.dev qui marche immédiatement sans DNS.
+    from_email = (os.getenv("RESEND_FROM_EMAIL", "").strip()
+                  or "onboarding@resend.dev")
+
+    payload: dict = {
+        "from":    f"{from_name} <{from_email}>",
+        "to":      recipients,
+        "subject": subject,
+        "html":    html,
+    }
+    # Reply-To pour que les fournisseurs répondent à la bonne boîte
+    reply_to = os.getenv("FROM_EMAIL", "").strip()
+    if reply_to and reply_to != from_email:
+        payload["reply_to"] = reply_to
+
+    if attachment_bytes and attachment_name:
+        payload["attachments"] = [{
+            "filename": attachment_name,
+            "content":  base64.b64encode(attachment_bytes).decode("ascii"),
+        }]
+
+    import urllib.request as _urllib
+    import urllib.error as _urllib_err
+    req = _urllib.Request(
+        "https://api.resend.com/emails",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type":  "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with _urllib.urlopen(req, timeout=15) as resp:
+            if 200 <= resp.status < 300:
+                return True
+            _LAST_SMTP_ERROR = f"Resend HTTP {resp.status}"
+            return False
+    except _urllib_err.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="ignore")[:300]
+        except Exception:
+            pass
+        _LAST_SMTP_ERROR = f"Resend HTTP {e.code}: {body}"
+        print(f"[Resend] ❌ {_LAST_SMTP_ERROR}")
+        return False
+    except Exception as e:
+        _LAST_SMTP_ERROR = f"Resend: {type(e).__name__}: {e}"
+        print(f"[Resend] ❌ {_LAST_SMTP_ERROR}")
+        return False
 
 
 class _SMTP_IPv4(_smtplib_mod.SMTP):
@@ -678,11 +756,16 @@ def _send_mailjet_with_attachment(subject: str, html: str, to_emails: list,
                                    attachment_mime: str = "application/zip") -> bool:
     """
     Envoie un email avec pièce jointe.
-    - Si SMTP est configuré (SMTP_HOST + SMTP_USER) → SMTP UNIQUEMENT,
-      jamais de fallback Mailjet (le compte Mailjet est bloqué).
-    - Sinon → fallback Mailjet legacy.
+    Priorité (chaque niveau EXCLUSIF si configuré) :
+      1. Resend (HTTPS API — recommandé sur Railway car SMTP outbound bloqué)
+      2. SMTP (Gmail Workspace, OVH…)
+      3. Mailjet (legacy fallback)
     Le nom de la fonction est gardé pour ne pas casser les appelants existants.
     """
+    if os.getenv("RESEND_API_KEY", "").strip():
+        return _send_resend(subject, html, to_emails, "Marina di Lava Backup",
+                            attachment_bytes, attachment_name, attachment_mime)
+
     smtp_configured = bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_USER", "").strip())
     if smtp_configured:
         return _send_smtp(subject, html, to_emails, "Marina di Lava Backup",
@@ -799,11 +882,15 @@ def _run_daily_backup():
 def _send_mailjet_email(subject: str, html_body: str, to_emails: list, from_name: str = "Marina di Lava Alertes") -> bool:
     """
     Envoie un email (alerte rupture, test, etc.).
-    - Si SMTP est configuré (SMTP_HOST + SMTP_USER) → SMTP UNIQUEMENT,
-      jamais de fallback Mailjet (le compte Mailjet est bloqué).
-    - Sinon → fallback Mailjet legacy.
+    Priorité (chaque niveau EXCLUSIF si configuré) :
+      1. Resend (HTTPS API — recommandé sur Railway car SMTP outbound bloqué)
+      2. SMTP (Gmail Workspace, OVH…)
+      3. Mailjet (legacy fallback)
     Ne lève pas d'exception — les alertes ne doivent jamais bloquer le flux principal.
     """
+    if os.getenv("RESEND_API_KEY", "").strip():
+        return _send_resend(subject, html_body, to_emails, from_name)
+
     smtp_configured = bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_USER", "").strip())
     if smtp_configured:
         return _send_smtp(subject, html_body, to_emails, from_name)
@@ -2023,9 +2110,25 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
       </div>
     </div>"""
 
-    # ── 1. SMTP (Gmail Workspace, OVH…) — EXCLUSIF si configuré ──
-    # Si SMTP_HOST + SMTP_USER existent, on n'essaie PAS Mailjet en fallback
-    # (le compte Mailjet est bloqué — ticket 4077251).
+    # ── 1. Resend (HTTPS API) — priorité absolue si configuré ──
+    # Recommandé sur Railway : SMTP outbound est bloqué par la plateforme,
+    # mais HTTPS (port 443) passe sans problème.
+    if os.getenv("RESEND_API_KEY", "").strip():
+        if not to_email:
+            raise HTTPException(400, detail="Adresse email du fournisseur non renseignée")
+        ok = _send_resend(subject, html_body, [to_email],
+                          from_name="Marina di Lava Commandes")
+        if not ok:
+            raise HTTPException(500, detail=f"Échec envoi Resend : {_LAST_SMTP_ERROR or 'erreur inconnue'} — vérifiez RESEND_API_KEY sur Railway.")
+        o.status = "sent"
+        if not o.sent_at:
+            o.sent_at = datetime.utcnow()
+        db.commit()
+        return {"ok": True, "to": to_email, "provider": "resend"}
+
+    # ── 2. SMTP (Gmail Workspace, OVH…) — EXCLUSIF si configuré ──
+    # Note : SMTP outbound est bloqué sur Railway, ce path échouera
+    # systématiquement. Préférez Resend ci-dessus.
     smtp_configured = bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_USER", "").strip())
     if smtp_configured:
         if not to_email:
