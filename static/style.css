@@ -764,13 +764,16 @@ th.sort-desc::after { content: " ↓"; color: var(--accent); font-size: 11px; }
 .marge-red    { background: var(--red-bg);    color: var(--red-text);    border: 1px solid var(--red-border); }
 .marge-gray   { background: var(--gray-bg);   color: var(--gray-text);   border: 1px solid var(--gray-border); }
 
-.stock-low  { color: #DC2626; font-weight: 800; font-size: 15px; }
-.stock-ok   { color: var(--text); font-weight: 800; font-size: 15px; }
-.stock-zero {
-  display: inline-block; color: #DC2626; font-weight: 800;
-  background: var(--red-bg); border: 1px solid var(--red-border);
-  padding: 4px 12px; border-radius: 20px; font-size: 14px;
+/* Pills uniformes pour la colonne Stock — 3 couleurs : rouge / orange / vert */
+.stock-zero, .stock-low, .stock-ok {
+  display: inline-block;
+  font-weight: 800; font-size: 14px;
+  padding: 4px 12px; border-radius: 20px;
+  text-align: center; line-height: 1.25;
 }
+.stock-zero { color: var(--red-text);    background: var(--red-bg);    border: 1px solid var(--red-border); }
+.stock-low  { color: var(--orange-text); background: var(--orange-bg); border: 1px solid var(--orange-border); }
+.stock-ok   { color: var(--green-text);  background: var(--green-bg);  border: 1px solid var(--green-border); }
 .estimated-tag {
   font-size: 10px; color: var(--orange-text); background: var(--orange-bg);
   border: 1px solid var(--orange-border); border-radius: 4px;

@@ -894,9 +894,9 @@ function margePill(marge, color, estimated) {
 }
 
 function stockClass(stock, threshold) {
-  if (stock === 0) return "stock-zero";
-  if (stock <= threshold) return "stock-low";
-  return "stock-ok";
+  if (stock <= 0) return "stock-zero";        // 🔴 rupture / négatif
+  if (stock <= threshold) return "stock-low";  // 🟠 stock bas
+  return "stock-ok";                           // 🟢 stock OK
 }
 
 // ══════════════════════════════════════════════════════════
