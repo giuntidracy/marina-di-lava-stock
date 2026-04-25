@@ -1651,11 +1651,8 @@ async function renderAlerts(el) {
   el.innerHTML = `
     <div class="section-header"><span class="section-title">Alertes actives</span></div>
     <div id="service-alerts-area"></div>
-    <div id="weather-widget-area"></div>
     <div id="alerts-body">Chargement…</div>`;
 
-  // Charge météo en parallèle (non bloquant)
-  loadWeatherWidget();
   loadServiceAlertsInAlertsView();
 
   try {
@@ -2091,14 +2088,11 @@ async function loadWeatherWidget(refresh = false) {
       </div>`;
 
   } catch(e) {
+    // Erreur météo (clé manquante, API down, 502…) → on masque silencieusement.
+    // L'utilisateur ne doit JAMAIS être bloqué par la météo.
+    console.warn("[météo] indisponible :", e?.message || e);
     const el2 = document.getElementById("weather-widget-area");
-    if (el2) el2.innerHTML = `<div class="wx-setup wx-error">
-      <span class="wx-setup-icon">⚠️</span>
-      <div>
-        <strong>Widget météo indisponible</strong><br>
-        <span style="font-size:12px;opacity:.8">${esc(e.message || "Erreur de connexion")} — Vérifiez que <code>OPENWEATHER_API_KEY</code> est configuré dans Railway.</span>
-      </div>
-    </div>`;
+    if (el2) el2.innerHTML = "";
   }
 }
 
