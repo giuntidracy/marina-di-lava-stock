@@ -631,6 +631,9 @@ def _send_resend(subject: str, html: str, to_emails: list,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type":  "application/json",
+            # User-Agent explicite : Cloudflare (devant api.resend.com) bloque
+            # Python-urllib/* avec une 403 "code 1010" (browser integrity check).
+            "User-Agent":    "MarinaDiLavaStock/1.0 (+https://marinadilava.com)",
         },
         method="POST",
     )
@@ -2196,7 +2199,11 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
         req = _urllib.Request(
             "https://api.resend.com/emails",
             data=payload,
-            headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {resend_key}",
+                "Content-Type":  "application/json",
+                "User-Agent":    "MarinaDiLavaStock/1.0 (+https://marinadilava.com)",
+            },
             method="POST",
         )
         try:
