@@ -570,10 +570,76 @@ def _build_backup_zip() -> tuple:
         db.close()
 
 
+def _send_smtp(subject: str, html: str, to_emails: list,
+               from_name: str = "Marina di Lava",
+               attachment_bytes: bytes = None, attachment_name: str = None,
+               attachment_mime: str = "application/zip") -> bool:
+    """
+    Envoie un email via SMTP (Gmail Workspace, OVH, etc.) avec ou sans pièce jointe.
+    Variables d'env requises : SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.
+    Optionnel : FROM_EMAIL (sinon = SMTP_USER).
+    Retourne True si envoyé, False sinon (jamais d'exception).
+    """
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_pass = os.getenv("SMTP_PASS", "").strip()
+    if not smtp_host or not smtp_user or not smtp_pass or not to_emails:
+        return False
+    smtp_port = int(os.getenv("SMTP_PORT", "587") or "587")
+    from_addr = os.getenv("FROM_EMAIL", smtp_user).strip() or smtp_user
+
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.mime.application import MIMEApplication
+    from email.utils import formataddr
+
+    recipients = [e.strip() for e in to_emails if e and e.strip()]
+    if not recipients:
+        return False
+
+    try:
+        if attachment_bytes and attachment_name:
+            msg = MIMEMultipart("mixed")
+            alt = MIMEMultipart("alternative")
+            alt.attach(MIMEText(html, "html", "utf-8"))
+            msg.attach(alt)
+            part = MIMEApplication(attachment_bytes, _subtype=attachment_mime.split("/")[-1])
+            part.add_header("Content-Disposition", f'attachment; filename="{attachment_name}"')
+            msg.attach(part)
+        else:
+            msg = MIMEMultipart("alternative")
+            msg.attach(MIMEText(html, "html", "utf-8"))
+
+        msg["From"]    = formataddr((from_name, from_addr))
+        msg["To"]      = ", ".join(recipients)
+        msg["Subject"] = subject
+
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+            server.ehlo(); server.starttls(); server.ehlo()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(from_addr, recipients, msg.as_string())
+        return True
+    except Exception as e:
+        print(f"[SMTP] ❌ {e}")
+        return False
+
+
 def _send_mailjet_with_attachment(subject: str, html: str, to_emails: list,
                                    attachment_bytes: bytes, attachment_name: str,
                                    attachment_mime: str = "application/zip") -> bool:
-    """Envoie un email via Mailjet avec un fichier joint."""
+    """
+    Envoie un email avec pièce jointe.
+    Priorité 1 : SMTP (Gmail Workspace…) si configuré.
+    Priorité 2 : Mailjet (fallback historique) si configuré.
+    Le nom de la fonction est gardé pour ne pas casser les appelants existants.
+    """
+    # Priorité 1 : SMTP
+    if _send_smtp(subject, html, to_emails, "Marina di Lava Backup",
+                  attachment_bytes, attachment_name, attachment_mime):
+        return True
+
+    # Priorité 2 : Mailjet (fallback)
     import urllib.request as _urllib
     mailjet_key    = os.getenv("MAILJET_API_KEY", "").strip()
     mailjet_secret = os.getenv("MAILJET_SECRET_KEY", "").strip()
@@ -683,9 +749,16 @@ def _run_daily_backup():
 
 def _send_mailjet_email(subject: str, html_body: str, to_emails: list, from_name: str = "Marina di Lava Alertes") -> bool:
     """
-    Envoie un email via Mailjet. Retourne True si ok, False sinon.
+    Envoie un email (alerte rupture, test, etc.).
+    Priorité 1 : SMTP (Gmail Workspace…) si configuré.
+    Priorité 2 : Mailjet (fallback historique) si configuré.
     Ne lève pas d'exception — les alertes ne doivent jamais bloquer le flux principal.
     """
+    # Priorité 1 : SMTP
+    if _send_smtp(subject, html_body, to_emails, from_name):
+        return True
+
+    # Priorité 2 : Mailjet (fallback)
     import urllib.request as _urllib
     mailjet_key    = os.getenv("MAILJET_API_KEY", "").strip()
     mailjet_secret = os.getenv("MAILJET_SECRET_KEY", "").strip()
@@ -835,7 +908,7 @@ def run_backup_now(db: Session = Depends(get_db)):
     subject = f"📦 Backup Marina di Lava — {datetime.utcnow().strftime('%d/%m/%Y %H:%M')}"
     ok = _send_mailjet_with_attachment(subject, html, recipients, data, filename)
     if not ok:
-        raise HTTPException(500, "Échec envoi — vérifiez MAILJET_API_KEY/SECRET.")
+        raise HTTPException(500, "Échec envoi — vérifiez SMTP_HOST/USER/PASS (Gmail Workspace) ou MAILJET_API_KEY/SECRET sur Railway.")
     return {"ok": True, "size_kb": round(len(data)/1024, 1), "sent_to": recipients}
 
 
@@ -1144,7 +1217,7 @@ def test_alert_email(db: Session = Depends(get_db)):
     </div>"""
     ok = _send_mailjet_email("Test alertes Marina di Lava", html, recipients)
     if not ok:
-        raise HTTPException(500, "Échec de l'envoi — vérifiez MAILJET_API_KEY et MAILJET_SECRET_KEY sur Railway.")
+        raise HTTPException(500, "Échec de l'envoi — vérifiez SMTP_HOST/USER/PASS (Gmail Workspace) ou MAILJET_API_KEY/SECRET sur Railway.")
     return {"ok": True, "sent_to": recipients}
 
 
@@ -1900,7 +1973,21 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
       </div>
     </div>"""
 
-    # ── 1. Mailjet API (HTTP — gratuit 200/jour, pas de domaine requis) ──────
+    # ── 1. SMTP (Gmail Workspace, OVH…) — priorité absolue si configuré ──
+    if os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_USER", "").strip():
+        if not to_email:
+            raise HTTPException(400, detail="Adresse email du fournisseur non renseignée")
+        ok = _send_smtp(subject, html_body, [to_email],
+                        from_name="Marina di Lava Commandes")
+        if ok:
+            o.status = "sent"
+            if not o.sent_at:
+                o.sent_at = datetime.utcnow()
+            db.commit()
+            return {"ok": True, "to": to_email, "provider": "smtp"}
+        # SMTP a échoué → on tente les fallbacks (Mailjet/Resend) ci-dessous
+
+    # ── 2. Mailjet API (fallback — gratuit 200/jour, pas de domaine requis) ──
     mailjet_key    = os.getenv("MAILJET_API_KEY", "")
     mailjet_secret = os.getenv("MAILJET_SECRET_KEY", "")
     if mailjet_key and mailjet_secret:
