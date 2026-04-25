@@ -764,12 +764,12 @@ th.sort-desc::after { content: " ↓"; color: var(--accent); font-size: 11px; }
 .marge-red    { background: var(--red-bg);    color: var(--red-text);    border: 1px solid var(--red-border); }
 .marge-gray   { background: var(--gray-bg);   color: var(--gray-text);   border: 1px solid var(--gray-border); }
 
-.stock-low  { color: #DC2626; font-weight: 700; }
-.stock-ok   { color: var(--text-secondary); }
+.stock-low  { color: #DC2626; font-weight: 800; font-size: 15px; }
+.stock-ok   { color: var(--text); font-weight: 800; font-size: 15px; }
 .stock-zero {
-  display: inline-block; color: #DC2626; font-weight: 700;
+  display: inline-block; color: #DC2626; font-weight: 800;
   background: var(--red-bg); border: 1px solid var(--red-border);
-  padding: 2px 8px; border-radius: 20px; font-size: 12px;
+  padding: 4px 12px; border-radius: 20px; font-size: 14px;
 }
 .estimated-tag {
   font-size: 10px; color: var(--orange-text); background: var(--orange-bg);
