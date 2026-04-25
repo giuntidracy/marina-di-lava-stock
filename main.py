@@ -570,6 +570,9 @@ def _build_backup_zip() -> tuple:
         db.close()
 
 
+_LAST_SMTP_ERROR: str = ""   # diagnostique : dernière erreur SMTP rencontrée
+
+
 def _send_smtp(subject: str, html: str, to_emails: list,
                from_name: str = "Marina di Lava",
                attachment_bytes: bytes = None, attachment_name: str = None,
@@ -578,12 +581,17 @@ def _send_smtp(subject: str, html: str, to_emails: list,
     Envoie un email via SMTP (Gmail Workspace, OVH, etc.) avec ou sans pièce jointe.
     Variables d'env requises : SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.
     Optionnel : FROM_EMAIL (sinon = SMTP_USER).
-    Retourne True si envoyé, False sinon (jamais d'exception).
+    Retourne True si envoyé, False sinon (jamais d'exception). En cas d'échec,
+    le message d'erreur précis est stocké dans _LAST_SMTP_ERROR (pour diagnostic UI).
     """
+    global _LAST_SMTP_ERROR
+    _LAST_SMTP_ERROR = ""
+
     smtp_host = os.getenv("SMTP_HOST", "").strip()
     smtp_user = os.getenv("SMTP_USER", "").strip()
     smtp_pass = os.getenv("SMTP_PASS", "").strip()
     if not smtp_host or not smtp_user or not smtp_pass or not to_emails:
+        _LAST_SMTP_ERROR = "SMTP non configuré (HOST/USER/PASS manquant) ou aucun destinataire."
         return False
     smtp_port = int(os.getenv("SMTP_PORT", "587") or "587")
     from_addr = os.getenv("FROM_EMAIL", smtp_user).strip() or smtp_user
@@ -596,6 +604,7 @@ def _send_smtp(subject: str, html: str, to_emails: list,
 
     recipients = [e.strip() for e in to_emails if e and e.strip()]
     if not recipients:
+        _LAST_SMTP_ERROR = "Aucun destinataire."
         return False
 
     try:
@@ -620,8 +629,13 @@ def _send_smtp(subject: str, html: str, to_emails: list,
             server.login(smtp_user, smtp_pass)
             server.sendmail(from_addr, recipients, msg.as_string())
         return True
+    except smtplib.SMTPAuthenticationError as e:
+        _LAST_SMTP_ERROR = f"Authentification refusée par Gmail : {e.smtp_code} {e.smtp_error.decode('utf-8', errors='ignore') if hasattr(e, 'smtp_error') else ''}"
+        print(f"[SMTP] ❌ AUTH : {_LAST_SMTP_ERROR}")
+        return False
     except Exception as e:
-        print(f"[SMTP] ❌ {e}")
+        _LAST_SMTP_ERROR = f"{type(e).__name__}: {e}"
+        print(f"[SMTP] ❌ {_LAST_SMTP_ERROR}")
         return False
 
 
@@ -910,7 +924,7 @@ def run_backup_now(db: Session = Depends(get_db)):
     subject = f"📦 Backup Marina di Lava — {datetime.utcnow().strftime('%d/%m/%Y %H:%M')}"
     ok = _send_mailjet_with_attachment(subject, html, recipients, data, filename)
     if not ok:
-        raise HTTPException(500, "Échec envoi — vérifiez SMTP_HOST/USER/PASS (Gmail Workspace) ou MAILJET_API_KEY/SECRET sur Railway.")
+        raise HTTPException(500, f"Échec envoi : {_LAST_SMTP_ERROR or 'erreur inconnue'} — vérifiez SMTP_HOST/USER/PASS sur Railway.")
     return {"ok": True, "size_kb": round(len(data)/1024, 1), "sent_to": recipients}
 
 
@@ -1219,7 +1233,7 @@ def test_alert_email(db: Session = Depends(get_db)):
     </div>"""
     ok = _send_mailjet_email("Test alertes Marina di Lava", html, recipients)
     if not ok:
-        raise HTTPException(500, "Échec de l'envoi — vérifiez SMTP_HOST/USER/PASS (Gmail Workspace) ou MAILJET_API_KEY/SECRET sur Railway.")
+        raise HTTPException(500, f"Échec de l'envoi : {_LAST_SMTP_ERROR or 'erreur inconnue'} — vérifiez SMTP_HOST/USER/PASS sur Railway.")
     return {"ok": True, "sent_to": recipients}
 
 
@@ -1985,7 +1999,7 @@ def send_order_email(order_id: int, db: Session = Depends(get_db)):
         ok = _send_smtp(subject, html_body, [to_email],
                         from_name="Marina di Lava Commandes")
         if not ok:
-            raise HTTPException(500, detail="Échec envoi SMTP — vérifiez SMTP_HOST/USER/PASS sur Railway et que le mot de passe d'application Google est correct.")
+            raise HTTPException(500, detail=f"Échec envoi SMTP : {_LAST_SMTP_ERROR or 'erreur inconnue'} — vérifiez SMTP_HOST/USER/PASS sur Railway et que le mot de passe d'application Google est correct.")
         o.status = "sent"
         if not o.sent_at:
             o.sent_at = datetime.utcnow()
